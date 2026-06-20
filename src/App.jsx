@@ -5,6 +5,42 @@ const FIREBASE_URL = "https://dashboard-changan-chesa-default-rtdb.firebaseio.co
 
 const AGENCIAS = ["TUXTLA", "TAPACHULA", "SAN CRISTÓBAL", "COMITÁN", "OCOSINGO"];
 
+// ── Conversión de Asesores ────────────────────────────────────────────────────
+const CONVERSION_PATH = "conversionAsesores";
+
+const ETAPAS = [
+  { key: "contactados",     label: "Contactados",      num: "contactados",     den: "leads",           objetivo: 0.60 },
+  { key: "citasAgendadas",  label: "Citas Agendadas",  num: "citasAgendadas",  den: "contactados",     objetivo: 0.60 },
+  { key: "citasAsistidas",  label: "Citas Asistidas",  num: "citasAsistidas",  den: "citasAgendadas",  objetivo: 0.60 },
+  { key: "demosAsistidas",  label: "Demos Asistidas",  num: "demosAsistidas",  den: "citasAsistidas",  objetivo: 0.50 },
+  { key: "ventas",          label: "Ventas",           num: "ventas",          den: "demosAsistidas",  objetivo: 0.80 },
+];
+
+const genAsesorId = () => `a_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+const asesorBlank = () => ({ nombre: "Nuevo Asesor", leads: 0, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAsistidas: 0, ventas: 0 });
+
+// Datos iniciales tomados del Reporte de Estadísticas Vendedor (ene–may 2026), agencia Tuxtla
+const initialConversion = {
+  TUXTLA: {
+    a01: { nombre: "Adrian Clemente", leads: 0, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAsistidas: 0, ventas: 0 },
+    a02: { nombre: "Alejandra Concilco Roblero", leads: 67, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAsistidas: 0, ventas: 0 },
+    a03: { nombre: "Catherine Flores Aguilar", leads: 97, contactados: 0, citasAgendadas: 1, citasAsistidas: 1, demosAsistidas: 0, ventas: 0 },
+    a04: { nombre: "Emilio Perez", leads: 59, contactados: 47, citasAgendadas: 11, citasAsistidas: 0, demosAsistidas: 0, ventas: 1 },
+    a05: { nombre: "Henry Diaz", leads: 48, contactados: 48, citasAgendadas: 3, citasAsistidas: 0, demosAsistidas: 1, ventas: 0 },
+    a06: { nombre: "Jose Ivan Cruz Cruz", leads: 84, contactados: 74, citasAgendadas: 10, citasAsistidas: 2, demosAsistidas: 0, ventas: 0 },
+    a07: { nombre: "Nehemias Toledo", leads: 138, contactados: 118, citasAgendadas: 35, citasAsistidas: 19, demosAsistidas: 3, ventas: 2 },
+    a08: { nombre: "Ricardo Ramos Cha Tux Gut", leads: 381, contactados: 10, citasAgendadas: 1, citasAsistidas: 1, demosAsistidas: 0, ventas: 0 },
+    a09: { nombre: "Sergio Ezequiel Lopez Dominguez", leads: 583, contactados: 1, citasAgendadas: 0, citasAsistidas: 0, demosAsistidas: 0, ventas: 0 },
+    a10: { nombre: "Vanesa Morales", leads: 388, contactados: 304, citasAgendadas: 78, citasAsistidas: 19, demosAsistidas: 2, ventas: 8 },
+    a11: { nombre: "Victor Berzunza", leads: 125, contactados: 45, citasAgendadas: 32, citasAsistidas: 13, demosAsistidas: 2, ventas: 2 },
+  },
+  TAPACHULA: {},
+  "SAN CRISTÓBAL": {},
+  COMITÁN: {},
+  OCOSINGO: {},
+};
+
 const initialData = {
   ventasJunioInterno: {
     TUXTLA:          { facturado: 0, objetivo: 35 },
@@ -616,12 +652,211 @@ function KpiBar({ data }) {
   );
 }
 
+// ── SECCIÓN: Conversión de Asesores ───────────────────────────────────────────
+function ConversionKpiBar({ asesores }) {
+  const rows = Object.values(asesores);
+  const sum = (f) => rows.reduce((s, r) => s + (Number(r[f]) || 0), 0);
+  const totales = {
+    leads: sum("leads"), contactados: sum("contactados"), citasAgendadas: sum("citasAgendadas"),
+    citasAsistidas: sum("citasAsistidas"), demosAsistidas: sum("demosAsistidas"), ventas: sum("ventas"),
+  };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>
+      {ETAPAS.map(et => {
+        const num = totales[et.num], den = totales[et.den];
+        const ratio = den > 0 ? num / den : 0;
+        const p = Math.round(ratio * 100);
+        const ok = ratio >= et.objetivo;
+        const cumplen = rows.filter(r => {
+          const d = Number(r[et.den]) || 0, n = Number(r[et.num]) || 0;
+          return d > 0 && (n / d) >= et.objetivo;
+        }).length;
+        return (
+          <div key={et.key} style={{
+            background: "#0f2239", border: `1px solid ${ok ? "#16a34a55" : "#1e3a5f"}`,
+            borderTop: `3px solid ${ok ? "#4ade80" : "#D4AF37"}`,
+            borderRadius: 8, padding: "12px 14px"
+          }}>
+            <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8, marginBottom: 4 }}>% {et.label.toUpperCase()}</div>
+            <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{p}%</div>
+            <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>obj. {Math.round(et.objetivo * 100)}% · {cumplen}/{rows.length} asesores cumplen</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ConversionTable({ agencia, asesores, onFieldChange, onAdd, onRemove }) {
+  const ids = Object.keys(asesores);
+  const campoCols = [
+    { key: "leads", label: "Leads" },
+    { key: "contactados", label: "Contact." },
+    { key: "citasAgendadas", label: "Citas Agend." },
+    { key: "citasAsistidas", label: "Citas Asist." },
+    { key: "demosAsistidas", label: "Demos Asist." },
+    { key: "ventas", label: "Ventas" },
+  ];
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <SectionHeader title={`ASESORES — ${agencia}`} icon="🧑‍💼" />
+        <button onClick={() => onAdd(agencia)} style={{
+          background: "#D4AF3722", border: "1px solid #D4AF37", color: "#D4AF37",
+          borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 14
+        }}>
+          + Agregar asesor
+        </button>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1100 }}>
+          <thead>
+            <tr style={{ color: "#64748b", fontSize: 10.5 }}>
+              <th style={{ textAlign: "left", paddingBottom: 6, minWidth: 160 }}>ASESOR</th>
+              {campoCols.map(c => <th key={c.key} style={{ textAlign: "center", minWidth: 70 }}>{c.label}</th>)}
+              {ETAPAS.map(et => <th key={et.key} style={{ textAlign: "center", minWidth: 95 }}>% {et.label}</th>)}
+              <th style={{ minWidth: 30 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {ids.length === 0 && (
+              <tr><td colSpan={campoCols.length + ETAPAS.length + 2} style={{ color: "#475569", padding: "14px 0", textAlign: "center", fontSize: 12 }}>
+                Sin asesores registrados en {agencia}. Usa "+ Agregar asesor" para empezar.
+              </td></tr>
+            )}
+            {ids.map(id => {
+              const row = asesores[id];
+              return (
+                <tr key={id} style={{ borderTop: "1px solid #1e3a5f" }}>
+                  <td style={{ padding: "6px 0" }}>
+                    <input
+                      defaultValue={row.nombre}
+                      onBlur={e => onFieldChange(agencia, id, "nombre", e.target.value)}
+                      style={{ width: "100%", background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#f1f5f9", borderRadius: 4, padding: "3px 6px", fontSize: 12.5 }}
+                    />
+                  </td>
+                  {campoCols.map(c => (
+                    <td key={c.key} style={{ textAlign: "center" }}>
+                      <NumInput value={row[c.key] ?? 0} onChange={v => onFieldChange(agencia, id, c.key, v)} width={62} />
+                    </td>
+                  ))}
+                  {ETAPAS.map(et => {
+                    const num = Number(row[et.num]) || 0, den = Number(row[et.den]) || 0;
+                    const ratio = den > 0 ? num / den : 0;
+                    const p = Math.round(ratio * 100);
+                    const ok = den > 0 && ratio >= et.objetivo;
+                    return (
+                      <td key={et.key} style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: den === 0 ? "#475569" : ok ? "#4ade80" : "#f87171" }}>
+                          {den === 0 ? "—" : `${p}%`}
+                        </div>
+                        {den > 0 && <ProgressBar value={num} max={Math.max(den * et.objetivo, num)} />}
+                      </td>
+                    );
+                  })}
+                  <td style={{ textAlign: "center" }}>
+                    <button onClick={() => onRemove(agencia, id)} title="Eliminar asesor" style={{
+                      background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 14, fontWeight: 700
+                    }}>✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove }) {
+  const [agenciaSel, setAgenciaSel] = useState("TUXTLA");
+  const asesores = conversionData[agenciaSel] ?? {};
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {AGENCIAS.map(ag => (
+          <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
+            background: agenciaSel === ag ? "#D4AF37" : "#0f2239",
+            color: agenciaSel === ag ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${agenciaSel === ag ? "#D4AF37" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>
+            {ag} <span style={{ opacity: .7, fontWeight: 400 }}>({Object.keys(conversionData[ag] ?? {}).length})</span>
+          </button>
+        ))}
+      </div>
+      <ConversionKpiBar asesores={asesores} />
+      <ConversionTable agencia={agenciaSel} asesores={asesores} onFieldChange={onFieldChange} onAdd={onAdd} onRemove={onRemove} />
+      <div style={{ color: "#475569", fontSize: 11, textAlign: "center" }}>
+        % Contactados = Contactados/Leads (obj. 60%) · % Citas Agendadas = Citas Agendadas/Contactados (obj. 60%) ·
+        % Citas Asistidas = Citas Asistidas/Citas Agendadas (obj. 60%) · % Demos Asistidas = Demos Asistidas/Citas Asistidas (obj. 50%) ·
+        % Ventas = Ventas/Demos Asistidas (obj. 80%)
+      </div>
+    </div>
+  );
+}
+
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  const [tab, setTab] = useState("operativo"); // operativo | conversion
   const [data, setData] = useState(initialData);
+  const [conversionData, setConversionData] = useState(initialConversion);
   const [status, setStatus] = useState("conectando"); // conectando | ok | error
   const [lastSaved, setLastSaved] = useState(null);
   const saveTimer = useRef(null);
+  const convSaveTimer = useRef(null);
+
+  // ── Cargar conversión de Firebase al montar + polling ───────────────────────
+  useEffect(() => {
+    const loadConversion = async () => {
+      const raw = await fbGet(CONVERSION_PATH);
+      if (raw && typeof raw === "object") {
+        const merged = {};
+        AGENCIAS.forEach(ag => { merged[ag] = raw[ag] && typeof raw[ag] === "object" ? raw[ag] : (initialConversion[ag] ?? {}); });
+        setConversionData(merged);
+      } else {
+        await fbSet(CONVERSION_PATH, initialConversion);
+      }
+    };
+    loadConversion();
+    const poll = setInterval(loadConversion, 15000);
+    return () => clearInterval(poll);
+  }, []);
+
+  const scheduleSaveConversion = (next) => {
+    if (convSaveTimer.current) clearTimeout(convSaveTimer.current);
+    convSaveTimer.current = setTimeout(() => { fbSet(CONVERSION_PATH, next); }, 800);
+  };
+
+  const onAsesorFieldChange = (agencia, id, field, val) => {
+    setConversionData(prev => {
+      const next = {
+        ...prev,
+        [agencia]: { ...prev[agencia], [id]: { ...prev[agencia][id], [field]: val } }
+      };
+      scheduleSaveConversion(next);
+      return next;
+    });
+  };
+
+  const onAddAsesor = (agencia) => {
+    setConversionData(prev => {
+      const next = { ...prev, [agencia]: { ...prev[agencia], [genAsesorId()]: asesorBlank() } };
+      scheduleSaveConversion(next);
+      return next;
+    });
+  };
+
+  const onRemoveAsesor = (agencia, id) => {
+    setConversionData(prev => {
+      const agObj = { ...prev[agencia] };
+      delete agObj[id];
+      const next = { ...prev, [agencia]: agObj };
+      scheduleSaveConversion(next);
+      return next;
+    });
+  };
 
   // ── Cargar datos de Firebase al montar ──────────────────────────────────────
   useEffect(() => {
@@ -736,27 +971,54 @@ export default function App() {
           <div style={{ color: "#D4AF37", fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>CHANGAN · CHESA</div>
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>Dashboard Operativo — Junio 2026</h1>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
-          <span style={{ color: statusColor, fontSize: 12, fontWeight: 600 }}>{statusLabel}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setTab("operativo")} style={{
+              background: tab === "operativo" ? "#D4AF37" : "transparent",
+              color: tab === "operativo" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>📊 Operativo</button>
+            <button onClick={() => setTab("conversion")} style={{
+              background: tab === "conversion" ? "#D4AF37" : "transparent",
+              color: tab === "conversion" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>🧑‍💼 Conversión Asesores</button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
+            <span style={{ color: statusColor, fontSize: 12, fontWeight: 600 }}>{statusLabel}</span>
+          </div>
         </div>
       </div>
 
       <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto" }}>
-        <KpiBar data={data} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <VentasSection data={data} onFieldChange={onFieldChange} />
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            <div style={{ flex: 2, minWidth: 300 }}>
-              <AuditoriaSection data={data} onFieldChange={onFieldChange} onSimpleChange={onSimpleChange} />
+        {tab === "operativo" ? (
+          <>
+            <KpiBar data={data} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <VentasSection data={data} onFieldChange={onFieldChange} />
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ flex: 2, minWidth: 300 }}>
+                  <AuditoriaSection data={data} onFieldChange={onFieldChange} onSimpleChange={onSimpleChange} />
+                </div>
+                <div style={{ flex: 1, minWidth: 280 }}>
+                  <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} />
+                </div>
+              </div>
+              <SatisfaccionSection data={data} onFieldChange={onFieldChange} />
+              <MsRotacionSection data={data} onFieldChange={onFieldChange} />
             </div>
-            <div style={{ flex: 1, minWidth: 280 }}>
-              <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} />
-            </div>
-          </div>
-          <SatisfaccionSection data={data} onFieldChange={onFieldChange} />
-          <MsRotacionSection data={data} onFieldChange={onFieldChange} />
-        </div>
+          </>
+        ) : (
+          <ConversionSection
+            conversionData={conversionData}
+            onFieldChange={onAsesorFieldChange}
+            onAdd={onAddAsesor}
+            onRemove={onRemoveAsesor}
+          />
+        )}
         <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, marginTop: 24 }}>
           Los cambios se sincronizan automáticamente con Firebase · Actualización cada 15 seg
         </div>
