@@ -99,7 +99,7 @@ function buildFirebasePath(obj, prefix = "") {
   const flat = {};
   const recurse = (o, p) => {
     if (o === null || typeof o !== "object") { flat[p] = o; return; }
-    Object.keys(o).forEach(k => recurse(o[k], p ? ${p}/${encodeKey(k)} : encodeKey(k)));
+    Object.keys(o).forEach(k => recurse(o[k], p ? `${p}/${encodeKey(k)}` : encodeKey(k)));
   };
   recurse(obj, prefix);
   return flat;
@@ -107,14 +107,14 @@ function buildFirebasePath(obj, prefix = "") {
 
 async function fbGet(path) {
   try {
-    const r = await fetch(${FIREBASE_URL}/${path}.json);
+    const r = await fetch(`${FIREBASE_URL}/${path}.json`);
     return await r.json();
   } catch { return null; }
 }
 
 async function fbSet(path, value) {
   try {
-    await fetch(${FIREBASE_URL}/${path}.json, {
+    await fetch(`${FIREBASE_URL}/${path}.json`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(value),
@@ -124,7 +124,7 @@ async function fbSet(path, value) {
 
 async function fbPatch(path, value) {
   try {
-    await fetch(${FIREBASE_URL}/${path}.json, {
+    await fetch(`${FIREBASE_URL}/${path}.json`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(value),
@@ -161,7 +161,7 @@ function ProgressBar({ value, max }) {
   const bg = p >= 100 ? "#22c55e" : p >= 50 ? "#D4AF37" : "#ef4444";
   return (
     <div style={{ background: "#0d1b2e", borderRadius: 4, height: 8, overflow: "hidden", marginTop: 4 }}>
-      <div style={{ width: ${p}%, height: "100%", background: bg, transition: "width .4s" }} />
+      <div style={{ width: `${p}%`, height: "100%", background: bg, transition: "width .4s" }} />
     </div>
   );
 }
@@ -172,7 +172,7 @@ function Badge({ ok }) {
       display: "inline-block", padding: "2px 10px", borderRadius: 20,
       background: ok ? "#16a34a22" : "#dc262622",
       color: ok ? "#4ade80" : "#f87171",
-      fontSize: 12, fontWeight: 700, border: 1px solid ${ok ? "#4ade80" : "#f87171"}
+      fontSize: 12, fontWeight: 700, border: `1px solid ${ok ? "#4ade80" : "#f87171"}`
     }}>
       {ok ? "✓ CUMPLE" : "✗ NO CUMPLE"}
     </span>
@@ -245,8 +245,8 @@ function PieChart({ data, size = 180 }) {
       const y2 = cy + (r - 2) * Math.sin((Math.PI / 180) * endAngle);
       const largeArc = angle > 180 ? 1 : 0;
       const path = total === d.value
-        ? M ${cx} ${cy - (r - 2)} A ${r - 2} ${r - 2} 0 1 1 ${cx - 0.01} ${cy - (r - 2)} Z
-        : M ${cx} ${cy} L ${x1} ${y1} A ${r - 2} ${r - 2} 0 ${largeArc} 1 ${x2} ${y2} Z;
+        ? `M ${cx} ${cy - (r - 2)} A ${r - 2} ${r - 2} 0 1 1 ${cx - 0.01} ${cy - (r - 2)} Z`
+        : `M ${cx} ${cy} L ${x1} ${y1} A ${r - 2} ${r - 2} 0 ${largeArc} 1 ${x2} ${y2} Z`;
       const slice = { path, color: d.color, label: d.label, value: d.value };
       startAngle = endAngle;
       return slice;
@@ -256,7 +256,7 @@ function PieChart({ data, size = 180 }) {
     <svg width={size} height={size}>
       {slices.map((s, i) => (
         <path key={i} d={s.path} fill={s.color} stroke="#0f2239" strokeWidth="1">
-          <title>{${s.label}: ${s.value} (${((s.value / total) * 100).toFixed(1)}%)}</title>
+          <title>{`${s.label}: ${s.value} (${((s.value / total) * 100).toFixed(1)}%)`}</title>
         </path>
       ))}
       <circle cx={cx} cy={cy} r={r * 0.38} fill="#0f2239" />
@@ -713,20 +713,20 @@ function KpiBar({ data }) {
   const wsObj  = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.objetivo ?? 0), 0);
 
   const kpis = [
-    { label: "Ventas Jun Interno", value: ${avanceV}%, sub: ${totalFact}/${totalObj} unid., ok: avanceV >= 80 },
-    { label: "Ventas Jun MX",      value: ${avanceMx}%, sub: ${totalFactMx}/${totalObjMx} unid., ok: avanceMx >= 80 },
-    { label: "ISI Cumplimiento",   value: ${isiOk}/${AGENCIAS.length}, sub: "agencias ≥ objetivo", ok: isiOk === AGENCIAS.length },
-    { label: "VAU Cumplimiento",   value: ${vauOk}/${AGENCIAS.length}, sub: "agencias cumplen", ok: vauOk === AGENCIAS.length },
-    { label: "WS Total Junio",     value: wsReal, sub: de ${wsObj} objetivo, ok: wsReal >= wsObj },
-    { label: "VAN Total Jun",      value: AGENCIAS.reduce((s,a) => s+(data.van[a]?.real??0),0), sub: de ${AGENCIAS.reduce((s,a)=>s+(data.van[a]?.objetivo??0),0)} objetivo, ok: false },
+    { label: "Ventas Jun Interno", value: `${avanceV}%`, sub: `${totalFact}/${totalObj} unid.`, ok: avanceV >= 80 },
+    { label: "Ventas Jun MX",      value: `${avanceMx}%`, sub: `${totalFactMx}/${totalObjMx} unid.`, ok: avanceMx >= 80 },
+    { label: "ISI Cumplimiento",   value: `${isiOk}/${AGENCIAS.length}`, sub: "agencias ≥ objetivo", ok: isiOk === AGENCIAS.length },
+    { label: "VAU Cumplimiento",   value: `${vauOk}/${AGENCIAS.length}`, sub: "agencias cumplen", ok: vauOk === AGENCIAS.length },
+    { label: "WS Total Junio",     value: wsReal, sub: `de ${wsObj} objetivo`, ok: wsReal >= wsObj },
+    { label: "VAN Total Jun",      value: AGENCIAS.reduce((s,a) => s+(data.van[a]?.real??0),0), sub: `de ${AGENCIAS.reduce((s,a)=>s+(data.van[a]?.objetivo??0),0)} objetivo`, ok: false },
   ];
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
       {kpis.map(k => (
         <div key={k.label} style={{
-          background: "#0f2239", border: 1px solid ${k.ok ? "#16a34a55" : "#1e3a5f"},
-          borderTop: 3px solid ${k.ok ? "#4ade80" : "#D4AF37"},
+          background: "#0f2239", border: `1px solid ${k.ok ? "#16a34a55" : "#1e3a5f"}`,
+          borderTop: `3px solid ${k.ok ? "#4ade80" : "#D4AF37"}`,
           borderRadius: 8, padding: "12px 14px"
         }}>
           <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8, marginBottom: 4 }}>{k.label}</div>
@@ -857,7 +857,7 @@ export default function App() {
 
   // ── Status indicator ────────────────────────────────────────────────────────
   const statusColor = { conectando: "#D4AF37", guardando: "#60a5fa", ok: "#4ade80", error: "#f87171" }[status];
-  const statusLabel = { conectando: "Conectando…", guardando: "Guardando…", ok: lastSaved ? Guardado ${lastSaved} : "Conectado", error: "Error de conexión" }[status];
+  const statusLabel = { conectando: "Conectando…", guardando: "Guardando…", ok: lastSaved ? `Guardado ${lastSaved}` : "Conectado", error: "Error de conexión" }[status];
 
   return (
     <div style={{ minHeight: "100vh", background: "#070f1a", fontFamily: "'Inter', 'Segoe UI', sans-serif", color: "#f1f5f9", padding: "0 0 40px" }}>
@@ -873,7 +873,7 @@ export default function App() {
           <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>Dashboard Operativo — Junio 2026</h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, boxShadow: 0 0 6px ${statusColor} }} />
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
           <span style={{ color: statusColor, fontSize: 12, fontWeight: 600 }}>{statusLabel}</span>
         </div>
       </div>
