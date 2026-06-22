@@ -5,6 +5,16 @@ const FIREBASE_URL = "https://dashboard-changan-chesa-default-rtdb.firebaseio.co
 
 const AGENCIAS = ["TUXTLA", "TAPACHULA", "SAN CRISTÓBAL", "COMITÁN", "OCOSINGO"];
 
+const PLANES = [
+  { key: "CONTADO",     color: "#D4AF37" },
+  { key: "BBVA",        color: "#1e88e5" },
+  { key: "BANORTE",     color: "#e53935" },
+  { key: "CAFI",        color: "#8e44ad" },
+  { key: "SANTANDER",   color: "#ff7043" },
+  { key: "BANJÉRCITO",  color: "#26a69a" },
+  { key: "SCOTIABANK",  color: "#ec407a" },
+];
+
 // ── Conversión de Asesores ────────────────────────────────────────────────────
 const CONVERSION_PATH = "conversionAsesores";
 
@@ -55,6 +65,13 @@ const initialData = {
     "SAN CRISTÓBAL": { facturado: 0, objetivo: 16 },
     COMITÁN:         { facturado: 0, objetivo: 10 },
     OCOSINGO:        { facturado: 0, objetivo: 9  },
+  },
+  planesPago: {
+    TUXTLA:          { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
+    TAPACHULA:       { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
+    "SAN CRISTÓBAL": { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
+    COMITÁN:         { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
+    OCOSINGO:        { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
   },
   ws: {
     TUXTLA:          { objetivo: 12, real: 0 },
@@ -294,7 +311,117 @@ function VentasSection({ data, onFieldChange }) {
   );
 }
 
-// ── SECCIÓN: Auditoría & WS ───────────────────────────────────────────────────
+// ── Gráfica de pastel (CSS conic-gradient, sin librerías externas) ───────────
+function PieChart({ entries, size = 190 }) {
+  const total = entries.reduce((s, e) => s + e.value, 0);
+  let acc = 0;
+  const stops = entries.map(e => {
+    const start = total > 0 ? (acc / total * 100) : 0;
+    acc += e.value;
+    const end = total > 0 ? (acc / total * 100) : 0;
+    return `${e.color} ${start}% ${end}%`;
+  }).join(", ");
+  const bg = total > 0 ? `conic-gradient(${stops})` : "#1e3a5f";
+  return (
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <div style={{ width: size, height: size, borderRadius: "50%", background: bg, border: "3px solid #0d1b2e", boxShadow: "0 0 0 1px #1e3a5f" }} />
+      <div style={{
+        position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
+        flexDirection: "column"
+      }}>
+        <div style={{
+          width: size * 0.52, height: size * 0.52, borderRadius: "50%", background: "#0f2239",
+          display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column",
+          border: "1px solid #1e3a5f"
+        }}>
+          <div style={{ color: "#D4AF37", fontSize: 18, fontWeight: 800 }}>{total}</div>
+          <div style={{ color: "#64748b", fontSize: 9, fontWeight: 700, letterSpacing: .5 }}>UNIDADES</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SECCIÓN: Ventas por Tipo de Plan ──────────────────────────────────────────
+function PlanesPagoSection({ data, onFieldChange }) {
+  const [agSel, setAgSel] = useState("TOTAL");
+  const opciones = ["TOTAL", ...AGENCIAS];
+
+  const valores = PLANES.map(p => ({
+    ...p,
+    value: agSel === "TOTAL"
+      ? AGENCIAS.reduce((s, ag) => s + (data.planesPago[ag]?.[p.key] ?? 0), 0)
+      : (data.planesPago[agSel]?.[p.key] ?? 0),
+  }));
+  const total = valores.reduce((s, v) => s + v.value, 0);
+  const facturadoRef = agSel === "TOTAL"
+    ? AGENCIAS.reduce((s, ag) => s + (data.ventasJunioInterno[ag]?.facturado ?? 0), 0)
+    : (data.ventasJunioInterno[agSel]?.facturado ?? 0);
+  const coincide = total === facturadoRef;
+
+  return (
+    <Card>
+      <SectionHeader title="VENTAS POR TIPO DE PLAN" icon="🥧" />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+        {opciones.map(ag => (
+          <button key={ag} onClick={() => setAgSel(ag)} style={{
+            background: agSel === ag ? "#D4AF37" : "#0f2239",
+            color: agSel === ag ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${agSel === ag ? "#D4AF37" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>
+            {ag}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "center" }}>
+        <PieChart entries={valores} />
+        <div style={{ flex: 1, minWidth: 300 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: "#64748b", fontSize: 11 }}>
+                <th style={{ textAlign: "left", paddingBottom: 6 }}>PLAN</th>
+                <th style={{ textAlign: "center" }}>UNIDADES</th>
+                <th style={{ textAlign: "right" }}>% PARTICIPACIÓN</th>
+              </tr>
+            </thead>
+            <tbody>
+              {valores.map(v => {
+                const p = total > 0 ? (v.value / total * 100) : 0;
+                return (
+                  <tr key={v.key} style={{ borderTop: "1px solid #1e3a5f" }}>
+                    <td style={{ padding: "6px 0" }}>
+                      <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: v.color, marginRight: 7 }} />
+                      <span style={{ color: "#cbd5e1", fontSize: 12 }}>{v.key}</span>
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      {agSel === "TOTAL"
+                        ? <span style={{ color: "#cbd5e1" }}>{v.value}</span>
+                        : <NumInput value={v.value} onChange={val => onFieldChange("planesPago", agSel, v.key, val)} width={55} />}
+                    </td>
+                    <td style={{ textAlign: "right", color: p > 0 ? "#D4AF37" : "#475569", fontWeight: 700 }}>{p.toFixed(1)}%</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0" }}>TOTAL</td>
+                <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{total}</td>
+                <td style={{ textAlign: "right", color: "#D4AF37", fontWeight: 700 }}>100%</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11.5, color: "#64748b" }}>
+            <span>Capturado por plan: <b style={{ color: "#cbd5e1" }}>{total}</b></span>
+            <span>· Facturado en Ventas ({agSel}): <b style={{ color: "#cbd5e1" }}>{facturadoRef}</b></span>
+            <Badge ok={coincide} />
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+
 function AuditoriaSection({ data, onFieldChange, onSimpleChange }) {
   const totalObj  = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.objetivo ?? 0), 0);
   const totalReal = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.real ?? 0), 0);
@@ -441,8 +568,94 @@ function VanVauSection({ data, onFieldChange, onToggleVau }) {
 function SatisfaccionSection({ data, onFieldChange }) {
   return (
     <Card>
-      <SectionHeader title="SATISFACCIÓN — ISI / SSI / CSI" icon="⭐" />
+      <SectionHeader title="SATISFACCIÓN — SSI / CSI / ISI" icon="⭐" />
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 320 }}>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>SSI JUNIO (Objetivo aplica a CBD y SSI)</p>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: "#64748b", fontSize: 11 }}>
+                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+                <th style={{ textAlign: "center" }}>OBJ</th>
+                <th style={{ textAlign: "center" }}>CBD</th>
+                <th style={{ textAlign: "center" }}></th>
+                <th style={{ textAlign: "center" }}>SSI</th>
+                <th style={{ textAlign: "center" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {["TUXTLA", "TAPACHULA", "OCOSINGO"].map(ag => {
+                const row = data.ssi[ag] ?? { objetivo: 0.87, cbd: 0, ssi: 0 };
+                const objPct = row.objetivo * 100;
+                const cbdOk = row.cbd >= objPct;
+                const ssiOk = row.ssi >= objPct;
+                return (
+                  <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+                    <td style={{ textAlign: "center", color: "#64748b" }}>{objPct.toFixed(0)}%</td>
+                    <td style={{ textAlign: "center" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                        <NumInput value={row.cbd} onChange={v => onFieldChange("ssi", ag, "cbd", v)} step={0.1} width={50} />
+                        <span style={{ color: "#64748b", fontSize: 12 }}>%</span>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: "center" }}><Badge ok={cbdOk} /></td>
+                    <td style={{ textAlign: "center" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                        <NumInput value={row.ssi} onChange={v => onFieldChange("ssi", ag, "ssi", v)} step={0.1} width={50} />
+                        <span style={{ color: "#64748b", fontSize: 12 }}>%</span>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: "center" }}><Badge ok={ssiOk} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ flex: 1, minWidth: 320 }}>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>CSI JUNIO (Objetivo aplica a CBD y CSI)</p>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: "#64748b", fontSize: 11 }}>
+                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+                <th style={{ textAlign: "center" }}>OBJ</th>
+                <th style={{ textAlign: "center" }}>CBD</th>
+                <th style={{ textAlign: "center" }}></th>
+                <th style={{ textAlign: "center" }}>CSI</th>
+                <th style={{ textAlign: "center" }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {["TUXTLA", "TAPACHULA"].map(ag => {
+                const row = data.csi[ag] ?? { objetivo: 0.87, cbd: 0, csi: 0 };
+                const objPct = row.objetivo * 100;
+                const cbdOk = row.cbd >= objPct;
+                const csiOk = row.csi >= objPct;
+                return (
+                  <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+                    <td style={{ textAlign: "center", color: "#64748b" }}>{objPct.toFixed(0)}%</td>
+                    <td style={{ textAlign: "center" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                        <NumInput value={row.cbd} onChange={v => onFieldChange("csi", ag, "cbd", v)} step={0.1} width={50} />
+                        <span style={{ color: "#64748b", fontSize: 12 }}>%</span>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: "center" }}><Badge ok={cbdOk} /></td>
+                    <td style={{ textAlign: "center" }}>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                        <NumInput value={row.csi} onChange={v => onFieldChange("csi", ag, "csi", v)} step={0.1} width={50} />
+                        <span style={{ color: "#64748b", fontSize: 12 }}>%</span>
+                      </div>
+                    </td>
+                    <td style={{ textAlign: "center" }}><Badge ok={csiOk} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
         <div style={{ flex: 1, minWidth: 220 }}>
           <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>ISI JUNIO 2026</p>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -457,75 +670,19 @@ function SatisfaccionSection({ data, onFieldChange }) {
             <tbody>
               {AGENCIAS.map(ag => {
                 const row = data.isi[ag] ?? { objetivo: 0.85, real: 0 };
-                const ok = row.real >= row.objetivo;
+                const objPct = row.objetivo * 100;
+                const ok = row.real >= objPct;
                 return (
                   <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
                     <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-                    <td style={{ textAlign: "center", color: "#64748b" }}>{(row.objetivo * 100).toFixed(0)}%</td>
+                    <td style={{ textAlign: "center", color: "#64748b" }}>{objPct.toFixed(0)}%</td>
                     <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.real} onChange={v => onFieldChange("isi", ag, "real", v)} step={0.01} min={0} width={55} />
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                        <NumInput value={row.real} onChange={v => onFieldChange("isi", ag, "real", v)} step={0.1} min={0} width={55} />
+                        <span style={{ color: "#64748b", fontSize: 12 }}>%</span>
+                      </div>
                     </td>
                     <td style={{ textAlign: "center" }}><Badge ok={ok} /></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>SSI JUNIO</p>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: "#64748b", fontSize: 11 }}>
-                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
-                <th style={{ textAlign: "center" }}>OBJ</th>
-                <th style={{ textAlign: "center" }}>CBD</th>
-                <th style={{ textAlign: "center" }}>SSI</th>
-              </tr>
-            </thead>
-            <tbody>
-              {["TUXTLA", "TAPACHULA", "OCOSINGO"].map(ag => {
-                const row = data.ssi[ag] ?? { objetivo: 0.87, cbd: 0, ssi: 0 };
-                return (
-                  <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
-                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-                    <td style={{ textAlign: "center", color: "#64748b" }}>{(row.objetivo * 100).toFixed(0)}%</td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.cbd} onChange={v => onFieldChange("ssi", ag, "cbd", v)} step={0.01} width={50} />
-                    </td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.ssi} onChange={v => onFieldChange("ssi", ag, "ssi", v)} step={0.01} width={50} />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>CSI JUNIO</p>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: "#64748b", fontSize: 11 }}>
-                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
-                <th style={{ textAlign: "center" }}>OBJ</th>
-                <th style={{ textAlign: "center" }}>CBD</th>
-                <th style={{ textAlign: "center" }}>CSI</th>
-              </tr>
-            </thead>
-            <tbody>
-              {["TUXTLA", "TAPACHULA"].map(ag => {
-                const row = data.csi[ag] ?? { objetivo: 0.87, cbd: 0, csi: 0 };
-                return (
-                  <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
-                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-                    <td style={{ textAlign: "center", color: "#64748b" }}>{(row.objetivo * 100).toFixed(0)}%</td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.cbd} onChange={v => onFieldChange("csi", ag, "cbd", v)} step={0.01} width={50} />
-                    </td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.csi} onChange={v => onFieldChange("csi", ag, "csi", v)} step={0.01} width={50} />
-                    </td>
                   </tr>
                 );
               })}
@@ -999,6 +1156,7 @@ export default function App() {
             <KpiBar data={data} />
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <VentasSection data={data} onFieldChange={onFieldChange} />
+              <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <div style={{ flex: 2, minWidth: 300 }}>
                   <AuditoriaSection data={data} onFieldChange={onFieldChange} onSimpleChange={onSimpleChange} />
