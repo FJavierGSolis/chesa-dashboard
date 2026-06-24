@@ -16,15 +16,21 @@ const PLANES = [
 ];
 
 const LINEAS_PRODUCTO = [
-  "ALSVIN", "CS35", "CS55", "HUNTER PLUS", "HONOR", "STAR TRUCK",
-  "EADO IDD", "CS55 IDD", "CS75 PRO", "DEEPAL", "EADO PLUS",
-  "UNIK", "HUNTER CHASIS", "HUNTER WORK", "HUNTER E",
-];
-
-const COLORES_LINEAS = [
-  "#D4AF37", "#4ade80", "#60a5fa", "#f87171", "#c084fc", "#fb923c",
-  "#22d3ee", "#fbbf24", "#a3e635", "#f472b6", "#818cf8",
-  "#34d399", "#fb7185", "#38bdf8", "#facc15",
+  { key: "ALSVIN",         color: "#D4AF37" },
+  { key: "CS35",           color: "#4ade80" },
+  { key: "CS55",           color: "#60a5fa" },
+  { key: "HUNTER PLUS",    color: "#f87171" },
+  { key: "HONOR",          color: "#c084fc" },
+  { key: "STAR TRUCK",     color: "#fb923c" },
+  { key: "EADO IDD",       color: "#22d3ee" },
+  { key: "CS55 IDD",       color: "#fbbf24" },
+  { key: "CS75 PRO",       color: "#a3e635" },
+  { key: "DEEPAL",         color: "#f472b6" },
+  { key: "EADO PLUS",      color: "#818cf8" },
+  { key: "UNIK",           color: "#34d399" },
+  { key: "HUNTER CHASIS",  color: "#fb7185" },
+  { key: "HUNTER WORK",    color: "#38bdf8" },
+  { key: "HUNTER E",       color: "#facc15" },
 ];
 
 // ── Conversión de Asesores ────────────────────────────────────────────────────
@@ -86,11 +92,11 @@ const initialData = {
     OCOSINGO:        { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
   },
   lineasProducto: {
-    TUXTLA:          Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
-    TAPACHULA:       Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
-    "SAN CRISTÓBAL": Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
-    COMITÁN:         Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
-    OCOSINGO:        Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
+    TUXTLA:          Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0])),
+    TAPACHULA:       Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0])),
+    "SAN CRISTÓBAL": Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0])),
+    COMITÁN:         Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0])),
+    OCOSINGO:        Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0])),
   },
   ws: {
     TUXTLA:          { objetivo: 12, real: 0 },
@@ -203,8 +209,63 @@ function decodeFirebaseData(raw, template) {
   return result;
 }
 
+// ── Manejo de meses ────────────────────────────────────────────────────────────
+const MES_NOMBRES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+
+function getMonthKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`; // ej. "2026-07"
+}
+
+function getMonthLabel(monthKey) {
+  const [y, m] = monthKey.split("-");
+  return `${MES_NOMBRES[parseInt(m, 10) - 1]} ${y}`;
+}
+
+function getPreviousMonthKey(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  const d = new Date(y, m - 2, 1); // mes-1 (0-indexed) -1 más = mes anterior
+  return getMonthKey(d);
+}
+
+// Extrae solo los objetivos de "data" (deja todo lo "real"/"facturado"/capturado en cero)
+// para usarlos como base del mes nuevo.
+function extractObjectivesOnly(prevData) {
+  const next = JSON.parse(JSON.stringify(initialData)); // estructura limpia en cero
+
+  // Ventas: solo copiamos los objetivos, no lo facturado
+  ["ventasJunioInterno", "ventasJunioMexico"].forEach(bloque => {
+    AGENCIAS.forEach(ag => {
+      if (prevData[bloque]?.[ag]) next[bloque][ag].objetivo = prevData[bloque][ag].objetivo;
+    });
+  });
+  // WS
+  AGENCIAS.forEach(ag => { if (prevData.ws?.[ag]) next.ws[ag].objetivo = prevData.ws[ag].objetivo; });
+  // SSI / CSI / ISI
+  Object.keys(next.ssi).forEach(ag => { if (prevData.ssi?.[ag]) next.ssi[ag].objetivo = prevData.ssi[ag].objetivo; });
+  Object.keys(next.csi).forEach(ag => { if (prevData.csi?.[ag]) next.csi[ag].objetivo = prevData.csi[ag].objetivo; });
+  Object.keys(next.isi).forEach(ag => { if (prevData.isi?.[ag]) next.isi[ag].objetivo = prevData.isi[ag].objetivo; });
+  // Rotación
+  AGENCIAS.forEach(ag => { if (prevData.rotacion?.[ag]) next.rotacion[ag].objetivo = prevData.rotacion[ag].objetivo; });
+  // Market share (objetivo + tiv, que suele repetirse; ventas/real en cero)
+  AGENCIAS.forEach(ag => {
+    if (prevData.msMayo?.[ag]) {
+      next.msMayo[ag].objetivo = prevData.msMayo[ag].objetivo;
+      next.msMayo[ag].tiv = prevData.msMayo[ag].tiv;
+    }
+  });
+  // VAN
+  AGENCIAS.forEach(ag => { if (prevData.van?.[ag]) next.van[ag].objetivo = prevData.van[ag].objetivo; });
+  // planesPago y lineasProducto: no tienen "objetivo", arrancan en cero (ya están en initialData)
+  // auditoria y vau: arrancan en valor neutro (ya están en initialData)
+
+  return next;
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 const pct = (v, t) => (t > 0 ? Math.min(100, Math.round((v / t) * 100)) : 0);
+
 
 // ── sub-components ────────────────────────────────────────────────────────────
 function ProgressBar({ value, max }) {
@@ -440,52 +501,78 @@ function PlanesPagoSection({ data, onFieldChange }) {
 
 // ── SECCIÓN: Ventas por Línea de Producto ─────────────────────────────────────
 function LineasProductoSection({ data, onLineaChange }) {
-  const totalGeneral = AGENCIAS.reduce(
-    (s, ag) => s + LINEAS_PRODUCTO.reduce((s2, l) => s2 + (data.lineasProducto[ag]?.[l] ?? 0), 0), 0
-  );
+  const [agSel, setAgSel] = useState("TOTAL");
+  const opciones = ["TOTAL", ...AGENCIAS];
+
+  const valores = LINEAS_PRODUCTO.map(l => ({
+    ...l,
+    value: agSel === "TOTAL"
+      ? AGENCIAS.reduce((s, ag) => s + (data.lineasProducto[ag]?.[l.key] ?? 0), 0)
+      : (data.lineasProducto[agSel]?.[l.key] ?? 0),
+  }));
+  const total = valores.reduce((s, v) => s + v.value, 0);
+  const facturadoRef = agSel === "TOTAL"
+    ? AGENCIAS.reduce((s, ag) => s + (data.ventasJunioInterno[ag]?.facturado ?? 0), 0)
+    : (data.ventasJunioInterno[agSel]?.facturado ?? 0);
+  const coincide = total === facturadoRef;
 
   return (
     <Card>
       <SectionHeader title="VENTAS POR LÍNEA DE PRODUCTO" icon="🥧" />
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        {AGENCIAS.map(ag => {
-          const rowData = data.lineasProducto[ag] ?? {};
-          const pieData = LINEAS_PRODUCTO.map((linea, i) => ({
-            label: linea,
-            value: rowData[linea] ?? 0,
-            color: COLORES_LINEAS[i % COLORES_LINEAS.length],
-          }));
-          const totalAgencia = pieData.reduce((s, d) => s + d.value, 0);
-          const entriesForPie = pieData.map(d => ({ value: d.value, color: d.color }));
-
-          return (
-            <div key={ag} style={{ flex: "1 1 280px", minWidth: 280 }}>
-              <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{ag}</p>
-              <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-                <PieChart entries={entriesForPie} size={140} />
-                <div style={{ flex: 1, maxHeight: 170, overflowY: "auto" }}>
-                  {LINEAS_PRODUCTO.map((linea, i) => (
-                    <div key={linea} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: COLORES_LINEAS[i % COLORES_LINEAS.length], flexShrink: 0 }} />
-                      <span style={{ color: "#94a3b8", fontSize: 10, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{linea}</span>
-                      <NumInput
-                        value={rowData[linea] ?? 0}
-                        onChange={v => onLineaChange(ag, linea, v)}
-                        width={42}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div style={{ textAlign: "right", color: "#D4AF37", fontSize: 12, fontWeight: 700, marginTop: 4 }}>
-                Total: {totalAgencia} unid.
-              </div>
-            </div>
-          );
-        })}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+        {opciones.map(ag => (
+          <button key={ag} onClick={() => setAgSel(ag)} style={{
+            background: agSel === ag ? "#D4AF37" : "#0f2239",
+            color: agSel === ag ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${agSel === ag ? "#D4AF37" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>
+            {ag}
+          </button>
+        ))}
       </div>
-      <div style={{ textAlign: "right", color: "#D4AF37", fontSize: 14, fontWeight: 800, marginTop: 16, borderTop: "1px solid #D4AF3733", paddingTop: 10 }}>
-        TOTAL GENERAL: {totalGeneral} unidades
+      <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "center" }}>
+        <PieChart entries={valores} />
+        <div style={{ flex: 1, minWidth: 300 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: "#64748b", fontSize: 11 }}>
+                <th style={{ textAlign: "left", paddingBottom: 6 }}>LÍNEA</th>
+                <th style={{ textAlign: "center" }}>UNIDADES</th>
+                <th style={{ textAlign: "right" }}>% PARTICIPACIÓN</th>
+              </tr>
+            </thead>
+            <tbody>
+              {valores.map(v => {
+                const p = total > 0 ? (v.value / total * 100) : 0;
+                return (
+                  <tr key={v.key} style={{ borderTop: "1px solid #1e3a5f" }}>
+                    <td style={{ padding: "6px 0" }}>
+                      <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: v.color, marginRight: 7 }} />
+                      <span style={{ color: "#cbd5e1", fontSize: 12 }}>{v.key}</span>
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      {agSel === "TOTAL"
+                        ? <span style={{ color: "#cbd5e1" }}>{v.value}</span>
+                        : <NumInput value={v.value} onChange={val => onLineaChange(agSel, v.key, val)} width={55} />}
+                    </td>
+                    <td style={{ textAlign: "right", color: p > 0 ? "#D4AF37" : "#475569", fontWeight: 700 }}>{p.toFixed(1)}%</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0" }}>TOTAL</td>
+                <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{total}</td>
+                <td style={{ textAlign: "right", color: "#D4AF37", fontWeight: 700 }}>100%</td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11.5, color: "#64748b" }}>
+            <span>Capturado por línea: <b style={{ color: "#cbd5e1" }}>{total}</b></span>
+            <span>· Facturado en Ventas ({agSel}): <b style={{ color: "#cbd5e1" }}>{facturadoRef}</b></span>
+            <Badge ok={coincide} />
+          </div>
+        </div>
       </div>
     </Card>
   );
@@ -1036,6 +1123,11 @@ export default function App() {
   const saveTimer = useRef(null);
   const convSaveTimer = useRef(null);
 
+  const currentMonthKey = getMonthKey();
+  const [viewMonth, setViewMonth] = useState(currentMonthKey); // mes que se está viendo
+  const [availableMonths, setAvailableMonths] = useState([currentMonthKey]);
+  const isReadOnly = viewMonth !== currentMonthKey;
+
   // ── Cargar conversión de Firebase al montar + polling ───────────────────────
   useEffect(() => {
     const loadConversion = async () => {
@@ -1087,11 +1179,22 @@ export default function App() {
     });
   };
 
-  // ── Cargar datos de Firebase al montar ──────────────────────────────────────
+  // ── Cargar lista de meses disponibles ───────────────────────────────────────
   useEffect(() => {
     (async () => {
-      const raw = await fbGet("junio2026");
-      if (raw && typeof raw === "object") {
+      const idx = await fbGet("mesesIndex");
+      const meses = Array.isArray(idx) ? idx : (idx ? Object.values(idx) : []);
+      const set = new Set([...meses, currentMonthKey]);
+      const ordered = Array.from(set).sort().reverse(); // más reciente primero
+      setAvailableMonths(ordered);
+    })();
+  }, []);
+
+  // ── Cargar datos del mes actual (o crear el mes nuevo heredando objetivos) ──
+  useEffect(() => {
+    (async () => {
+      const raw = await fbGet(`datos/${currentMonthKey}`);
+      if (raw && typeof raw === "object" && Object.keys(raw).length > 0) {
         const merged = {};
         Object.keys(initialData).forEach(section => {
           merged[section] = decodeFirebaseData(raw[section], initialData[section]);
@@ -1099,15 +1202,33 @@ export default function App() {
         setData(merged);
         setStatus("ok");
       } else {
-        // Primera vez: inicializar en Firebase
-        await fbSet("junio2026", buildFirebaseSafeData(initialData));
+        // Mes nuevo: buscamos el mes anterior para heredar objetivos
+        const prevKey = getPreviousMonthKey(currentMonthKey);
+        const prevRaw = await fbGet(`datos/${prevKey}`);
+        let base = initialData;
+        if (prevRaw && typeof prevRaw === "object" && Object.keys(prevRaw).length > 0) {
+          const prevMerged = {};
+          Object.keys(initialData).forEach(section => {
+            prevMerged[section] = decodeFirebaseData(prevRaw[section], initialData[section]);
+          });
+          base = extractObjectivesOnly(prevMerged);
+        }
+        await fbSet(`datos/${currentMonthKey}`, buildFirebaseSafeData(base));
+        // Actualizar índice de meses
+        const idx = await fbGet("mesesIndex");
+        const meses = Array.isArray(idx) ? idx : (idx ? Object.values(idx) : []);
+        const nuevoIdx = Array.from(new Set([...meses, currentMonthKey]));
+        await fbSet("mesesIndex", nuevoIdx);
+        setAvailableMonths(nuevoIdx.sort().reverse());
+        setData(base);
         setStatus("ok");
       }
     })();
 
-    // Polling cada 15 segundos para sincronizar cambios de otros usuarios
+    // Polling cada 15 segundos para sincronizar cambios de otros usuarios (solo si viendo el mes actual)
     const poll = setInterval(async () => {
-      const raw = await fbGet("junio2026");
+      if (viewMonth !== currentMonthKey) return; // no refrescar si está viendo histórico
+      const raw = await fbGet(`datos/${currentMonthKey}`);
       if (raw && typeof raw === "object") {
         const merged = {};
         Object.keys(initialData).forEach(section => {
@@ -1119,6 +1240,23 @@ export default function App() {
 
     return () => clearInterval(poll);
   }, []);
+
+  // ── Cuando el usuario navega a ver un mes distinto (histórico, solo lectura) ─
+  useEffect(() => {
+    if (viewMonth === currentMonthKey) return; // ya se maneja arriba
+    (async () => {
+      setStatus("conectando");
+      const raw = await fbGet(`datos/${viewMonth}`);
+      if (raw && typeof raw === "object") {
+        const merged = {};
+        Object.keys(initialData).forEach(section => {
+          merged[section] = decodeFirebaseData(raw[section], initialData[section]);
+        });
+        setData(merged);
+      }
+      setStatus("ok");
+    })();
+  }, [viewMonth]);
 
   // Construir objeto con claves Firebase-safe
   function buildFirebaseSafeData(d) {
@@ -1139,11 +1277,12 @@ export default function App() {
 
   // ── Guardar a Firebase con debounce 800ms ────────────────────────────────────
   const scheduleSave = (newData) => {
+    if (isReadOnly) return; // no se guarda si se está viendo un mes histórico
     setStatus("guardando");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        await fbSet("junio2026", buildFirebaseSafeData(newData));
+        await fbSet(`datos/${currentMonthKey}`, buildFirebaseSafeData(newData));
         setStatus("ok");
         setLastSaved(new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
       } catch {
@@ -1212,9 +1351,25 @@ export default function App() {
       }}>
         <div>
           <div style={{ color: "#D4AF37", fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>CHANGAN · CHESA</div>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>Dashboard Operativo — Junio 2026</h1>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>
+            Dashboard Operativo — {getMonthLabel(viewMonth).charAt(0).toUpperCase() + getMonthLabel(viewMonth).slice(1)}
+          </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <select
+            value={viewMonth}
+            onChange={e => setViewMonth(e.target.value)}
+            style={{
+              background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#D4AF37",
+              borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}
+          >
+            {availableMonths.map(mk => (
+              <option key={mk} value={mk}>
+                {getMonthLabel(mk).charAt(0).toUpperCase() + getMonthLabel(mk).slice(1)}{mk === currentMonthKey ? " (actual)" : ""}
+              </option>
+            ))}
+          </select>
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={() => setTab("operativo")} style={{
               background: tab === "operativo" ? "#D4AF37" : "transparent",
@@ -1230,20 +1385,40 @@ export default function App() {
             }}>🧑‍💼 Conversión Asesores</button>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
-            <span style={{ color: statusColor, fontSize: 12, fontWeight: 600 }}>{statusLabel}</span>
+            {isReadOnly ? (
+              <>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fbbf24", boxShadow: "0 0 6px #fbbf24" }} />
+                <span style={{ color: "#fbbf24", fontSize: 12, fontWeight: 600 }}>Histórico (solo lectura)</span>
+              </>
+            ) : (
+              <>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, boxShadow: `0 0 6px ${statusColor}` }} />
+                <span style={{ color: statusColor, fontSize: 12, fontWeight: 600 }}>{statusLabel}</span>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto" }}>
+      {isReadOnly && (
+        <div style={{ background: "#fbbf2422", borderBottom: "1px solid #fbbf24", padding: "8px 28px", textAlign: "center", fontSize: 12.5, color: "#fbbf24" }}>
+          Estás viendo el histórico de <b>{getMonthLabel(viewMonth)}</b> — los datos no se pueden editar.{" "}
+          <button onClick={() => setViewMonth(currentMonthKey)} style={{
+            background: "none", border: "none", color: "#fbbf24", textDecoration: "underline", cursor: "pointer", fontSize: 12.5, fontWeight: 700
+          }}>
+            Volver al mes actual
+          </button>
+        </div>
+      )}
+
+      <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto", opacity: isReadOnly ? 0.85 : 1, pointerEvents: isReadOnly ? "none" : "auto" }}>
         {tab === "operativo" ? (
           <>
             <KpiBar data={data} />
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <LineasProductoSection data={data} onLineaChange={onLineaChange} />
               <VentasSection data={data} onFieldChange={onFieldChange} />
               <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
+              <LineasProductoSection data={data} onLineaChange={onLineaChange} />
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 280 }}>
                   <AuditoriaSection data={data} onSimpleChange={onSimpleChange} />
