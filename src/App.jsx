@@ -15,6 +15,18 @@ const PLANES = [
   { key: "SCOTIABANK",  color: "#ec407a" },
 ];
 
+const LINEAS_PRODUCTO = [
+  "ALSVIN", "CS35", "CS55", "HUNTER PLUS", "HONOR", "STAR TRUCK",
+  "EADO IDD", "CS55 IDD", "CS75 PRO", "DEEPAL", "EADO PLUS",
+  "UNIK", "HUNTER CHASIS", "HUNTER WORK", "HUNTER E",
+];
+
+const COLORES_LINEAS = [
+  "#D4AF37", "#4ade80", "#60a5fa", "#f87171", "#c084fc", "#fb923c",
+  "#22d3ee", "#fbbf24", "#a3e635", "#f472b6", "#818cf8",
+  "#34d399", "#fb7185", "#38bdf8", "#facc15",
+];
+
 // ── Conversión de Asesores ────────────────────────────────────────────────────
 const CONVERSION_PATH = "conversionAsesores";
 
@@ -73,6 +85,13 @@ const initialData = {
     COMITÁN:         { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
     OCOSINGO:        { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
   },
+  lineasProducto: {
+    TUXTLA:          Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
+    TAPACHULA:       Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
+    "SAN CRISTÓBAL": Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
+    COMITÁN:         Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
+    OCOSINGO:        Object.fromEntries(LINEAS_PRODUCTO.map(l => [l, 0])),
+  },
   ws: {
     TUXTLA:          { objetivo: 12, real: 0 },
     TAPACHULA:       { objetivo: 12, real: 0 },
@@ -126,7 +145,6 @@ const initialData = {
 };
 
 // ── Firebase helpers ──────────────────────────────────────────────────────────
-// Convierte claves con caracteres especiales para Firebase (no permite . $ # [ ] /)
 const encodeKey = k => k.replace(/[.#$/\[\]]/g, "_");
 
 function buildFirebasePath(obj, prefix = "") {
@@ -166,7 +184,6 @@ async function fbPatch(path, value) {
   } catch (e) { console.error("Firebase patch error:", e); }
 }
 
-// Decodifica las claves de Firebase de vuelta (SAN_CRISTÓBAL → SAN CRISTÓBAL, etc.)
 function decodeFirebaseData(raw, template) {
   if (!raw || typeof raw !== "object") return template;
   const result = {};
@@ -421,77 +438,131 @@ function PlanesPagoSection({ data, onFieldChange }) {
   );
 }
 
+// ── SECCIÓN: Ventas por Línea de Producto ─────────────────────────────────────
+function LineasProductoSection({ data, onLineaChange }) {
+  const totalGeneral = AGENCIAS.reduce(
+    (s, ag) => s + LINEAS_PRODUCTO.reduce((s2, l) => s2 + (data.lineasProducto[ag]?.[l] ?? 0), 0), 0
+  );
 
-function AuditoriaSection({ data, onFieldChange, onSimpleChange }) {
+  return (
+    <Card>
+      <SectionHeader title="VENTAS POR LÍNEA DE PRODUCTO" icon="🥧" />
+      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+        {AGENCIAS.map(ag => {
+          const rowData = data.lineasProducto[ag] ?? {};
+          const pieData = LINEAS_PRODUCTO.map((linea, i) => ({
+            label: linea,
+            value: rowData[linea] ?? 0,
+            color: COLORES_LINEAS[i % COLORES_LINEAS.length],
+          }));
+          const totalAgencia = pieData.reduce((s, d) => s + d.value, 0);
+          const entriesForPie = pieData.map(d => ({ value: d.value, color: d.color }));
+
+          return (
+            <div key={ag} style={{ flex: "1 1 280px", minWidth: 280 }}>
+              <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{ag}</p>
+              <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <PieChart entries={entriesForPie} size={140} />
+                <div style={{ flex: 1, maxHeight: 170, overflowY: "auto" }}>
+                  {LINEAS_PRODUCTO.map((linea, i) => (
+                    <div key={linea} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: COLORES_LINEAS[i % COLORES_LINEAS.length], flexShrink: 0 }} />
+                      <span style={{ color: "#94a3b8", fontSize: 10, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{linea}</span>
+                      <NumInput
+                        value={rowData[linea] ?? 0}
+                        onChange={v => onLineaChange(ag, linea, v)}
+                        width={42}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ textAlign: "right", color: "#D4AF37", fontSize: 12, fontWeight: 700, marginTop: 4 }}>
+                Total: {totalAgencia} unid.
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ textAlign: "right", color: "#D4AF37", fontSize: 14, fontWeight: 800, marginTop: 16, borderTop: "1px solid #D4AF3733", paddingTop: 10 }}>
+        TOTAL GENERAL: {totalGeneral} unidades
+      </div>
+    </Card>
+  );
+}
+
+// ── SECCIÓN: Auditoría Interna ────────────────────────────────────────────────
+function AuditoriaSection({ data, onSimpleChange }) {
+  return (
+    <Card>
+      <SectionHeader title="AUDITORÍA INTERNA" icon="🔍" />
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ color: "#64748b", fontSize: 11 }}>
+            <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+            <th style={{ textAlign: "center" }}>CALIFICACIÓN</th>
+          </tr>
+        </thead>
+        <tbody>
+          {AGENCIAS.map(ag => (
+            <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+              <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+              <td style={{ textAlign: "center" }}>
+                <NumInput value={data.auditoria[ag] ?? 0} onChange={v => onSimpleChange("auditoria", ag, v)} step={0.1} width={70} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+// ── SECCIÓN: Wholesale (WS) ───────────────────────────────────────────────────
+function WholesaleSection({ data, onFieldChange }) {
   const totalObj  = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.objetivo ?? 0), 0);
   const totalReal = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.real ?? 0), 0);
 
   return (
     <Card>
-      <SectionHeader title="AUDITORÍA INTERNA & WHOLESALE (WS)" icon="🔍" />
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>AUDITORÍA INTERNA JUNIO</p>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: "#64748b", fontSize: 11 }}>
-                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
-                <th style={{ textAlign: "center" }}>CALIFICACIÓN</th>
+      <SectionHeader title="WHOLESALE (WS)" icon="🚚" />
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ color: "#64748b", fontSize: 11 }}>
+            <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+            <th style={{ textAlign: "center" }}>OBJETIVO</th>
+            <th style={{ textAlign: "center" }}>REAL</th>
+            <th style={{ textAlign: "center" }}>AVANCE</th>
+          </tr>
+        </thead>
+        <tbody>
+          {AGENCIAS.map(ag => {
+            const row = data.ws[ag] ?? { objetivo: 0, real: 0 };
+            const p = pct(row.real, row.objetivo);
+            return (
+              <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+                <td style={{ textAlign: "center" }}>
+                  <NumInput value={row.objetivo} onChange={v => onFieldChange("ws", ag, "objetivo", v)} width={60} />
+                </td>
+                <td style={{ textAlign: "center" }}>
+                  <NumInput value={row.real} onChange={v => onFieldChange("ws", ag, "real", v)} width={60} />
+                </td>
+                <td style={{ minWidth: 80 }}>
+                  <div style={{ textAlign: "right", fontSize: 12, color: p >= 100 ? "#4ade80" : p >= 50 ? "#D4AF37" : "#f87171", fontWeight: 700 }}>{p}%</div>
+                  <ProgressBar value={row.real} max={row.objetivo} />
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {AGENCIAS.map(ag => (
-                <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
-                  <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-                  <td style={{ textAlign: "center" }}>
-                    <NumInput value={data.auditoria[ag] ?? 0} onChange={v => onSimpleChange("auditoria", ag, v)} step={0.1} width={70} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ flex: 2, minWidth: 300 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>OBJETIVO WS JUNIO</p>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: "#64748b", fontSize: 11 }}>
-                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
-                <th style={{ textAlign: "center" }}>OBJETIVO</th>
-                <th style={{ textAlign: "center" }}>REAL</th>
-                <th style={{ textAlign: "center" }}>AVANCE</th>
-              </tr>
-            </thead>
-            <tbody>
-              {AGENCIAS.map(ag => {
-                const row = data.ws[ag] ?? { objetivo: 0, real: 0 };
-                const p = pct(row.real, row.objetivo);
-                return (
-                  <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
-                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.objetivo} onChange={v => onFieldChange("ws", ag, "objetivo", v)} width={60} />
-                    </td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.real} onChange={v => onFieldChange("ws", ag, "real", v)} width={60} />
-                    </td>
-                    <td style={{ minWidth: 80 }}>
-                      <div style={{ textAlign: "right", fontSize: 12, color: p >= 100 ? "#4ade80" : p >= 50 ? "#D4AF37" : "#f87171", fontWeight: 700 }}>{p}%</div>
-                      <ProgressBar value={row.real} max={row.objetivo} />
-                    </td>
-                  </tr>
-                );
-              })}
-              <tr style={{ borderTop: "2px solid #D4AF3755" }}>
-                <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
-                <td style={{ color: "#D4AF37", fontWeight: 700, textAlign: "center" }}>{totalObj}</td>
-                <td style={{ color: "#D4AF37", fontWeight: 700, textAlign: "center" }}>{totalReal}</td>
-                <td style={{ color: "#D4AF37", fontWeight: 700, textAlign: "right", fontSize: 12 }}>{pct(totalReal, totalObj)}%</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+            );
+          })}
+          <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+            <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
+            <td style={{ color: "#D4AF37", fontWeight: 700, textAlign: "center" }}>{totalObj}</td>
+            <td style={{ color: "#D4AF37", fontWeight: 700, textAlign: "center" }}>{totalReal}</td>
+            <td style={{ color: "#D4AF37", fontWeight: 700, textAlign: "right", fontSize: 12 }}>{pct(totalReal, totalObj)}%</td>
+          </tr>
+        </tbody>
+      </table>
     </Card>
   );
 }
@@ -694,78 +765,79 @@ function SatisfaccionSection({ data, onFieldChange }) {
   );
 }
 
-// ── SECCIÓN: Market Share & Rotación ─────────────────────────────────────────
-function MsRotacionSection({ data, onFieldChange }) {
+// ── SECCIÓN: Market Share ─────────────────────────────────────────────────────
+function MarketShareSection({ data, onFieldChange }) {
   return (
     <Card>
-      <SectionHeader title="MARKET SHARE & ROTACIÓN DE INVENTARIO — JUNIO" icon="📈" />
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>MS JUNIO</p>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: "#64748b", fontSize: 11 }}>
-                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
-                <th style={{ textAlign: "center" }}>OBJ MS</th>
-                <th style={{ textAlign: "center" }}>VENTAS</th>
-                <th style={{ textAlign: "center" }}>TIV</th>
-                <th style={{ textAlign: "center" }}>MS REAL</th>
+      <SectionHeader title="MARKET SHARE — JUNIO" icon="📈" />
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ color: "#64748b", fontSize: 11 }}>
+            <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+            <th style={{ textAlign: "center" }}>OBJ MS</th>
+            <th style={{ textAlign: "center" }}>VENTAS</th>
+            <th style={{ textAlign: "center" }}>TIV</th>
+            <th style={{ textAlign: "center" }}>MS REAL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {AGENCIAS.map(ag => {
+            const row = data.msMayo[ag] ?? { objetivo: 0.02, real: 0, tiv: 0 };
+            const msReal = row.tiv > 0 ? ((row.real / row.tiv) * 100).toFixed(1) + "%" : "—";
+            const ok = row.tiv > 0 && (row.real / row.tiv) >= row.objetivo;
+            return (
+              <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+                <td style={{ textAlign: "center", color: "#64748b" }}>{(row.objetivo * 100).toFixed(1)}%</td>
+                <td style={{ textAlign: "center" }}>
+                  <NumInput value={row.real} onChange={v => onFieldChange("msMayo", ag, "real", v)} />
+                </td>
+                <td style={{ textAlign: "center" }}>
+                  <NumInput value={row.tiv} onChange={v => onFieldChange("msMayo", ag, "tiv", v)} />
+                </td>
+                <td style={{ textAlign: "center", color: row.tiv > 0 ? (ok ? "#4ade80" : "#f87171") : "#64748b", fontWeight: 700 }}>
+                  {msReal}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {AGENCIAS.map(ag => {
-                const row = data.msMayo[ag] ?? { objetivo: 0.02, real: 0, tiv: 0 };
-                const msReal = row.tiv > 0 ? ((row.real / row.tiv) * 100).toFixed(1) + "%" : "—";
-                const ok = row.tiv > 0 && (row.real / row.tiv) >= row.objetivo;
-                return (
-                  <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
-                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-                    <td style={{ textAlign: "center", color: "#64748b" }}>{(row.objetivo * 100).toFixed(1)}%</td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.real} onChange={v => onFieldChange("msMayo", ag, "real", v)} />
-                    </td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.tiv} onChange={v => onFieldChange("msMayo", ag, "tiv", v)} />
-                    </td>
-                    <td style={{ textAlign: "center", color: row.tiv > 0 ? (ok ? "#4ade80" : "#f87171") : "#64748b", fontWeight: 700 }}>
-                      {msReal}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>ROTACIÓN JUNIO (Criterio ≥ 2.5)</p>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ color: "#64748b", fontSize: 11 }}>
-                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
-                <th style={{ textAlign: "center" }}>REAL</th>
-                <th style={{ textAlign: "center" }}>OBJ</th>
-                <th style={{ textAlign: "center" }}>STATUS</th>
+            );
+          })}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+// ── SECCIÓN: Rotación (de personal) ───────────────────────────────────────────
+function RotacionSection({ data, onFieldChange }) {
+  return (
+    <Card>
+      <SectionHeader title="ROTACIÓN" icon="👥" />
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ color: "#64748b", fontSize: 11 }}>
+            <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+            <th style={{ textAlign: "center" }}>REAL</th>
+            <th style={{ textAlign: "center" }}>OBJ</th>
+            <th style={{ textAlign: "center" }}>STATUS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {AGENCIAS.map(ag => {
+            const row = data.rotacion[ag] ?? { real: 0, objetivo: 2.5 };
+            const ok = row.real >= row.objetivo;
+            return (
+              <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+                <td style={{ textAlign: "center" }}>
+                  <NumInput value={row.real} onChange={v => onFieldChange("rotacion", ag, "real", v)} step={0.001} width={65} />
+                </td>
+                <td style={{ textAlign: "center", color: "#64748b" }}>{row.objetivo}</td>
+                <td style={{ textAlign: "center" }}><Badge ok={ok} /></td>
               </tr>
-            </thead>
-            <tbody>
-              {AGENCIAS.map(ag => {
-                const row = data.rotacion[ag] ?? { real: 0, objetivo: 2.5 };
-                const ok = row.real >= row.objetivo;
-                return (
-                  <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
-                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-                    <td style={{ textAlign: "center" }}>
-                      <NumInput value={row.real} onChange={v => onFieldChange("rotacion", ag, "real", v)} step={0.001} width={65} />
-                    </td>
-                    <td style={{ textAlign: "center", color: "#64748b" }}>{row.objetivo}</td>
-                    <td style={{ textAlign: "center" }}><Badge ok={ok} /></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            );
+          })}
+        </tbody>
+      </table>
     </Card>
   );
 }
@@ -1111,6 +1183,20 @@ export default function App() {
     });
   };
 
+  const onLineaChange = (ag, linea, val) => {
+    setData(prev => {
+      const next = {
+        ...prev,
+        lineasProducto: {
+          ...prev.lineasProducto,
+          [ag]: { ...prev.lineasProducto[ag], [linea]: val }
+        }
+      };
+      scheduleSave(next);
+      return next;
+    });
+  };
+
   // ── Status indicator ────────────────────────────────────────────────────────
   const statusColor = { conectando: "#D4AF37", guardando: "#60a5fa", ok: "#4ade80", error: "#f87171" }[status];
   const statusLabel = { conectando: "Conectando…", guardando: "Guardando…", ok: lastSaved ? `Guardado ${lastSaved}` : "Conectado", error: "Error de conexión" }[status];
@@ -1155,18 +1241,29 @@ export default function App() {
           <>
             <KpiBar data={data} />
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <LineasProductoSection data={data} onLineaChange={onLineaChange} />
               <VentasSection data={data} onFieldChange={onFieldChange} />
               <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                <div style={{ flex: 2, minWidth: 300 }}>
-                  <AuditoriaSection data={data} onFieldChange={onFieldChange} onSimpleChange={onSimpleChange} />
+                <div style={{ flex: 1, minWidth: 280 }}>
+                  <AuditoriaSection data={data} onSimpleChange={onSimpleChange} />
+                </div>
+                <div style={{ flex: 1, minWidth: 280 }}>
+                  <WholesaleSection data={data} onFieldChange={onFieldChange} />
                 </div>
                 <div style={{ flex: 1, minWidth: 280 }}>
                   <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} />
                 </div>
               </div>
               <SatisfaccionSection data={data} onFieldChange={onFieldChange} />
-              <MsRotacionSection data={data} onFieldChange={onFieldChange} />
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 280 }}>
+                  <MarketShareSection data={data} onFieldChange={onFieldChange} />
+                </div>
+                <div style={{ flex: 1, minWidth: 280 }}>
+                  <RotacionSection data={data} onFieldChange={onFieldChange} />
+                </div>
+              </div>
             </div>
           </>
         ) : (
