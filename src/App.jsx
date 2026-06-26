@@ -218,6 +218,16 @@ function getMonthKey(date = new Date()) {
   return `${y}-${m}`; // ej. "2026-07"
 }
 
+// El día 1 del mes nuevo se sigue capturando como el mes anterior (cierre con 1 día de gracia).
+// A partir del día 2 a las 00:00, ya es el mes en curso "de verdad".
+function getOperativeMonthKey(date = new Date()) {
+  if (date.getDate() === 1) {
+    const prev = new Date(date.getFullYear(), date.getMonth() - 1, 1);
+    return getMonthKey(prev);
+  }
+  return getMonthKey(date);
+}
+
 function getMonthLabel(monthKey) {
   const [y, m] = monthKey.split("-");
   return `${MES_NOMBRES[parseInt(m, 10) - 1]} ${y}`;
@@ -853,10 +863,12 @@ function SatisfaccionSection({ data, onFieldChange }) {
 }
 
 // ── SECCIÓN: Market Share ─────────────────────────────────────────────────────
-function MarketShareSection({ data, onFieldChange }) {
+function MarketShareSection({ data, onFieldChange, monthKey }) {
+  const tivLabel = getMonthLabel(getPreviousMonthKey(monthKey));
+  const tivLabelCap = tivLabel.charAt(0).toUpperCase() + tivLabel.slice(1);
   return (
     <Card>
-      <SectionHeader title="MARKET SHARE — JUNIO" icon="📈" />
+      <SectionHeader title={`MARKET SHARE — ${tivLabelCap.toUpperCase()}`} icon="📈" />
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead>
           <tr style={{ color: "#64748b", fontSize: 11 }}>
@@ -1113,6 +1125,208 @@ function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove }) {
   );
 }
 
+// ── SECCIÓN: Análisis con IA ──────────────────────────────────────────────────
+function buildResumenParaIA(data, monthKey) {
+  const mesLabel = getMonthLabel(monthKey);
+  const lineas = [];
+  lineas.push(`MES ANALIZADO: ${mesLabel}`);
+
+  lineas.push("\n--- VENTAS (Objetivo Interno) ---");
+  AGENCIAS.forEach(ag => {
+    const r = data.ventasJunioInterno[ag] ?? {};
+    lineas.push(`${ag}: facturado ${r.facturado ?? 0} / objetivo ${r.objetivo ?? 0}`);
+  });
+
+  lineas.push("\n--- VENTAS (Objetivo Changan México) ---");
+  AGENCIAS.forEach(ag => {
+    const r = data.ventasJunioMexico[ag] ?? {};
+    lineas.push(`${ag}: facturado ${r.facturado ?? 0} / objetivo ${r.objetivo ?? 0}`);
+  });
+
+  lineas.push("\n--- VENTAS POR TIPO DE PLAN (total agencias) ---");
+  PLANES.forEach(p => {
+    const total = AGENCIAS.reduce((s, ag) => s + (data.planesPago[ag]?.[p.key] ?? 0), 0);
+    lineas.push(`${p.key}: ${total} unidades`);
+  });
+
+  lineas.push("\n--- VENTAS POR LÍNEA DE PRODUCTO (total agencias) ---");
+  LINEAS_PRODUCTO.forEach(l => {
+    const total = AGENCIAS.reduce((s, ag) => s + (data.lineasProducto[ag]?.[l.key] ?? 0), 0);
+    lineas.push(`${l.key}: ${total} unidades`);
+  });
+
+  lineas.push("\n--- WHOLESALE (WS) ---");
+  AGENCIAS.forEach(ag => {
+    const r = data.ws[ag] ?? {};
+    lineas.push(`${ag}: real ${r.real ?? 0} / objetivo ${r.objetivo ?? 0}`);
+  });
+
+  lineas.push("\n--- AUDITORÍA INTERNA (calificación) ---");
+  AGENCIAS.forEach(ag => lineas.push(`${ag}: ${data.auditoria[ag] ?? 0}`));
+
+  lineas.push("\n--- SSI (CBD / SSI vs objetivo) ---");
+  Object.keys(data.ssi).forEach(ag => {
+    const r = data.ssi[ag];
+    lineas.push(`${ag}: objetivo ${(r.objetivo*100).toFixed(0)}% · CBD ${r.cbd}% · SSI ${r.ssi}%`);
+  });
+
+  lineas.push("\n--- CSI (CBD / CSI vs objetivo) ---");
+  Object.keys(data.csi).forEach(ag => {
+    const r = data.csi[ag];
+    lineas.push(`${ag}: objetivo ${(r.objetivo*100).toFixed(0)}% · CBD ${r.cbd}% · CSI ${r.csi}%`);
+  });
+
+  lineas.push("\n--- ISI ---");
+  AGENCIAS.forEach(ag => {
+    const r = data.isi[ag] ?? {};
+    lineas.push(`${ag}: real ${r.real ?? 0}% / objetivo ${(r.objetivo*100).toFixed(0)}%`);
+  });
+
+  lineas.push("\n--- MARKET SHARE ---");
+  AGENCIAS.forEach(ag => {
+    const r = data.msMayo[ag] ?? {};
+    const msReal = r.tiv > 0 ? ((r.real / r.tiv) * 100).toFixed(1) : "N/D";
+    lineas.push(`${ag}: ventas ${r.real ?? 0} / TIV ${r.tiv ?? 0} → MS real ${msReal}% (objetivo ${(r.objetivo*100).toFixed(1)}%)`);
+  });
+
+  lineas.push("\n--- ROTACIÓN (de personal) ---");
+  AGENCIAS.forEach(ag => {
+    const r = data.rotacion[ag] ?? {};
+    lineas.push(`${ag}: real ${r.real ?? 0} / objetivo ${r.objetivo ?? 0}`);
+  });
+
+  lineas.push("\n--- VAN / VAU ---");
+  AGENCIAS.forEach(ag => {
+    const v = data.van[ag] ?? {};
+    lineas.push(`${ag}: VAN real ${v.real ?? 0} / objetivo ${v.objetivo ?? 0} · VAU: ${data.vau[ag] ? "Cumple" : "No cumple"}`);
+  });
+
+  return lineas.join("\n");
+}
+
+function AnalisisSection({ data, monthKey }) {
+  const [loading, setLoading] = useState(false);
+  const [resultado, setResultado] = useState("");
+  const [error, setError] = useState("");
+
+  const generarAnalisis = async () => {
+    setLoading(true);
+    setError("");
+    setResultado("");
+    try {
+      const resumen = buildResumenParaIA(data, monthKey);
+      const prompt = `Eres un consultor experto en gestión de dealerships automotrices (marca Changan, grupo CHESA, 5 agencias en Chiapas: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo).
+
+Te comparto el corte de indicadores operativos del mes de ${getMonthLabel(monthKey)}. Analiza la información y entrega:
+
+1. **Diagnóstico general** (3-5 puntos clave, identificando qué agencias y qué indicadores están en mayor riesgo o destacan positivamente)
+2. **Plan de acción inmediato** (acciones concretas, accionables esta semana, priorizadas, indicando responsable sugerido por área: ventas, servicio/satisfacción, inventario/personal)
+3. **Alertas críticas** (cualquier indicador muy por debajo del objetivo que requiera atención urgente del Director de Marca)
+
+Sé directo, concreto y orientado a la acción — evita generalidades. Usa los nombres reales de las agencias. Formato en markdown con encabezados.
+
+DATOS:
+${resumen}`;
+
+      const response = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const responseData = await response.json();
+      if (!response.ok) {
+        setError(responseData.error || "Ocurrió un error generando el análisis.");
+        return;
+      }
+      setResultado(responseData.text || "No se recibió respuesta del análisis. Intenta de nuevo.");
+    } catch (e) {
+      setError("Ocurrió un error generando el análisis. Verifica tu conexión e intenta de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Render simple de markdown (encabezados, negritas, listas) sin librerías externas
+  const renderMarkdown = (md) => {
+    const lines = md.split("\n");
+    const out = [];
+    let listBuffer = [];
+    const flushList = () => {
+      if (listBuffer.length) {
+        out.push(<ul key={`ul-${out.length}`} style={{ margin: "6px 0 12px 18px", padding: 0 }}>{listBuffer}</ul>);
+        listBuffer = [];
+      }
+    };
+    const renderInline = (text) => {
+      const parts = text.split(/(\*\*[^*]+\*\*)/g);
+      return parts.map((p, i) =>
+        p.startsWith("**") && p.endsWith("**")
+          ? <b key={i} style={{ color: "#D4AF37" }}>{p.slice(2, -2)}</b>
+          : <span key={i}>{p}</span>
+      );
+    };
+    lines.forEach((line, i) => {
+      const trimmed = line.trim();
+      if (!trimmed) { flushList(); return; }
+      if (trimmed.startsWith("### ")) { flushList(); out.push(<h4 key={i} style={{ color: "#D4AF37", fontSize: 14, margin: "14px 0 6px" }}>{renderInline(trimmed.slice(4))}</h4>); }
+      else if (trimmed.startsWith("## ")) { flushList(); out.push(<h3 key={i} style={{ color: "#D4AF37", fontSize: 16, margin: "16px 0 8px" }}>{renderInline(trimmed.slice(3))}</h3>); }
+      else if (trimmed.startsWith("# ")) { flushList(); out.push(<h2 key={i} style={{ color: "#D4AF37", fontSize: 18, margin: "16px 0 8px" }}>{renderInline(trimmed.slice(2))}</h2>); }
+      else if (/^[-*]\s+/.test(trimmed)) { listBuffer.push(<li key={i} style={{ color: "#cbd5e1", fontSize: 13, marginBottom: 4 }}>{renderInline(trimmed.replace(/^[-*]\s+/, ""))}</li>); }
+      else if (/^\d+\.\s+/.test(trimmed)) { flushList(); out.push(<p key={i} style={{ color: "#cbd5e1", fontSize: 13, margin: "6px 0", fontWeight: 700 }}>{renderInline(trimmed)}</p>); }
+      else { flushList(); out.push(<p key={i} style={{ color: "#cbd5e1", fontSize: 13, margin: "6px 0", lineHeight: 1.6 }}>{renderInline(trimmed)}</p>); }
+    });
+    flushList();
+    return out;
+  };
+
+  return (
+    <Card>
+      <SectionHeader title={`ANÁLISIS Y PLAN DE ACCIÓN — ${getMonthLabel(monthKey).toUpperCase()}`} icon="🧠" />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+        <button
+          onClick={generarAnalisis}
+          disabled={loading}
+          style={{
+            background: loading ? "#1e3a5f" : "#D4AF37",
+            color: loading ? "#64748b" : "#0a1628",
+            border: "none", borderRadius: 8, padding: "10px 20px",
+            fontSize: 13, fontWeight: 700, cursor: loading ? "default" : "pointer"
+          }}
+        >
+          {loading ? "Generando análisis…" : "🧠 Generar análisis y plan de acción"}
+        </button>
+        <span style={{ color: "#64748b", fontSize: 11.5 }}>
+          Analiza todos los indicadores capturados de {getMonthLabel(monthKey)} y genera un diagnóstico con acciones concretas.
+        </span>
+      </div>
+
+      {error && (
+        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
+          {error}
+        </div>
+      )}
+
+      {loading && (
+        <div style={{ color: "#94a3b8", fontSize: 13, padding: "20px 0", textAlign: "center" }}>
+          Analizando indicadores de las 5 agencias… esto puede tardar unos segundos.
+        </div>
+      )}
+
+      {!loading && resultado && (
+        <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px" }}>
+          {renderMarkdown(resultado)}
+        </div>
+      )}
+
+      {!loading && !resultado && !error && (
+        <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "30px 0" }}>
+          Da clic en el botón para generar el diagnóstico y plan de acción basado en los datos actuales del dashboard.
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [tab, setTab] = useState("operativo"); // operativo | conversion
@@ -1123,7 +1337,7 @@ export default function App() {
   const saveTimer = useRef(null);
   const convSaveTimer = useRef(null);
 
-  const currentMonthKey = getMonthKey();
+  const currentMonthKey = getOperativeMonthKey();
   const [viewMonth, setViewMonth] = useState(currentMonthKey); // mes que se está viendo
   const [availableMonths, setAvailableMonths] = useState([currentMonthKey]);
   const isReadOnly = viewMonth !== currentMonthKey;
@@ -1383,6 +1597,12 @@ export default function App() {
               border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🧑‍💼 Conversión Asesores</button>
+            <button onClick={() => setTab("analisis")} style={{
+              background: tab === "analisis" ? "#D4AF37" : "transparent",
+              color: tab === "analisis" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>🧠 Análisis IA</button>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {isReadOnly ? (
@@ -1411,7 +1631,7 @@ export default function App() {
         </div>
       )}
 
-      <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto", opacity: isReadOnly ? 0.85 : 1, pointerEvents: isReadOnly ? "none" : "auto" }}>
+      <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto", opacity: (isReadOnly && tab !== "analisis") ? 0.85 : 1, pointerEvents: (isReadOnly && tab !== "analisis") ? "none" : "auto" }}>
         {tab === "operativo" ? (
           <>
             <KpiBar data={data} />
@@ -1433,7 +1653,7 @@ export default function App() {
               <SatisfaccionSection data={data} onFieldChange={onFieldChange} />
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 280 }}>
-                  <MarketShareSection data={data} onFieldChange={onFieldChange} />
+                  <MarketShareSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
                 </div>
                 <div style={{ flex: 1, minWidth: 280 }}>
                   <RotacionSection data={data} onFieldChange={onFieldChange} />
@@ -1441,13 +1661,15 @@ export default function App() {
               </div>
             </div>
           </>
-        ) : (
+        ) : tab === "conversion" ? (
           <ConversionSection
             conversionData={conversionData}
             onFieldChange={onAsesorFieldChange}
             onAdd={onAddAsesor}
             onRemove={onRemoveAsesor}
           />
+        ) : (
+          <AnalisisSection data={data} monthKey={viewMonth} />
         )}
         <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, marginTop: 24 }}>
           Los cambios se sincronizan automáticamente con Firebase · Actualización cada 15 seg
