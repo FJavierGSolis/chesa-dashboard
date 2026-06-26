@@ -125,11 +125,11 @@ const initialData = {
     OCOSINGO:        { objetivo: 0.85, real: 0 },
   },
   rotacion: {
-    TUXTLA:          { real: 0, objetivo: 2.5 },
-    TAPACHULA:       { real: 0, objetivo: 2.5 },
-    "SAN CRISTÓBAL": { real: 0, objetivo: 2.5 },
-    COMITÁN:         { real: 0, objetivo: 2.5 },
-    OCOSINGO:        { real: 0, objetivo: 2.5 },
+    TUXTLA:          { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
+    TAPACHULA:       { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
+    "SAN CRISTÓBAL": { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
+    COMITÁN:         { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
+    OCOSINGO:        { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
   },
   msMayo: {
     TUXTLA:          { objetivo: 0.02,  real: 0, tiv: 0 },
@@ -239,6 +239,23 @@ function getPreviousMonthKey(monthKey) {
   return getMonthKey(d);
 }
 
+// Genera todos los monthKey desde INICIO_OPERACIONES hasta el mes operativo actual (inclusive).
+const INICIO_OPERACIONES = "2024-05"; // mayo 2024, cuando CHESA inició operaciones
+function getAllMonthsRange(hastaKey) {
+  const out = [];
+  let [y, m] = INICIO_OPERACIONES.split("-").map(Number);
+  const [yEnd, mEnd] = hastaKey.split("-").map(Number);
+  while (y < yEnd || (y === yEnd && m <= mEnd)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+
+function getYearFromKey(monthKey) { return monthKey.split("-")[0]; }
+function getMonthNumFromKey(monthKey) { return parseInt(monthKey.split("-")[1], 10); }
+
 // Extrae solo los objetivos de "data" (deja todo lo "real"/"facturado"/capturado en cero)
 // para usarlos como base del mes nuevo.
 function extractObjectivesOnly(prevData) {
@@ -256,7 +273,7 @@ function extractObjectivesOnly(prevData) {
   Object.keys(next.ssi).forEach(ag => { if (prevData.ssi?.[ag]) next.ssi[ag].objetivo = prevData.ssi[ag].objetivo; });
   Object.keys(next.csi).forEach(ag => { if (prevData.csi?.[ag]) next.csi[ag].objetivo = prevData.csi[ag].objetivo; });
   Object.keys(next.isi).forEach(ag => { if (prevData.isi?.[ag]) next.isi[ag].objetivo = prevData.isi[ag].objetivo; });
-  // Rotación
+  // Rotación: solo se hereda el objetivo (%); plantilla y bajas arrancan en cero cada mes
   AGENCIAS.forEach(ag => { if (prevData.rotacion?.[ag]) next.rotacion[ag].objetivo = prevData.rotacion[ag].objetivo; });
   // Market share (objetivo + tiv, que suele repetirse; ventas/real en cero)
   AGENCIAS.forEach(ag => {
@@ -866,9 +883,14 @@ function SatisfaccionSection({ data, onFieldChange }) {
 function MarketShareSection({ data, onFieldChange, monthKey }) {
   const tivLabel = getMonthLabel(getPreviousMonthKey(monthKey));
   const tivLabelCap = tivLabel.charAt(0).toUpperCase() + tivLabel.slice(1);
+
+  const totalVentas = AGENCIAS.reduce((s, ag) => s + (data.msMayo[ag]?.real ?? 0), 0);
+  const totalTiv = AGENCIAS.reduce((s, ag) => s + (data.msMayo[ag]?.tiv ?? 0), 0);
+  const msTotal = totalTiv > 0 ? (totalVentas / totalTiv) * 100 : 0;
+
   return (
     <Card>
-      <SectionHeader title={`MARKET SHARE — ${tivLabelCap.toUpperCase()}`} icon="📈" />
+      <SectionHeader title={`MS — ${tivLabelCap.toUpperCase()}`} icon="📈" />
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead>
           <tr style={{ color: "#64748b", fontSize: 11 }}>
@@ -876,7 +898,7 @@ function MarketShareSection({ data, onFieldChange, monthKey }) {
             <th style={{ textAlign: "center" }}>OBJ MS</th>
             <th style={{ textAlign: "center" }}>VENTAS</th>
             <th style={{ textAlign: "center" }}>TIV</th>
-            <th style={{ textAlign: "center" }}>MS REAL</th>
+            <th style={{ textAlign: "center" }}>MS</th>
           </tr>
         </thead>
         <tbody>
@@ -900,8 +922,20 @@ function MarketShareSection({ data, onFieldChange, monthKey }) {
               </tr>
             );
           })}
+          <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+            <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL CHIAPAS</td>
+            <td></td>
+            <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalVentas}</td>
+            <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalTiv}</td>
+            <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 800 }}>
+              {totalTiv > 0 ? `${msTotal.toFixed(1)}%` : "—"}
+            </td>
+          </tr>
         </tbody>
       </table>
+      <div style={{ color: "#475569", fontSize: 11, marginTop: 10, textAlign: "center" }}>
+        % Participación total de la marca Changan en Chiapas: ventas totales de las 5 agencias ÷ TIV total del mercado.
+      </div>
     </Card>
   );
 }
@@ -915,28 +949,47 @@ function RotacionSection({ data, onFieldChange }) {
         <thead>
           <tr style={{ color: "#64748b", fontSize: 11 }}>
             <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
-            <th style={{ textAlign: "center" }}>REAL</th>
+            <th style={{ textAlign: "center" }}>PLANTILLA INICIAL</th>
+            <th style={{ textAlign: "center" }}>BAJAS</th>
+            <th style={{ textAlign: "center" }}>% ROTACIÓN</th>
             <th style={{ textAlign: "center" }}>OBJ</th>
             <th style={{ textAlign: "center" }}>STATUS</th>
           </tr>
         </thead>
         <tbody>
           {AGENCIAS.map(ag => {
-            const row = data.rotacion[ag] ?? { real: 0, objetivo: 2.5 };
-            const ok = row.real >= row.objetivo;
+            const row = data.rotacion[ag] ?? { plantillaInicial: 0, bajas: 0, objetivo: 2.5 };
+            const pctRotacion = row.plantillaInicial > 0 ? (row.bajas / row.plantillaInicial) * 100 : 0;
+            // Cumple si el % está dentro del objetivo, O si solo hubo 1 baja (excepción para agencias chicas)
+            const ok = (row.plantillaInicial > 0 && pctRotacion <= row.objetivo) || row.bajas <= 1;
+            const excepcionAplicada = row.bajas <= 1 && row.plantillaInicial > 0 && pctRotacion > row.objetivo;
             return (
               <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
                 <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
                 <td style={{ textAlign: "center" }}>
-                  <NumInput value={row.real} onChange={v => onFieldChange("rotacion", ag, "real", v)} step={0.001} width={65} />
+                  <NumInput value={row.plantillaInicial} onChange={v => onFieldChange("rotacion", ag, "plantillaInicial", v)} width={70} />
                 </td>
-                <td style={{ textAlign: "center", color: "#64748b" }}>{row.objetivo}</td>
-                <td style={{ textAlign: "center" }}><Badge ok={ok} /></td>
+                <td style={{ textAlign: "center" }}>
+                  <NumInput value={row.bajas} onChange={v => onFieldChange("rotacion", ag, "bajas", v)} width={60} />
+                </td>
+                <td style={{ textAlign: "center", color: "#cbd5e1", fontWeight: 700 }}>
+                  {row.plantillaInicial > 0 ? `${pctRotacion.toFixed(1)}%` : "—"}
+                </td>
+                <td style={{ textAlign: "center", color: "#64748b" }}>{row.objetivo}%</td>
+                <td style={{ textAlign: "center" }}>
+                  <Badge ok={ok} />
+                  {excepcionAplicada && (
+                    <div style={{ fontSize: 9.5, color: "#60a5fa", marginTop: 3 }}>Excepción: 1 baja</div>
+                  )}
+                </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      <div style={{ color: "#475569", fontSize: 11, marginTop: 12, textAlign: "center" }}>
+        % Rotación = Bajas ÷ Plantilla Inicial. Cumple si % ≤ objetivo, o si solo hubo 1 baja en el mes (excepción para agencias pequeñas).
+      </div>
     </Card>
   );
 }
@@ -1192,7 +1245,8 @@ function buildResumenParaIA(data, monthKey) {
   lineas.push("\n--- ROTACIÓN (de personal) ---");
   AGENCIAS.forEach(ag => {
     const r = data.rotacion[ag] ?? {};
-    lineas.push(`${ag}: real ${r.real ?? 0} / objetivo ${r.objetivo ?? 0}`);
+    const pctRot = r.plantillaInicial > 0 ? ((r.bajas / r.plantillaInicial) * 100).toFixed(1) : "N/D";
+    lineas.push(`${ag}: plantilla inicial ${r.plantillaInicial ?? 0}, bajas ${r.bajas ?? 0} → rotación ${pctRot}% (objetivo ≤ ${r.objetivo ?? 0}%, con excepción de cumplimiento si solo hubo 1 baja)`);
   });
 
   lineas.push("\n--- VAN / VAU ---");
@@ -1204,7 +1258,212 @@ function buildResumenParaIA(data, monthKey) {
   return lineas.join("\n");
 }
 
-function AnalisisSection({ data, monthKey }) {
+function buildResumenConversionParaIA(conversionData) {
+  const lineas = [];
+  lineas.push("\n--- CONVERSIÓN DE ASESORES (embudo de ventas por asesor, acumulado) ---");
+  AGENCIAS.forEach(ag => {
+    const asesores = conversionData[ag] ?? {};
+    const ids = Object.keys(asesores);
+    if (ids.length === 0) {
+      lineas.push(`${ag}: sin asesores registrados.`);
+      return;
+    }
+    lineas.push(`${ag} (${ids.length} asesores):`);
+    ids.forEach(id => {
+      const a = asesores[id];
+      const pctContactados = a.leads > 0 ? ((a.contactados / a.leads) * 100).toFixed(0) : "N/D";
+      const pctCitasAg = a.contactados > 0 ? ((a.citasAgendadas / a.contactados) * 100).toFixed(0) : "N/D";
+      const pctCitasAs = a.citasAgendadas > 0 ? ((a.citasAsistidas / a.citasAgendadas) * 100).toFixed(0) : "N/D";
+      const pctDemos = a.citasAsistidas > 0 ? ((a.demosAsistidas / a.citasAsistidas) * 100).toFixed(0) : "N/D";
+      const pctVentas = a.demosAsistidas > 0 ? ((a.ventas / a.demosAsistidas) * 100).toFixed(0) : "N/D";
+      lineas.push(`  - ${a.nombre}: leads ${a.leads}, contactados ${a.contactados} (${pctContactados}%), citas agendadas ${a.citasAgendadas} (${pctCitasAg}%), citas asistidas ${a.citasAsistidas} (${pctCitasAs}%), demos asistidas ${a.demosAsistidas} (${pctDemos}%), ventas ${a.ventas} (${pctVentas}%)`);
+    });
+  });
+  lineas.push("\nObjetivos del embudo: % Contactados ≥60%, % Citas Agendadas ≥60%, % Citas Asistidas ≥60%, % Demos Asistidas ≥50%, % Ventas ≥80%.");
+  return lineas.join("\n");
+}
+
+// ── SECCIÓN: Tendencias ───────────────────────────────────────────────────────
+// Calcula el valor agregado (un solo número) de un indicador a partir del objeto "data" de un mes.
+function computeIndicadorValue(indicador, data) {
+  switch (indicador) {
+    case "ventas": {
+      const fact = AGENCIAS.reduce((s, a) => s + (data.ventasJunioInterno?.[a]?.facturado ?? 0), 0);
+      return fact;
+    }
+    case "auditoria": {
+      const vals = AGENCIAS.map(a => data.auditoria?.[a] ?? 0).filter(v => v > 0);
+      return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
+    }
+    case "satisfaccion": {
+      // Promedio de ISI real de las 5 agencias (proxy general de satisfacción)
+      const vals = AGENCIAS.map(a => data.isi?.[a]?.real ?? 0).filter(v => v > 0);
+      return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
+    }
+    case "ms": {
+      const totalVentas = AGENCIAS.reduce((s, a) => s + (data.msMayo?.[a]?.real ?? 0), 0);
+      const totalTiv = AGENCIAS.reduce((s, a) => s + (data.msMayo?.[a]?.tiv ?? 0), 0);
+      return totalTiv > 0 ? (totalVentas / totalTiv) * 100 : 0;
+    }
+    default:
+      return 0;
+  }
+}
+
+const INDICADORES_TENDENCIA = [
+  { key: "ventas",      label: "Ventas (unidades, interno)", suffix: "" },
+  { key: "auditoria",   label: "Auditoría Interna (promedio)", suffix: "" },
+  { key: "satisfaccion",label: "Satisfacción (ISI promedio)", suffix: "%" },
+  { key: "ms",          label: "Market Share (%)", suffix: "%" },
+];
+
+function LineChart({ series, width = 760, height = 220, suffix = "" }) {
+  // series: [{ label, color, points: [{x: label, y: number}] }]
+  const allY = series.flatMap(s => s.points.map(p => p.y));
+  const maxY = Math.max(1, ...allY);
+  const minY = Math.min(0, ...allY);
+  const padding = { top: 16, right: 16, bottom: 28, left: 40 };
+  const w = width - padding.left - padding.right;
+  const h = height - padding.top - padding.bottom;
+  const n = series[0]?.points.length ?? 0;
+  const xStep = n > 1 ? w / (n - 1) : 0;
+  const yScale = (val) => padding.top + h - ((val - minY) / (maxY - minY || 1)) * h;
+  const xScale = (i) => padding.left + i * xStep;
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: width }}>
+      {/* Líneas guía horizontales */}
+      {[0, 0.25, 0.5, 0.75, 1].map(f => {
+        const y = padding.top + h * f;
+        const val = maxY - (maxY - minY) * f;
+        return (
+          <g key={f}>
+            <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} stroke="#1e3a5f" strokeWidth="1" />
+            <text x={padding.left - 6} y={y + 3} textAnchor="end" fontSize="9" fill="#64748b">{val.toFixed(0)}{suffix}</text>
+          </g>
+        );
+      })}
+      {/* Etiquetas de eje X (cada 2 puntos para no saturar) */}
+      {series[0]?.points.map((p, i) => (
+        (i % Math.ceil(n / 8 || 1) === 0) && (
+          <text key={i} x={xScale(i)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">{p.x}</text>
+        )
+      ))}
+      {/* Líneas de cada serie */}
+      {series.map((s, si) => {
+        const pathD = s.points.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(p.y)}`).join(" ");
+        return (
+          <g key={si}>
+            <path d={pathD} fill="none" stroke={s.color} strokeWidth="2.5" />
+            {s.points.map((p, i) => (
+              <circle key={i} cx={xScale(i)} cy={yScale(p.y)} r="3" fill={s.color}>
+                <title>{`${s.label} — ${p.x}: ${p.y.toFixed(1)}${suffix}`}</title>
+              </circle>
+            ))}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function TendenciasSection({ currentMonthKey }) {
+  const [indicador, setIndicador] = useState("ventas");
+  const [compararAnioAnterior, setCompararAnioAnterior] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [serieActual, setSerieActual] = useState([]);
+  const [serieAnterior, setSerieAnterior] = useState([]);
+
+  const anioActual = getYearFromKey(currentMonthKey);
+  const mesActualNum = getMonthNumFromKey(currentMonthKey);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      // Meses del año en curso, de enero hasta el mes operativo actual
+      const mesesAnioActual = [];
+      for (let m = 1; m <= mesActualNum; m++) {
+        mesesAnioActual.push(`${anioActual}-${String(m).padStart(2, "0")}`);
+      }
+      const datosActual = await Promise.all(mesesAnioActual.map(async mk => {
+        const raw = await fbGet(`datos/${mk}`);
+        const merged = {};
+        Object.keys(initialData).forEach(section => {
+          merged[section] = decodeFirebaseData(raw?.[section], initialData[section]);
+        });
+        return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged) };
+      }));
+      setSerieActual(datosActual.map(d => ({ x: d.mes, y: d.value })));
+
+      if (compararAnioAnterior) {
+        const anioAnterior = String(parseInt(anioActual, 10) - 1);
+        const mesesAnioAnterior = [];
+        for (let m = 1; m <= mesActualNum; m++) {
+          mesesAnioAnterior.push(`${anioAnterior}-${String(m).padStart(2, "0")}`);
+        }
+        const datosAnterior = await Promise.all(mesesAnioAnterior.map(async mk => {
+          const raw = await fbGet(`datos/${mk}`);
+          const merged = {};
+          Object.keys(initialData).forEach(section => {
+            merged[section] = decodeFirebaseData(raw?.[section], initialData[section]);
+          });
+          return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged) };
+        }));
+        setSerieAnterior(datosAnterior.map(d => ({ x: d.mes, y: d.value })));
+      } else {
+        setSerieAnterior([]);
+      }
+      setLoading(false);
+    })();
+  }, [indicador, compararAnioAnterior, currentMonthKey]);
+
+  const ind = INDICADORES_TENDENCIA.find(i => i.key === indicador);
+  const series = [
+    { label: `${anioActual}`, color: "#D4AF37", points: serieActual },
+    ...(compararAnioAnterior && serieAnterior.length ? [{ label: `${parseInt(anioActual,10)-1}`, color: "#60a5fa", points: serieAnterior }] : []),
+  ];
+
+  return (
+    <Card>
+      <SectionHeader title="TENDENCIAS" icon="📉" />
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
+        {INDICADORES_TENDENCIA.map(i => (
+          <button key={i.key} onClick={() => setIndicador(i.key)} style={{
+            background: indicador === i.key ? "#D4AF37" : "#0f2239",
+            color: indicador === i.key ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${indicador === i.key ? "#D4AF37" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>
+            {i.label}
+          </button>
+        ))}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#94a3b8", fontSize: 12, marginLeft: "auto", cursor: "pointer" }}>
+          <input type="checkbox" checked={compararAnioAnterior} onChange={e => setCompararAnioAnterior(e.target.checked)} />
+          Comparar vs año anterior
+        </label>
+      </div>
+
+      {loading ? (
+        <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "30px 0" }}>Cargando histórico…</div>
+      ) : (
+        <>
+          <LineChart series={series} suffix={ind.suffix} />
+          <div style={{ display: "flex", gap: 16, marginTop: 10, flexWrap: "wrap" }}>
+            {series.map(s => (
+              <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94a3b8" }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: s.color }} />
+                {s.label}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+
+function AnalisisSection({ data, monthKey, conversionData }) {
   const [loading, setLoading] = useState(false);
   const [resultado, setResultado] = useState("");
   const [error, setError] = useState("");
@@ -1214,13 +1473,13 @@ function AnalisisSection({ data, monthKey }) {
     setError("");
     setResultado("");
     try {
-      const resumen = buildResumenParaIA(data, monthKey);
+      const resumen = buildResumenParaIA(data, monthKey) + "\n" + buildResumenConversionParaIA(conversionData);
       const prompt = `Eres un consultor experto en gestión de dealerships automotrices (marca Changan, grupo CHESA, 5 agencias en Chiapas: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo).
 
-Te comparto el corte de indicadores operativos del mes de ${getMonthLabel(monthKey)}. Analiza la información y entrega:
+Te comparto el corte de indicadores operativos del mes de ${getMonthLabel(monthKey)}, incluyendo el embudo de conversión de asesores de ventas. Analiza la información y entrega:
 
-1. **Diagnóstico general** (3-5 puntos clave, identificando qué agencias y qué indicadores están en mayor riesgo o destacan positivamente)
-2. **Plan de acción inmediato** (acciones concretas, accionables esta semana, priorizadas, indicando responsable sugerido por área: ventas, servicio/satisfacción, inventario/personal)
+1. **Diagnóstico general** (3-5 puntos clave, identificando qué agencias y qué indicadores están en mayor riesgo o destacan positivamente, incluyendo el desempeño del embudo de conversión de asesores)
+2. **Plan de acción inmediato** (acciones concretas, accionables esta semana, priorizadas, indicando responsable sugerido por área: ventas, servicio/satisfacción, inventario/personal, y desempeño individual de asesores si aplica)
 3. **Alertas críticas** (cualquier indicador muy por debajo del objetivo que requiera atención urgente del Director de Marca)
 
 Sé directo, concreto y orientado a la acción — evita generalidades. Usa los nombres reales de las agencias. Formato en markdown con encabezados.
@@ -1340,7 +1599,8 @@ export default function App() {
   const currentMonthKey = getOperativeMonthKey();
   const [viewMonth, setViewMonth] = useState(currentMonthKey); // mes que se está viendo
   const [availableMonths, setAvailableMonths] = useState([currentMonthKey]);
-  const isReadOnly = viewMonth !== currentMonthKey;
+  const isHistorico = viewMonth !== currentMonthKey;
+  const isReadOnly = false; // los meses históricos ahora también son editables (captura retroactiva)
 
   // ── Cargar conversión de Firebase al montar + polling ───────────────────────
   useEffect(() => {
@@ -1393,15 +1653,9 @@ export default function App() {
     });
   };
 
-  // ── Cargar lista de meses disponibles ───────────────────────────────────────
+  // ── Lista de meses disponibles: desde mayo 2024 hasta el mes operativo actual ─
   useEffect(() => {
-    (async () => {
-      const idx = await fbGet("mesesIndex");
-      const meses = Array.isArray(idx) ? idx : (idx ? Object.values(idx) : []);
-      const set = new Set([...meses, currentMonthKey]);
-      const ordered = Array.from(set).sort().reverse(); // más reciente primero
-      setAvailableMonths(ordered);
-    })();
+    setAvailableMonths(getAllMonthsRange(currentMonthKey).reverse()); // más reciente primero
   }, []);
 
   // ── Cargar datos del mes actual (o crear el mes nuevo heredando objetivos) ──
@@ -1461,12 +1715,15 @@ export default function App() {
     (async () => {
       setStatus("conectando");
       const raw = await fbGet(`datos/${viewMonth}`);
-      if (raw && typeof raw === "object") {
+      if (raw && typeof raw === "object" && Object.keys(raw).length > 0) {
         const merged = {};
         Object.keys(initialData).forEach(section => {
           merged[section] = decodeFirebaseData(raw[section], initialData[section]);
         });
         setData(merged);
+      } else {
+        // Mes histórico nunca capturado: arranca en blanco, listo para captura retroactiva.
+        setData(JSON.parse(JSON.stringify(initialData)));
       }
       setStatus("ok");
     })();
@@ -1491,12 +1748,11 @@ export default function App() {
 
   // ── Guardar a Firebase con debounce 800ms ────────────────────────────────────
   const scheduleSave = (newData) => {
-    if (isReadOnly) return; // no se guarda si se está viendo un mes histórico
     setStatus("guardando");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        await fbSet(`datos/${currentMonthKey}`, buildFirebaseSafeData(newData));
+        await fbSet(`datos/${viewMonth}`, buildFirebaseSafeData(newData));
         setStatus("ok");
         setLastSaved(new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
       } catch {
@@ -1570,20 +1826,46 @@ export default function App() {
           </h1>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          <select
-            value={viewMonth}
-            onChange={e => setViewMonth(e.target.value)}
-            style={{
-              background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#D4AF37",
-              borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-            }}
-          >
-            {availableMonths.map(mk => (
-              <option key={mk} value={mk}>
-                {getMonthLabel(mk).charAt(0).toUpperCase() + getMonthLabel(mk).slice(1)}{mk === currentMonthKey ? " (actual)" : ""}
-              </option>
-            ))}
-          </select>
+          {(() => {
+            const years = Array.from(new Set(availableMonths.map(getYearFromKey))).sort().reverse();
+            const viewYear = getYearFromKey(viewMonth);
+            const monthsOfYear = availableMonths
+              .filter(mk => getYearFromKey(mk) === viewYear)
+              .sort(); // ascendente dentro del año
+            return (
+              <>
+                <select
+                  value={viewYear}
+                  onChange={e => {
+                    const y = e.target.value;
+                    const candidatos = availableMonths.filter(mk => getYearFromKey(mk) === y).sort().reverse();
+                    if (candidatos.length) setViewMonth(candidatos[0]);
+                  }}
+                  style={{
+                    background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#D4AF37",
+                    borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+                  }}
+                >
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <select
+                  value={viewMonth}
+                  onChange={e => setViewMonth(e.target.value)}
+                  style={{
+                    background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#D4AF37",
+                    borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+                  }}
+                >
+                  {monthsOfYear.map(mk => (
+                    <option key={mk} value={mk}>
+                      {MES_NOMBRES[getMonthNumFromKey(mk) - 1].charAt(0).toUpperCase() + MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(1)}
+                      {mk === currentMonthKey ? " (actual)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </>
+            );
+          })()}
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={() => setTab("operativo")} style={{
               background: tab === "operativo" ? "#D4AF37" : "transparent",
@@ -1597,6 +1879,12 @@ export default function App() {
               border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🧑‍💼 Conversión Asesores</button>
+            <button onClick={() => setTab("tendencias")} style={{
+              background: tab === "tendencias" ? "#D4AF37" : "transparent",
+              color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>📉 Tendencias</button>
             <button onClick={() => setTab("analisis")} style={{
               background: tab === "analisis" ? "#D4AF37" : "transparent",
               color: tab === "analisis" ? "#0a1628" : "#94a3b8",
@@ -1605,10 +1893,10 @@ export default function App() {
             }}>🧠 Análisis IA</button>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {isReadOnly ? (
+            {isHistorico ? (
               <>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#fbbf24", boxShadow: "0 0 6px #fbbf24" }} />
-                <span style={{ color: "#fbbf24", fontSize: 12, fontWeight: 600 }}>Histórico (solo lectura)</span>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#60a5fa", boxShadow: "0 0 6px #60a5fa" }} />
+                <span style={{ color: "#60a5fa", fontSize: 12, fontWeight: 600 }}>{statusLabel} (histórico)</span>
               </>
             ) : (
               <>
@@ -1620,18 +1908,18 @@ export default function App() {
         </div>
       </div>
 
-      {isReadOnly && (
-        <div style={{ background: "#fbbf2422", borderBottom: "1px solid #fbbf24", padding: "8px 28px", textAlign: "center", fontSize: 12.5, color: "#fbbf24" }}>
-          Estás viendo el histórico de <b>{getMonthLabel(viewMonth)}</b> — los datos no se pueden editar.{" "}
+      {isHistorico && (
+        <div style={{ background: "#60a5fa22", borderBottom: "1px solid #60a5fa", padding: "8px 28px", textAlign: "center", fontSize: 12.5, color: "#60a5fa" }}>
+          Estás viendo y editando el histórico de <b>{getMonthLabel(viewMonth)}</b> — útil para captura retroactiva.{" "}
           <button onClick={() => setViewMonth(currentMonthKey)} style={{
-            background: "none", border: "none", color: "#fbbf24", textDecoration: "underline", cursor: "pointer", fontSize: 12.5, fontWeight: 700
+            background: "none", border: "none", color: "#60a5fa", textDecoration: "underline", cursor: "pointer", fontSize: 12.5, fontWeight: 700
           }}>
             Volver al mes actual
           </button>
         </div>
       )}
 
-      <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto", opacity: (isReadOnly && tab !== "analisis") ? 0.85 : 1, pointerEvents: (isReadOnly && tab !== "analisis") ? "none" : "auto" }}>
+      <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto" }}>
         {tab === "operativo" ? (
           <>
             <KpiBar data={data} />
@@ -1668,8 +1956,10 @@ export default function App() {
             onAdd={onAddAsesor}
             onRemove={onRemoveAsesor}
           />
+        ) : tab === "tendencias" ? (
+          <TendenciasSection currentMonthKey={currentMonthKey} />
         ) : (
-          <AnalisisSection data={data} monthKey={viewMonth} />
+          <AnalisisSection data={data} monthKey={viewMonth} conversionData={conversionData} />
         )}
         <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, marginTop: 24 }}>
           Los cambios se sincronizan automáticamente con Firebase · Actualización cada 15 seg
