@@ -1313,7 +1313,7 @@ ${resumen}`;
       )}
 
       {!loading && resultado && (
-        <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px" }}>
+        <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px", maxHeight: "70vh", overflowY: "auto" }}>
           {renderMarkdown(resultado)}
         </div>
       )}
