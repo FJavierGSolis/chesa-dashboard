@@ -999,7 +999,9 @@ function RotacionSection({ data, onFieldChange }) {
 }
 
 // ── KPI BAR ───────────────────────────────────────────────────────────────────
-function KpiBar({ data }) {
+function KpiBar({ data, monthKey }) {
+  const mesAbrev = MES_NOMBRES[getMonthNumFromKey(monthKey) - 1].slice(0, 3);
+  const mesAbrevCap = mesAbrev.charAt(0).toUpperCase() + mesAbrev.slice(1);
   const totalFact   = AGENCIAS.reduce((s, a) => s + (data.ventasJunioInterno[a]?.facturado ?? 0), 0);
   const totalObj    = AGENCIAS.reduce((s, a) => s + (data.ventasJunioInterno[a]?.objetivo  ?? 0), 0);
   const totalFactMx = AGENCIAS.reduce((s, a) => s + (data.ventasJunioMexico[a]?.facturado ?? 0), 0);
@@ -1012,12 +1014,12 @@ function KpiBar({ data }) {
   const wsObj  = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.objetivo ?? 0), 0);
 
   const kpis = [
-    { label: "Ventas Jun Interno", value: `${avanceV}%`, sub: `${totalFact}/${totalObj} unid.`, ok: avanceV >= 80 },
-    { label: "Ventas Jun MX",      value: `${avanceMx}%`, sub: `${totalFactMx}/${totalObjMx} unid.`, ok: avanceMx >= 80 },
+    { label: `Ventas ${mesAbrevCap} Interno`, value: `${avanceV}%`, sub: `${totalFact}/${totalObj} unid.`, ok: avanceV >= 80 },
+    { label: `Ventas ${mesAbrevCap} MX`,      value: `${avanceMx}%`, sub: `${totalFactMx}/${totalObjMx} unid.`, ok: avanceMx >= 80 },
     { label: "ISI Cumplimiento",   value: `${isiOk}/${AGENCIAS.length}`, sub: "agencias ≥ objetivo", ok: isiOk === AGENCIAS.length },
     { label: "VAU Cumplimiento",   value: `${vauOk}/${AGENCIAS.length}`, sub: "agencias cumplen", ok: vauOk === AGENCIAS.length },
-    { label: "WS Total Junio",     value: wsReal, sub: `de ${wsObj} objetivo`, ok: wsReal >= wsObj },
-    { label: "VAN Total Jun",      value: AGENCIAS.reduce((s,a) => s+(data.van[a]?.real??0),0), sub: `de ${AGENCIAS.reduce((s,a)=>s+(data.van[a]?.objetivo??0),0)} objetivo`, ok: false },
+    { label: `WS Total ${mesAbrevCap}`,     value: wsReal, sub: `de ${wsObj} objetivo`, ok: wsReal >= wsObj },
+    { label: `VAN Total ${mesAbrevCap}`,      value: AGENCIAS.reduce((s,a) => s+(data.van[a]?.real??0),0), sub: `de ${AGENCIAS.reduce((s,a)=>s+(data.van[a]?.objetivo??0),0)} objetivo`, ok: false },
   ];
 
   return (
@@ -1598,6 +1600,7 @@ export default function App() {
   const [status, setStatus] = useState("conectando"); // conectando | ok | error
   const [lastSaved, setLastSaved] = useState(null);
   const saveTimer = useRef(null);
+  const isSavingRef = useRef(false);
   const convSaveTimer = useRef(null);
 
   const currentMonthKey = getOperativeMonthKey();
@@ -1605,6 +1608,8 @@ export default function App() {
   const [availableMonths, setAvailableMonths] = useState([currentMonthKey]);
   const isHistorico = viewMonth !== currentMonthKey;
   const isReadOnly = false; // los meses históricos ahora también son editables (captura retroactiva)
+  const viewMonthRef = useRef(viewMonth);
+  useEffect(() => { viewMonthRef.current = viewMonth; }, [viewMonth]);
 
   // ── Cargar conversión de Firebase al montar + polling ───────────────────────
   useEffect(() => {
@@ -1699,7 +1704,8 @@ export default function App() {
 
     // Polling cada 15 segundos para sincronizar cambios de otros usuarios (solo si viendo el mes actual)
     const poll = setInterval(async () => {
-      if (viewMonth !== currentMonthKey) return; // no refrescar si está viendo histórico
+      if (viewMonthRef.current !== currentMonthKey) return; // no refrescar si está viendo histórico
+      if (isSavingRef.current) return; // no refrescar si hay un guardado en curso
       const raw = await fbGet(`datos/${currentMonthKey}`);
       if (raw && typeof raw === "object") {
         const merged = {};
@@ -1751,22 +1757,27 @@ export default function App() {
   }
 
   // ── Guardar a Firebase con debounce 800ms ────────────────────────────────────
-  const scheduleSave = (newData) => {
+  const scheduleSave = (newData, targetMonth) => {
     setStatus("guardando");
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    const mesDestino = targetMonth || viewMonth;
+    isSavingRef.current = true;
     saveTimer.current = setTimeout(async () => {
       try {
-        await fbSet(`datos/${viewMonth}`, buildFirebaseSafeData(newData));
+        await fbSet(`datos/${mesDestino}`, buildFirebaseSafeData(newData));
         setStatus("ok");
         setLastSaved(new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
       } catch {
         setStatus("error");
+      } finally {
+        isSavingRef.current = false;
       }
-    }, 800);
+    }, 150);
   };
 
   // ── Handlers centralizados ───────────────────────────────────────────────────
   const onFieldChange = (section, ag, field, val) => {
+    const mesAlEditar = viewMonth;
     setData(prev => {
       const next = {
         ...prev,
@@ -1775,28 +1786,31 @@ export default function App() {
           [ag]: { ...prev[section][ag], [field]: val }
         }
       };
-      scheduleSave(next);
+      scheduleSave(next, mesAlEditar);
       return next;
     });
   };
 
   const onSimpleChange = (section, ag, val) => {
+    const mesAlEditar = viewMonth;
     setData(prev => {
       const next = { ...prev, [section]: { ...prev[section], [ag]: val } };
-      scheduleSave(next);
+      scheduleSave(next, mesAlEditar);
       return next;
     });
   };
 
   const onToggleVau = (ag) => {
+    const mesAlEditar = viewMonth;
     setData(prev => {
       const next = { ...prev, vau: { ...prev.vau, [ag]: !prev.vau[ag] } };
-      scheduleSave(next);
+      scheduleSave(next, mesAlEditar);
       return next;
     });
   };
 
   const onLineaChange = (ag, linea, val) => {
+    const mesAlEditar = viewMonth;
     setData(prev => {
       const next = {
         ...prev,
@@ -1805,7 +1819,7 @@ export default function App() {
           [ag]: { ...prev.lineasProducto[ag], [linea]: val }
         }
       };
-      scheduleSave(next);
+      scheduleSave(next, mesAlEditar);
       return next;
     });
   };
@@ -1926,7 +1940,7 @@ export default function App() {
       <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto" }}>
         {tab === "operativo" ? (
           <>
-            <KpiBar data={data} />
+            <KpiBar data={data} monthKey={viewMonth} />
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               <VentasSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
               <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
