@@ -13,6 +13,8 @@ const PLANES = [
   { key: "SANTANDER",   color: "#ff7043" },
   { key: "BANJÉRCITO",  color: "#26a69a" },
   { key: "SCOTIABANK",  color: "#ec407a" },
+  { key: "CI BANCO",    color: "#9ca3af" },
+  { key: "KUNA",        color: "#84cc16" },
 ];
 
 const LINEAS_PRODUCTO = [
@@ -25,12 +27,16 @@ const LINEAS_PRODUCTO = [
   { key: "EADO IDD",       color: "#22d3ee" },
   { key: "CS55 IDD",       color: "#fbbf24" },
   { key: "CS75 PRO",       color: "#a3e635" },
-  { key: "DEEPAL",         color: "#f472b6" },
   { key: "EADO PLUS",      color: "#818cf8" },
   { key: "UNIK",           color: "#34d399" },
   { key: "HUNTER CHASIS",  color: "#fb7185" },
   { key: "HUNTER WORK",    color: "#38bdf8" },
   { key: "HUNTER E",       color: "#facc15" },
+  { key: "CS95",           color: "#e879f9" },
+  { key: "G318",           color: "#fb7185" },
+  { key: "S05 REEV",       color: "#2dd4bf" },
+  { key: "S07 BEV",        color: "#fdba74" },
+  { key: "S07 REEV",       color: "#93c5fd" },
 ];
 
 // ── Conversión de Asesores ────────────────────────────────────────────────────
@@ -85,11 +91,11 @@ const initialData = {
     OCOSINGO:        { facturado: 0, objetivo: 9  },
   },
   planesPago: {
-    TUXTLA:          { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
-    TAPACHULA:       { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
-    "SAN CRISTÓBAL": { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
-    COMITÁN:         { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
-    OCOSINGO:        { CONTADO: 0, BBVA: 0, BANORTE: 0, CAFI: 0, SANTANDER: 0, BANJÉRCITO: 0, SCOTIABANK: 0 },
+    TUXTLA:          Object.fromEntries(PLANES.map(p => [p.key, 0])),
+    TAPACHULA:       Object.fromEntries(PLANES.map(p => [p.key, 0])),
+    "SAN CRISTÓBAL": Object.fromEntries(PLANES.map(p => [p.key, 0])),
+    COMITÁN:         Object.fromEntries(PLANES.map(p => [p.key, 0])),
+    OCOSINGO:        Object.fromEntries(PLANES.map(p => [p.key, 0])),
   },
   lineasProducto: {
     TUXTLA:          Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0])),
@@ -1469,6 +1475,91 @@ function TendenciasSection({ currentMonthKey }) {
 }
 
 
+// ── Resumen histórico condensado (para Alertas y Chat) ────────────────────────
+// A diferencia de buildResumenParaIA (detalle de UN mes), esta función recorre
+// TODOS los meses cargados y arma una línea de tendencia compacta por indicador.
+async function buildResumenHistorico(hastaMonthKey) {
+  const meses = getAllMonthsRange(hastaMonthKey);
+  const filas = [];
+
+  for (const mk of meses) {
+    const raw = await fbGet(`datos/${mk}`);
+    if (!raw || typeof raw !== "object" || Object.keys(raw).length === 0) continue;
+    const merged = {};
+    Object.keys(initialData).forEach(section => {
+      merged[section] = decodeFirebaseData(raw[section], initialData[section]);
+    });
+
+    const ventasTotal = AGENCIAS.reduce((s, a) => s + (merged.ventasJunioInterno[a]?.facturado ?? 0), 0);
+    const objTotal = AGENCIAS.reduce((s, a) => s + (merged.ventasJunioInterno[a]?.objetivo ?? 0), 0);
+    const wsTotal = AGENCIAS.reduce((s, a) => s + (merged.ws[a]?.real ?? 0), 0);
+    const vanTotal = AGENCIAS.reduce((s, a) => s + (merged.van[a]?.real ?? 0), 0);
+    const isiProm = (() => {
+      const vals = AGENCIAS.map(a => merged.isi[a]?.real ?? 0).filter(v => v > 0);
+      return vals.length ? (vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(1) : "N/D";
+    })();
+    const auditProm = (() => {
+      const vals = AGENCIAS.map(a => merged.auditoria[a] ?? 0).filter(v => v > 0);
+      return vals.length ? (vals.reduce((s, v) => s + v, 0) / vals.length).toFixed(1) : "N/D";
+    })();
+    const msTotal = (() => {
+      const v = AGENCIAS.reduce((s, a) => s + (merged.msMayo[a]?.real ?? 0), 0);
+      const t = AGENCIAS.reduce((s, a) => s + (merged.msMayo[a]?.tiv ?? 0), 0);
+      return t > 0 ? ((v / t) * 100).toFixed(1) : "N/D";
+    })();
+    const rotacionAlertas = AGENCIAS.filter(a => {
+      const r = merged.rotacion[a] ?? {};
+      if (!r.plantillaInicial) return false;
+      const pct = (r.bajas / r.plantillaInicial) * 100;
+      return pct > r.objetivo && r.bajas > 1;
+    });
+    const ventasPorAgencia = AGENCIAS.map(a => {
+      const r = merged.ventasJunioInterno[a] ?? {};
+      return `${a}:${r.facturado ?? 0}/${r.objetivo ?? 0}`;
+    }).join(", ");
+
+    filas.push(
+      `${mk} — Ventas: ${ventasTotal}/${objTotal} unid. (${ventasPorAgencia}) | WS: ${wsTotal} | VAN: ${vanTotal} | ISI prom: ${isiProm}% | Auditoría prom: ${auditProm} | MS: ${msTotal}%` +
+      (rotacionAlertas.length ? ` | ⚠ Rotación alta sin excepción en: ${rotacionAlertas.join(", ")}` : "")
+    );
+  }
+
+  return filas.join("\n");
+}
+
+// Render simple de markdown (encabezados, negritas, listas) sin librerías externas — reutilizable.
+function renderMarkdownGlobal(md) {
+  const lines = md.split("\n");
+  const out = [];
+  let listBuffer = [];
+  const flushList = () => {
+    if (listBuffer.length) {
+      out.push(<ul key={`ul-${out.length}`} style={{ margin: "6px 0 12px 18px", padding: 0 }}>{listBuffer}</ul>);
+      listBuffer = [];
+    }
+  };
+  const renderInline = (text) => {
+    const parts = text.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((p, i) =>
+      p.startsWith("**") && p.endsWith("**")
+        ? <b key={i} style={{ color: "#D4AF37" }}>{p.slice(2, -2)}</b>
+        : <span key={i}>{p}</span>
+    );
+  };
+  lines.forEach((line, i) => {
+    const trimmed = line.trim();
+    if (!trimmed) { flushList(); return; }
+    if (trimmed.startsWith("### ")) { flushList(); out.push(<h4 key={i} style={{ color: "#D4AF37", fontSize: 14, margin: "14px 0 6px" }}>{renderInline(trimmed.slice(4))}</h4>); }
+    else if (trimmed.startsWith("## ")) { flushList(); out.push(<h3 key={i} style={{ color: "#D4AF37", fontSize: 16, margin: "16px 0 8px" }}>{renderInline(trimmed.slice(3))}</h3>); }
+    else if (trimmed.startsWith("# ")) { flushList(); out.push(<h2 key={i} style={{ color: "#D4AF37", fontSize: 18, margin: "16px 0 8px" }}>{renderInline(trimmed.slice(2))}</h2>); }
+    else if (/^[-*]\s+/.test(trimmed)) { listBuffer.push(<li key={i} style={{ color: "#cbd5e1", fontSize: 13, marginBottom: 4 }}>{renderInline(trimmed.replace(/^[-*]\s+/, ""))}</li>); }
+    else if (/^\d+\.\s+/.test(trimmed)) { flushList(); out.push(<p key={i} style={{ color: "#cbd5e1", fontSize: 13, margin: "6px 0", fontWeight: 700 }}>{renderInline(trimmed)}</p>); }
+    else { flushList(); out.push(<p key={i} style={{ color: "#cbd5e1", fontSize: 13, margin: "6px 0", lineHeight: 1.6 }}>{renderInline(trimmed)}</p>); }
+  });
+  flushList();
+  return out;
+}
+
 function AnalisisSection({ data, monthKey, conversionData }) {
   const [loading, setLoading] = useState(false);
   const [resultado, setResultado] = useState("");
@@ -1512,37 +1603,7 @@ ${resumen}`;
   };
 
   // Render simple de markdown (encabezados, negritas, listas) sin librerías externas
-  const renderMarkdown = (md) => {
-    const lines = md.split("\n");
-    const out = [];
-    let listBuffer = [];
-    const flushList = () => {
-      if (listBuffer.length) {
-        out.push(<ul key={`ul-${out.length}`} style={{ margin: "6px 0 12px 18px", padding: 0 }}>{listBuffer}</ul>);
-        listBuffer = [];
-      }
-    };
-    const renderInline = (text) => {
-      const parts = text.split(/(\*\*[^*]+\*\*)/g);
-      return parts.map((p, i) =>
-        p.startsWith("**") && p.endsWith("**")
-          ? <b key={i} style={{ color: "#D4AF37" }}>{p.slice(2, -2)}</b>
-          : <span key={i}>{p}</span>
-      );
-    };
-    lines.forEach((line, i) => {
-      const trimmed = line.trim();
-      if (!trimmed) { flushList(); return; }
-      if (trimmed.startsWith("### ")) { flushList(); out.push(<h4 key={i} style={{ color: "#D4AF37", fontSize: 14, margin: "14px 0 6px" }}>{renderInline(trimmed.slice(4))}</h4>); }
-      else if (trimmed.startsWith("## ")) { flushList(); out.push(<h3 key={i} style={{ color: "#D4AF37", fontSize: 16, margin: "16px 0 8px" }}>{renderInline(trimmed.slice(3))}</h3>); }
-      else if (trimmed.startsWith("# ")) { flushList(); out.push(<h2 key={i} style={{ color: "#D4AF37", fontSize: 18, margin: "16px 0 8px" }}>{renderInline(trimmed.slice(2))}</h2>); }
-      else if (/^[-*]\s+/.test(trimmed)) { listBuffer.push(<li key={i} style={{ color: "#cbd5e1", fontSize: 13, marginBottom: 4 }}>{renderInline(trimmed.replace(/^[-*]\s+/, ""))}</li>); }
-      else if (/^\d+\.\s+/.test(trimmed)) { flushList(); out.push(<p key={i} style={{ color: "#cbd5e1", fontSize: 13, margin: "6px 0", fontWeight: 700 }}>{renderInline(trimmed)}</p>); }
-      else { flushList(); out.push(<p key={i} style={{ color: "#cbd5e1", fontSize: 13, margin: "6px 0", lineHeight: 1.6 }}>{renderInline(trimmed)}</p>); }
-    });
-    flushList();
-    return out;
-  };
+  const renderMarkdown = renderMarkdownGlobal;
 
   return (
     <Card>
@@ -1588,6 +1649,238 @@ ${resumen}`;
           Da clic en el botón para generar el diagnóstico y plan de acción basado en los datos actuales del dashboard.
         </div>
       )}
+    </Card>
+  );
+}
+
+// ── SECCIÓN: Alertas (proactivo, usa histórico completo) ──────────────────────
+function AlertasSection({ monthKey }) {
+  const [loading, setLoading] = useState(false);
+  const [resultado, setResultado] = useState("");
+  const [error, setError] = useState("");
+  const [yaRevisado, setYaRevisado] = useState(false);
+
+  const revisarAlertas = async () => {
+    setLoading(true);
+    setError("");
+    setResultado("");
+    try {
+      const historico = await buildResumenHistorico(monthKey);
+      const prompt = `Eres el director comercial con 20 años de experiencia en grupos automotrices, asesorando a CHESA (distribuidor Changan en Chiapas, México, 5 agencias: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo).
+
+Te comparto la serie histórica mes a mes de los indicadores clave del negocio, desde el inicio de operaciones hasta ${getMonthLabel(monthKey)}. Tu trabajo es revisar TODO el histórico (no solo el último mes) y detectar:
+
+1. **Tendencias de riesgo sostenidas** (ej. una agencia que lleva 3+ meses cayendo en algún indicador, no solo un mal mes aislado)
+2. **Comparativos relevantes** (mismo mes vs año anterior si los datos lo permiten, o contra el promedio histórico)
+3. **Señales tempranas** que un director con experiencia notaría antes de que se conviertan en crisis (ej. caída de satisfacción que suele anteceder a rotación de personal, desbalance de inventario entre agencias, estacionalidad)
+
+Si NO hay nada urgente o digno de alerta, dilo claramente y de forma breve — no inventes problemas que no existen en los datos.
+
+Si SÍ hay alertas, sé directo y concreto: qué agencia, qué indicador, desde cuándo, y por qué es relevante. Máximo 5 alertas, ordenadas por urgencia. Formato markdown con encabezados cortos.
+
+HISTÓRICO MES A MES:
+${historico}`;
+
+      const response = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const responseData = await response.json();
+      if (!response.ok) {
+        setError(responseData.error || "Ocurrió un error revisando las alertas.");
+        return;
+      }
+      setResultado(responseData.text || "No se recibió respuesta.");
+      setYaRevisado(true);
+    } catch (e) {
+      setError("Ocurrió un error revisando las alertas. Verifica tu conexión e intenta de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card style={{ borderColor: yaRevisado && !loading ? "#1e3a5f" : undefined }}>
+      <SectionHeader title="ALERTAS — REVISIÓN CON CRITERIO EXPERTO" icon="🚨" />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+        <button
+          onClick={revisarAlertas}
+          disabled={loading}
+          style={{
+            background: loading ? "#1e3a5f" : "#D4AF37",
+            color: loading ? "#64748b" : "#0a1628",
+            border: "none", borderRadius: 8, padding: "10px 20px",
+            fontSize: 13, fontWeight: 700, cursor: loading ? "default" : "pointer"
+          }}
+        >
+          {loading ? "Revisando histórico completo…" : "🔍 Revisar Alertas"}
+        </button>
+        <span style={{ color: "#64748b", fontSize: 11.5 }}>
+          Analiza todo el histórico cargado (desde el inicio de operaciones) buscando tendencias de riesgo, no solo el mes actual.
+        </span>
+      </div>
+
+      {error && (
+        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
+          {error}
+        </div>
+      )}
+
+      {loading && (
+        <div style={{ color: "#94a3b8", fontSize: 13, padding: "20px 0", textAlign: "center" }}>
+          Revisando el histórico completo de las 5 agencias… esto puede tardar unos segundos.
+        </div>
+      )}
+
+      {!loading && resultado && (
+        <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px", maxHeight: "70vh", overflowY: "auto" }}>
+          {renderMarkdownGlobal(resultado)}
+        </div>
+      )}
+
+      {!loading && !resultado && !error && (
+        <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "30px 0" }}>
+          Da clic en el botón para revisar el histórico completo y detectar alertas urgentes.
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── SECCIÓN: Chat libre (reactivo, con contexto del negocio) ──────────────────
+function ChatSection({ data, monthKey, conversionData }) {
+  const [mensajes, setMensajes] = useState([]); // [{role, content}]
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [contextoListo, setContextoListo] = useState(false);
+  const contextoRef = useRef(null);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [mensajes, loading]);
+
+  const prepararContexto = async () => {
+    if (contextoRef.current) return contextoRef.current;
+    const historico = await buildResumenHistorico(monthKey);
+    const detalleMesActual = buildResumenParaIA(data, monthKey) + "\n" + buildResumenConversionParaIA(conversionData);
+    const contexto = `Eres el director comercial con 20 años de experiencia en grupos automotrices, asesorando a CHESA (distribuidor Changan en Chiapas, México, 5 agencias: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo). El usuario es el Director de Marca y te va a hacer preguntas libres sobre el negocio.
+
+Responde con criterio de experto: directo, concreto, usando los nombres reales de las agencias y los números reales que te comparto. Si la pregunta requiere un cálculo o comparación, hazlo explícito. Si no tienes el dato para responder algo, dilo claramente en vez de inventar.
+
+HISTÓRICO MES A MES (resumen):
+${historico}
+
+DETALLE COMPLETO DEL MES ACTUAL EN VISTA (${getMonthLabel(monthKey)}):
+${detalleMesActual}`;
+    contextoRef.current = contexto;
+    setContextoListo(true);
+    return contexto;
+  };
+
+  const enviarMensaje = async () => {
+    const texto = input.trim();
+    if (!texto || loading) return;
+    setInput("");
+    setError("");
+    const nuevosMensajes = [...mensajes, { role: "user", content: texto }];
+    setMensajes(nuevosMensajes);
+    setLoading(true);
+    try {
+      const contexto = await prepararContexto();
+      const apiMessages = [
+        { role: "user", content: contexto },
+        { role: "assistant", content: "Entendido. Tengo el contexto completo del negocio. ¿En qué te puedo ayudar?" },
+        ...nuevosMensajes,
+      ];
+      const response = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: apiMessages }),
+      });
+      const responseData = await response.json();
+      if (!response.ok) {
+        setError(responseData.error || "Ocurrió un error.");
+        setLoading(false);
+        return;
+      }
+      setMensajes(prev => [...prev, { role: "assistant", content: responseData.text || "No se recibió respuesta." }]);
+    } catch (e) {
+      setError("Ocurrió un error de conexión. Intenta de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <SectionHeader title="PREGÚNTALE AL DIRECTOR COMERCIAL" icon="💬" />
+      <div ref={scrollRef} style={{
+        background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8,
+        padding: "16px 18px", height: "50vh", overflowY: "auto", marginBottom: 12,
+        display: "flex", flexDirection: "column", gap: 14
+      }}>
+        {mensajes.length === 0 && (
+          <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", margin: "auto 0" }}>
+            Pregunta lo que quieras sobre el negocio: comparativos entre agencias, por qué bajó o subió algún indicador, qué agencia necesita más atención, etc.
+            <br /><br />
+            Ejemplos: <i>"¿Por qué bajó Tapachula en mayo?"</i> · <i>"Compara Comitán vs Ocosingo en rotación"</i> · <i>"¿Qué agencia necesita más atención este mes?"</i>
+          </div>
+        )}
+        {mensajes.map((m, i) => (
+          <div key={i} style={{
+            alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+            maxWidth: "85%",
+            background: m.role === "user" ? "#D4AF3722" : "#0f2239",
+            border: `1px solid ${m.role === "user" ? "#D4AF37" : "#1e3a5f"}`,
+            borderRadius: 10, padding: "10px 14px"
+          }}>
+            {m.role === "user"
+              ? <span style={{ color: "#f1f5f9", fontSize: 13 }}>{m.content}</span>
+              : <div>{renderMarkdownGlobal(m.content)}</div>}
+          </div>
+        ))}
+        {loading && (
+          <div style={{ alignSelf: "flex-start", color: "#64748b", fontSize: 12.5 }}>Pensando…</div>
+        )}
+      </div>
+
+      {error && (
+        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "8px 12px", color: "#f87171", fontSize: 12.5, marginBottom: 10 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); enviarMensaje(); } }}
+          placeholder="Escribe tu pregunta…"
+          disabled={loading}
+          style={{
+            flex: 1, background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#f1f5f9",
+            borderRadius: 8, padding: "10px 14px", fontSize: 13, outline: "none"
+          }}
+        />
+        <button
+          onClick={enviarMensaje}
+          disabled={loading || !input.trim()}
+          style={{
+            background: (loading || !input.trim()) ? "#1e3a5f" : "#D4AF37",
+            color: (loading || !input.trim()) ? "#64748b" : "#0a1628",
+            border: "none", borderRadius: 8, padding: "10px 20px",
+            fontSize: 13, fontWeight: 700, cursor: (loading || !input.trim()) ? "default" : "pointer"
+          }}
+        >
+          Enviar
+        </button>
+      </div>
+      <div style={{ color: "#475569", fontSize: 10.5, marginTop: 8, textAlign: "center" }}>
+        El contexto incluye el histórico completo desde el inicio de operaciones y el detalle del mes en vista ({getMonthLabel(monthKey)}).
+      </div>
     </Card>
   );
 }
@@ -1909,6 +2202,18 @@ export default function App() {
               border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🧠 Análisis IA</button>
+            <button onClick={() => setTab("alertas")} style={{
+              background: tab === "alertas" ? "#D4AF37" : "transparent",
+              color: tab === "alertas" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>🚨 Alertas</button>
+            <button onClick={() => setTab("chat")} style={{
+              background: tab === "chat" ? "#D4AF37" : "transparent",
+              color: tab === "chat" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>💬 Director Comercial</button>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {isHistorico ? (
@@ -1976,8 +2281,12 @@ export default function App() {
           />
         ) : tab === "tendencias" ? (
           <TendenciasSection currentMonthKey={currentMonthKey} />
-        ) : (
+        ) : tab === "analisis" ? (
           <AnalisisSection data={data} monthKey={viewMonth} conversionData={conversionData} />
+        ) : tab === "alertas" ? (
+          <AlertasSection monthKey={currentMonthKey} />
+        ) : (
+          <ChatSection data={data} monthKey={viewMonth} conversionData={conversionData} />
         )}
         <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, marginTop: 24 }}>
           Los cambios se sincronizan automáticamente con Firebase · Actualización cada 15 seg
