@@ -357,7 +357,8 @@ function Card({ children, style = {} }) {
 }
 
 // ── SECCIÓN: Ventas ───────────────────────────────────────────────────────────
-function VentasSection({ data, onFieldChange }) {
+function VentasSection({ data, onFieldChange, monthKey }) {
+  const mesCap = getMonthLabel(monthKey).toUpperCase();
   const total = (bloque, campo) => AGENCIAS.reduce((s, a) => s + (data[bloque][a]?.[campo] ?? 0), 0);
 
   const renderTable = (bloque, titulo) => (
@@ -409,8 +410,8 @@ function VentasSection({ data, onFieldChange }) {
     <Card>
       <SectionHeader title="VENTAS" icon="📊" />
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        {renderTable("ventasJunioInterno", "JUNIO — OBJETIVO INTERNO")}
-        {renderTable("ventasJunioMexico", "JUNIO — OBJETIVO CHANGAN MX")}
+        {renderTable("ventasJunioInterno", `${mesCap} — OBJETIVO INTERNO`)}
+        {renderTable("ventasJunioMexico", `${mesCap} — OBJETIVO CHANGAN MX`)}
       </div>
     </Card>
   );
@@ -682,13 +683,14 @@ function WholesaleSection({ data, onFieldChange }) {
 }
 
 // ── SECCIÓN: VAN / VAU ────────────────────────────────────────────────────────
-function VanVauSection({ data, onFieldChange, onToggleVau }) {
+function VanVauSection({ data, onFieldChange, onToggleVau, monthKey }) {
+  const mesCap = getMonthLabel(monthKey).toUpperCase();
   return (
     <Card>
-      <SectionHeader title="VAN / VAU JUNIO" icon="🚗" />
+      <SectionHeader title={`VAN / VAU ${mesCap}`} icon="🚗" />
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 260 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>OBJETIVO VAN JUNIO</p>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{`OBJETIVO VAN ${mesCap}`}</p>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ color: "#64748b", fontSize: 11 }}>
@@ -722,7 +724,7 @@ function VanVauSection({ data, onFieldChange, onToggleVau }) {
           </table>
         </div>
         <div style={{ flex: 1, minWidth: 200 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>OBJETIVO VAU JUNIO</p>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{`OBJETIVO VAU ${mesCap}`}</p>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ color: "#64748b", fontSize: 11 }}>
@@ -750,13 +752,15 @@ function VanVauSection({ data, onFieldChange, onToggleVau }) {
 }
 
 // ── SECCIÓN: Satisfacción ─────────────────────────────────────────────────────
-function SatisfaccionSection({ data, onFieldChange }) {
+function SatisfaccionSection({ data, onFieldChange, monthKey }) {
+  const mesCap = getMonthLabel(monthKey).toUpperCase();
+  const mesLabelCap = getMonthLabel(monthKey).charAt(0).toUpperCase() + getMonthLabel(monthKey).slice(1);
   return (
     <Card>
       <SectionHeader title="SATISFACCIÓN — SSI / CSI / ISI" icon="⭐" />
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 320 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>SSI JUNIO (Objetivo aplica a CBD y SSI)</p>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{`SSI ${mesCap} (Objetivo aplica a CBD y SSI)`}</p>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ color: "#64748b", fontSize: 11 }}>
@@ -799,7 +803,7 @@ function SatisfaccionSection({ data, onFieldChange }) {
           </table>
         </div>
         <div style={{ flex: 1, minWidth: 320 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>CSI JUNIO (Objetivo aplica a CBD y CSI)</p>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{`CSI ${mesCap} (Objetivo aplica a CBD y CSI)`}</p>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ color: "#64748b", fontSize: 11 }}>
@@ -842,7 +846,7 @@ function SatisfaccionSection({ data, onFieldChange }) {
           </table>
         </div>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>ISI JUNIO 2026</p>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{`ISI ${mesLabelCap}`}</p>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ color: "#64748b", fontSize: 11 }}>
@@ -1924,7 +1928,7 @@ export default function App() {
           <>
             <KpiBar data={data} />
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <VentasSection data={data} onFieldChange={onFieldChange} />
+              <VentasSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
               <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
               <LineasProductoSection data={data} onLineaChange={onLineaChange} />
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
@@ -1935,10 +1939,10 @@ export default function App() {
                   <WholesaleSection data={data} onFieldChange={onFieldChange} />
                 </div>
                 <div style={{ flex: 1, minWidth: 280 }}>
-                  <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} />
+                  <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} monthKey={viewMonth} />
                 </div>
               </div>
-              <SatisfaccionSection data={data} onFieldChange={onFieldChange} />
+              <SatisfaccionSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 280 }}>
                   <MarketShareSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
