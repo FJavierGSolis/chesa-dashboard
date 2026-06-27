@@ -12,9 +12,15 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "Falta configurar ANTHROPIC_API_KEY en Vercel (Settings → Environment Variables)." });
   }
 
-  const { prompt } = req.body || {};
-  if (!prompt || typeof prompt !== "string") {
-    return res.status(400).json({ error: "Falta el campo 'prompt' en la solicitud." });
+  const { prompt, messages } = req.body || {};
+
+  let finalMessages;
+  if (Array.isArray(messages) && messages.length > 0) {
+    finalMessages = messages;
+  } else if (prompt && typeof prompt === "string") {
+    finalMessages = [{ role: "user", content: prompt }];
+  } else {
+    return res.status(400).json({ error: "Falta el campo 'prompt' o 'messages' en la solicitud." });
   }
 
   try {
@@ -28,7 +34,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: "claude-sonnet-4-5",
         max_tokens: 3000,
-        messages: [{ role: "user", content: prompt }],
+        messages: finalMessages,
       }),
     });
 
