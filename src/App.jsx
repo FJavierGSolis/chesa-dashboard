@@ -2126,15 +2126,18 @@ export default function App() {
       {/* Header */}
       <div style={{
         background: "linear-gradient(135deg, #0d1b2e 0%, #0a2040 100%)",
-        borderBottom: "2px solid #D4AF37",
+        borderBottom: "3px solid #5eead4",
         padding: "18px 28px",
         display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8
       }}>
         <div>
-          <div style={{ color: "#D4AF37", fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>CHANGAN · CHESA</div>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: "#f1f5f9" }}>
-            Dashboard Operativo — {getMonthLabel(viewMonth).charAt(0).toUpperCase() + getMonthLabel(viewMonth).slice(1)}
+          <div style={{ color: "#5eead4", fontSize: 11, fontWeight: 700, letterSpacing: 3 }}>FORESIGHT</div>
+          <h1 style={{ margin: "2px 0 0", fontSize: 23, fontWeight: 700, color: "#f1f5f9", fontFamily: "Georgia, 'Times New Roman', serif" }}>
+            Foresight Auto Intelligence
           </h1>
+          <div style={{ color: "#64748b", fontSize: 11, marginTop: 3 }}>
+            CHANGAN · CHESA — {getMonthLabel(viewMonth).charAt(0).toUpperCase() + getMonthLabel(viewMonth).slice(1)}
+          </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           {(() => {
@@ -2179,39 +2182,39 @@ export default function App() {
           })()}
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={() => setTab("operativo")} style={{
-              background: tab === "operativo" ? "#D4AF37" : "transparent",
+              background: tab === "operativo" ? "#5eead4" : "transparent",
               color: tab === "operativo" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>📊 Operativo</button>
             <button onClick={() => setTab("conversion")} style={{
-              background: tab === "conversion" ? "#D4AF37" : "transparent",
+              background: tab === "conversion" ? "#5eead4" : "transparent",
               color: tab === "conversion" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🧑‍💼 Conversión Asesores</button>
             <button onClick={() => setTab("tendencias")} style={{
-              background: tab === "tendencias" ? "#D4AF37" : "transparent",
+              background: tab === "tendencias" ? "#5eead4" : "transparent",
               color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>📉 Tendencias</button>
             <button onClick={() => setTab("analisis")} style={{
-              background: tab === "analisis" ? "#D4AF37" : "transparent",
+              background: tab === "analisis" ? "#5eead4" : "transparent",
               color: tab === "analisis" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🧠 Análisis IA</button>
             <button onClick={() => setTab("alertas")} style={{
-              background: tab === "alertas" ? "#D4AF37" : "transparent",
+              background: tab === "alertas" ? "#5eead4" : "transparent",
               color: tab === "alertas" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🚨 Alertas</button>
             <button onClick={() => setTab("chat")} style={{
-              background: tab === "chat" ? "#D4AF37" : "transparent",
+              background: tab === "chat" ? "#5eead4" : "transparent",
               color: tab === "chat" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>💬 Director Comercial</button>
           </div>
