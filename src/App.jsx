@@ -3216,7 +3216,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
       <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto" }}>
         {tab === "operativo" ? (
           <>
-            <KpiBar data={data} monthKey={viewMonth} />
+            {!vistaAnualActiva && <KpiBar data={data} monthKey={viewMonth} />}
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
               {vistaAnualActiva ? (
                 <VistaAnualSection anio={getYearFromKey(viewMonth)} />
@@ -3225,28 +3225,28 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
                   <VentasSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
                   <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
                   <LineasProductoSection data={data} onLineaChange={onLineaChange} />
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                      <AuditoriaSection data={data} onSimpleChange={onSimpleChange} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                      <WholesaleSection data={data} onFieldChange={onFieldChange} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                      <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} monthKey={viewMonth} />
+                    </div>
+                  </div>
+                  <SatisfaccionSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                      <MarketShareSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                      <RotacionSection data={data} onFieldChange={onFieldChange} />
+                    </div>
+                  </div>
                 </>
               )}
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 280 }}>
-                  <AuditoriaSection data={data} onSimpleChange={onSimpleChange} />
-                </div>
-                <div style={{ flex: 1, minWidth: 280 }}>
-                  <WholesaleSection data={data} onFieldChange={onFieldChange} />
-                </div>
-                <div style={{ flex: 1, minWidth: 280 }}>
-                  <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} monthKey={viewMonth} />
-                </div>
-              </div>
-              <SatisfaccionSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
-              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 280 }}>
-                  <MarketShareSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
-                </div>
-                <div style={{ flex: 1, minWidth: 280 }}>
-                  <RotacionSection data={data} onFieldChange={onFieldChange} />
-                </div>
-              </div>
             </div>
           </>
         ) : tab === "conversion" ? (
@@ -3267,9 +3267,11 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
         ) : (
           <SatisfaccionClienteSection monthKey={viewMonth} />
         )}
-        <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, marginTop: 24 }}>
-          Los cambios se sincronizan automáticamente con Firebase · Actualización cada 15 seg
-        </div>
+        {!vistaAnualActiva && (
+          <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, marginTop: 24 }}>
+            Los cambios se sincronizan automáticamente con Firebase · Actualización cada 15 seg
+          </div>
+        )}
       </div>
     </div>
   );
