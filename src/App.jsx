@@ -416,7 +416,7 @@ function LoginScreen({ onLoginSuccess }) {
         borderRadius: 12, padding: "36px 36px 24px", position: "relative"
       }}>
         <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <img src="/logo-changan.png" alt="Changan" style={{ height: 34, objectFit: "contain" }} />
+          <img src="/logo-changan.png" alt="Changan" style={{ width: 130, objectFit: "contain" }} />
         </div>
 
         <div style={{ textAlign: "center", marginBottom: 28, paddingBottom: 20, borderBottom: "1px solid #1e3a5f" }}>
@@ -502,7 +502,9 @@ function LoginScreen({ onLoginSuccess }) {
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 24, paddingTop: 16, borderTop: "1px solid #1e3a5f" }}>
-          <img src="/logo-chesa.png" alt="CHESA" style={{ height: 20, objectFit: "contain", opacity: 0.85 }} />
+          <div style={{ background: "#f1f5f9", borderRadius: 6, padding: "5px 10px", display: "flex", alignItems: "center" }}>
+            <img src="/logo-chesa.png" alt="CHESA" style={{ width: 80, objectFit: "contain" }} />
+          </div>
         </div>
       </div>
     </div>
