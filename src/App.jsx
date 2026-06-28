@@ -862,9 +862,6 @@ function VistaAnualSection({ anio }) {
   }
 
   const totalFact = AGENCIAS.reduce((s, a) => s + datosAnuales.ventasJunioInterno[a].facturado, 0);
-  const totalObj  = AGENCIAS.reduce((s, a) => s + datosAnuales.ventasJunioInterno[a].objetivo, 0);
-  const totalFactMx = AGENCIAS.reduce((s, a) => s + datosAnuales.ventasJunioMexico[a].facturado, 0);
-  const totalObjMx  = AGENCIAS.reduce((s, a) => s + datosAnuales.ventasJunioMexico[a].objetivo, 0);
 
   const valoresPlan = PLANES.map(p => ({
     ...p,
@@ -891,45 +888,27 @@ function VistaAnualSection({ anio }) {
         </div>
 
         <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>VENTAS — TOTAL {anio}</p>
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 18 }}>
-          {[
-            { titulo: "OBJETIVO INTERNO", facturado: totalFact, objetivo: totalObj, data: datosAnuales.ventasJunioInterno },
-            { titulo: "OBJETIVO CHANGAN MX", facturado: totalFactMx, objetivo: totalObjMx, data: datosAnuales.ventasJunioMexico },
-          ].map(bloque => (
-            <div key={bloque.titulo} style={{ flex: 1, minWidth: 260 }}>
-              <p style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{bloque.titulo}</p>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ color: "#64748b", fontSize: 11 }}>
-                    <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
-                    <th style={{ textAlign: "center" }}>FACTURADO</th>
-                    <th style={{ textAlign: "center" }}>OBJETIVO</th>
-                    <th style={{ textAlign: "center" }}>AVANCE</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {AGENCIAS.map(ag => {
-                    const row = bloque.data[ag];
-                    const p = pct(row.facturado, row.objetivo);
-                    return (
-                      <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
-                        <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-                        <td style={{ textAlign: "center", color: "#cbd5e1" }}>{row.facturado}</td>
-                        <td style={{ textAlign: "center", color: "#cbd5e1" }}>{row.objetivo}</td>
-                        <td style={{ textAlign: "center", fontWeight: 700, color: p >= 100 ? "#4ade80" : p >= 50 ? "#D4AF37" : "#f87171" }}>{p}%</td>
-                      </tr>
-                    );
-                  })}
-                  <tr style={{ borderTop: "2px solid #D4AF3755" }}>
-                    <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
-                    <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{bloque.facturado}</td>
-                    <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{bloque.objetivo}</td>
-                    <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 800 }}>{pct(bloque.facturado, bloque.objetivo)}%</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          ))}
+        <div style={{ maxWidth: 400 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: "#64748b", fontSize: 11 }}>
+                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+                <th style={{ textAlign: "center" }}>FACTURADO</th>
+              </tr>
+            </thead>
+            <tbody>
+              {AGENCIAS.map(ag => (
+                <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                  <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+                  <td style={{ textAlign: "center", color: "#cbd5e1" }}>{datosAnuales.ventasJunioInterno[ag].facturado}</td>
+                </tr>
+              ))}
+              <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
+                <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalFact}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </Card>
 
