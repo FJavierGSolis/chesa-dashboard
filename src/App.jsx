@@ -46,6 +46,35 @@ const FIREBASE_URL = "https://dashboard-changan-chesa-default-rtdb.firebaseio.co
 
 const AGENCIAS = ["TUXTLA", "TAPACHULA", "SAN CRISTÓBAL", "COMITÁN", "OCOSINGO"];
 
+const MUNICIPIOS_CHIAPAS = [
+  "Acacoyagua", "Acala", "Acapetahua", "Aldama", "Altamirano", "Amatán",
+  "Amatenango de la Frontera", "Amatenango del Valle", "Ángel Albino Corzo", "Arriaga",
+  "Bejucal de Ocampo", "Bella Vista", "Benemérito de las Américas", "Berriozábal",
+  "Bochil", "El Bosque", "Cacahoatán", "Capitán Luis Ángel Vidal", "Catazajá",
+  "Cintalapa", "Coapilla", "Comitán de Domínguez", "La Concordia", "Copainalá",
+  "Chalchihuitán", "Chamula", "Chanal", "Chapultenango", "Chenalhó",
+  "Chiapa de Corzo", "Chiapilla", "Chicoasén", "Chicomuselo", "Chilón",
+  "Emiliano Zapata", "Escuintla", "Francisco León", "Frontera Comalapa",
+  "Frontera Hidalgo", "La Grandeza", "Honduras de la Sierra", "Huehuetán",
+  "Huixtán", "Huitiupán", "Huixtla", "La Independencia", "Ixhuatán",
+  "Ixtacomitán", "Ixtapa", "Ixtapangajoya", "Jiquipilas", "Jitotol", "Juárez",
+  "Larráinzar", "La Libertad", "Mapastepec", "Las Margaritas", "Marqués de Comillas",
+  "Maravilla Tenejapa", "Mazapa de Madero", "Mazatán", "Metapa", "Mezcalapa",
+  "Mitontic", "Montecristo de Guerrero", "Motozintla", "Nicolás Ruíz", "Ocosingo",
+  "Ocotepec", "Ocozocoautla de Espinosa", "Ostuacán", "Osumacinta", "Oxchuc",
+  "Palenque", "Pantelhó", "Pantepec", "El Parral", "Pichucalco", "Pijijiapan",
+  "El Porvenir", "Villa Comaltitlán", "Pueblo Nuevo Solistahuacán", "Rayón",
+  "Reforma", "Rincón Chamula San Pedro", "Las Rosas", "Sabanilla", "Salto de Agua",
+  "San Andrés Duraznal", "San Cristóbal de las Casas", "San Fernando",
+  "San Juan Cancuc", "San Lucas", "Santiago el Pinar", "Siltepec", "Simojovel",
+  "Sitalá", "Socoltenango", "Solosuchiapa", "Soyaló", "Suchiapa", "Suchiate",
+  "Sunuapa", "Tapachula", "Tapalapa", "Tapilula", "Tecpatán", "Tenejapa",
+  "Teopisca", "Tila", "Tonalá", "Totolapa", "La Trinitaria", "Tumbalá",
+  "Tuxtla Gutiérrez", "Tuxtla Chico", "Tuzantán", "Tzimol", "Unión Juárez",
+  "Venustiano Carranza", "Villa Corzo", "Villaflores", "Yajalón", "Zinacantán",
+];
+
+
 const PLANES = [
   { key: "CONTADO",     color: "#D4AF37" },
   { key: "BBVA",        color: "#1e88e5" },
@@ -379,6 +408,7 @@ function EncuestaDemoPublica() {
   const [legusto, setLegusto] = useState("");
   const [nolegusto, setNolegusto] = useState("");
   const [municipio, setMunicipio] = useState("");
+  const [colonia, setColonia] = useState("");
   const [comentario, setComentario] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [enviado, setEnviado] = useState(false);
@@ -412,7 +442,7 @@ function EncuestaDemoPublica() {
         agencia, asesorId, asesorNombre,
         calificacion: Number(calificacion),
         legusto: legusto.trim(), nolegusto: nolegusto.trim(),
-        municipio: municipio.trim(), comentario: comentario.trim(),
+        municipio: municipio.trim(), colonia: colonia.trim(), comentario: comentario.trim(),
         fecha: new Date().toISOString(),
       };
       const monthKey = getOperativeMonthKey();
@@ -501,8 +531,17 @@ function EncuestaDemoPublica() {
           </div>
 
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>MUNICIPIO O COLONIA DONDE VIVES *</label>
-            <input type="text" value={municipio} onChange={e => setMunicipio(e.target.value)} required placeholder="Ej. Tuxtla Gutiérrez, Col. Moctezuma"
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>MUNICIPIO DONDE VIVES *</label>
+            <select value={municipio} onChange={e => setMunicipio(e.target.value)} required
+              style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box" }}>
+              <option value="">Selecciona…</option>
+              {MUNICIPIOS_CHIAPAS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>COLONIA (OPCIONAL)</label>
+            <input type="text" value={colonia} onChange={e => setColonia(e.target.value)} placeholder="Ej. Col. Moctezuma"
               style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box" }} />
           </div>
 
@@ -2869,6 +2908,36 @@ ${lineas}`;
                   </tbody>
                 </table>
               </div>
+            </div>
+
+            <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8, marginTop: 18 }}>DETALLE DE RESPUESTAS</p>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ color: "#64748b", fontSize: 10.5 }}>
+                    <th style={{ textAlign: "left", paddingBottom: 6 }}>FECHA</th>
+                    <th style={{ textAlign: "left" }}>AGENCIA</th>
+                    <th style={{ textAlign: "left" }}>ASESOR</th>
+                    <th style={{ textAlign: "center" }}>CALIF.</th>
+                    <th style={{ textAlign: "left" }}>MUNICIPIO</th>
+                    <th style={{ textAlign: "left" }}>COLONIA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...datosFiltrados].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).map((r, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid #1e3a5f" }}>
+                      <td style={{ padding: "5px 0", color: "#64748b", fontSize: 11 }}>
+                        {r.fecha ? new Date(r.fecha).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                      </td>
+                      <td style={{ color: "#cbd5e1" }}>{r.agencia}</td>
+                      <td style={{ color: "#cbd5e1" }}>{r.asesorNombre}</td>
+                      <td style={{ textAlign: "center", fontWeight: 700, color: r.calificacion >= 9 ? "#4ade80" : r.calificacion >= 7 ? "#D4AF37" : "#f87171" }}>{r.calificacion}</td>
+                      <td style={{ color: "#cbd5e1" }}>{r.municipio}</td>
+                      <td style={{ color: "#64748b" }}>{r.colonia || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </>
         )}
