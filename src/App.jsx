@@ -1,4 +1,44 @@
 import { useState, useEffect, useRef } from "react";
+import { initializeApp } from "firebase/app";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "firebase/auth";
+
+// ── Firebase config (SDK completo, para Authentication) ──────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyDCajCyO0xDoROVLSIW49IN7CvPUdf7y0k",
+  authDomain: "dashboard-changan-chesa.firebaseapp.com",
+  databaseURL: "https://dashboard-changan-chesa-default-rtdb.firebaseio.com",
+  projectId: "dashboard-changan-chesa",
+  storageBucket: "dashboard-changan-chesa.firebasestorage.app",
+  messagingSenderId: "250703738355",
+  appId: "1:250703738355:web:a3226d6c26330aeace4e86",
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+
+// ── Roles y asignación de agencia por usuario ─────────────────────────────────
+// El Director (correo de gerencia general) ve y edita todo.
+// Cada gerente solo PUEDE EDITAR su agencia asignada, pero ve todo el panorama
+// en la pestaña Operativo. En Tendencias/Análisis/Alertas/Chat, los gerentes
+// solo ven y analizan su propia agencia.
+const DIRECTOR_EMAILS = ["gerencia.general@changanchiapas.com.mx"];
+const GERENTE_AGENCIA = {
+  // "correo@chesa.com.mx": "TUXTLA",
+  // Se completa conforme se creen las cuentas de cada gerente en Firebase Authentication.
+};
+
+function getRoleForEmail(email) {
+  const lower = (email || "").toLowerCase().trim();
+  if (DIRECTOR_EMAILS.map(e => e.toLowerCase()).includes(lower)) {
+    return { role: "director", agencia: null };
+  }
+  const agencia = GERENTE_AGENCIA[lower];
+  if (agencia) {
+    return { role: "gerente", agencia };
+  }
+  // Por defecto, cualquier cuenta no reconocida se trata como director
+  // (evita bloquear el acceso por error de configuración; ajustar si se requiere más estricto).
+  return { role: "director", agencia: null };
+}
 
 // ── Firebase config ───────────────────────────────────────────────────────────
 const FIREBASE_URL = "https://dashboard-changan-chesa-default-rtdb.firebaseio.com";
@@ -131,11 +171,11 @@ const initialData = {
     OCOSINGO:        { objetivo: 0.85, real: 0 },
   },
   rotacion: {
-    TUXTLA:          { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
-    TAPACHULA:       { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
-    "SAN CRISTÓBAL": { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
-    COMITÁN:         { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
-    OCOSINGO:        { plantillaInicial: 0, bajas: 0, objetivo: 2.5 },
+    TUXTLA:          { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 },
+    TAPACHULA:       { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 },
+    "SAN CRISTÓBAL": { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 },
+    COMITÁN:         { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 },
+    OCOSINGO:        { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 },
   },
   msMayo: {
     TUXTLA:          { objetivo: 0.02,  real: 0, tiv: 0 },
@@ -321,6 +361,151 @@ function Badge({ ok }) {
     }}>
       {ok ? "✓ CUMPLE" : "✗ NO CUMPLE"}
     </span>
+  );
+}
+
+// ── PANTALLA DE LOGIN ──────────────────────────────────────────────────────────
+function LoginScreen({ onLoginSuccess }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [showReset, setShowReset] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+      // onAuthStateChanged en App() se encarga de avanzar a la pantalla principal
+    } catch (err) {
+      const map = {
+        "auth/invalid-credential": "Correo o contraseña incorrectos.",
+        "auth/invalid-email": "El correo no tiene un formato válido.",
+        "auth/user-not-found": "No existe una cuenta con ese correo.",
+        "auth/wrong-password": "Contraseña incorrecta.",
+        "auth/too-many-requests": "Demasiados intentos. Intenta de nuevo en unos minutos.",
+      };
+      setError(map[err.code] || "Ocurrió un error al iniciar sesión. Intenta de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!email.trim()) { setError("Escribe tu correo arriba antes de solicitar el restablecimiento."); return; }
+    setError("");
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setResetSent(true);
+    } catch (err) {
+      setError("No se pudo enviar el correo de restablecimiento. Verifica que el correo sea correcto.");
+    }
+  };
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#070f1a", display: "flex",
+      alignItems: "center", justifyContent: "center", fontFamily: "'Inter', 'Segoe UI', sans-serif",
+      padding: "20px"
+    }}>
+      <div style={{
+        width: 400, background: "#0d1b2e", border: "1px solid #1e3a5f", borderTop: "3px solid #3b9eea",
+        borderRadius: 12, padding: "36px 36px 24px", position: "relative"
+      }}>
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <img src="/logo-changan.png" alt="Changan" style={{ height: 34, objectFit: "contain" }} />
+        </div>
+
+        <div style={{ textAlign: "center", marginBottom: 28, paddingBottom: 20, borderBottom: "1px solid #1e3a5f" }}>
+          <div style={{ color: "#3b9eea", fontSize: 11, fontWeight: 700, letterSpacing: 3 }}>FORESIGHT</div>
+          <div style={{ color: "#f1f5f9", fontSize: 21, fontWeight: 700, fontFamily: "Georgia, 'Times New Roman', serif", marginTop: 4 }}>
+            Foresight Auto Intelligence
+          </div>
+        </div>
+
+        {!showReset ? (
+          <form onSubmit={handleLogin}>
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ display: "block", color: "#94a3b8", fontSize: 11, fontWeight: 700, letterSpacing: .5, marginBottom: 6 }}>CORREO</label>
+              <input
+                type="email" value={email} onChange={e => setEmail(e.target.value)} required autoFocus
+                style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "10px 12px", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+            <div style={{ marginBottom: 22 }}>
+              <label style={{ display: "block", color: "#94a3b8", fontSize: 11, fontWeight: 700, letterSpacing: .5, marginBottom: 6 }}>CONTRASEÑA</label>
+              <input
+                type="password" value={password} onChange={e => setPassword(e.target.value)} required
+                style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "10px 12px", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+
+            {error && (
+              <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 6, padding: "8px 12px", color: "#f87171", fontSize: 12, marginBottom: 16 }}>
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit" disabled={loading}
+              style={{
+                width: "100%", background: loading ? "#1e3a5f" : "#3b9eea", color: loading ? "#64748b" : "#0a1628",
+                border: "none", borderRadius: 8, padding: "11px 0", fontSize: 13, fontWeight: 700, cursor: loading ? "default" : "pointer"
+              }}
+            >
+              {loading ? "Ingresando…" : "Iniciar sesión"}
+            </button>
+
+            <div style={{ textAlign: "center", marginTop: 16 }}>
+              <span onClick={() => { setShowReset(true); setError(""); }} style={{ color: "#3b9eea", fontSize: 11.5, cursor: "pointer" }}>
+                ¿Olvidaste tu contraseña?
+              </span>
+            </div>
+          </form>
+        ) : (
+          <div>
+            {resetSent ? (
+              <div style={{ color: "#4ade80", fontSize: 13, textAlign: "center", padding: "10px 0 20px" }}>
+                Te enviamos un correo a <b>{email}</b> con instrucciones para restablecer tu contraseña.
+              </div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 18 }}>
+                  <label style={{ display: "block", color: "#94a3b8", fontSize: 11, fontWeight: 700, letterSpacing: .5, marginBottom: 6 }}>CORREO</label>
+                  <input
+                    type="email" value={email} onChange={e => setEmail(e.target.value)}
+                    style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "10px 12px", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                  />
+                </div>
+                {error && (
+                  <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 6, padding: "8px 12px", color: "#f87171", fontSize: 12, marginBottom: 16 }}>
+                    {error}
+                  </div>
+                )}
+                <button
+                  onClick={handleReset}
+                  style={{ width: "100%", background: "#3b9eea", color: "#0a1628", border: "none", borderRadius: 8, padding: "11px 0", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Enviar correo de restablecimiento
+                </button>
+              </>
+            )}
+            <div style={{ textAlign: "center", marginTop: 16 }}>
+              <span onClick={() => { setShowReset(false); setResetSent(false); setError(""); }} style={{ color: "#64748b", fontSize: 11.5, cursor: "pointer" }}>
+                ← Volver a iniciar sesión
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 24, paddingTop: 16, borderTop: "1px solid #1e3a5f" }}>
+          <img src="/logo-chesa.png" alt="CHESA" style={{ height: 20, objectFit: "contain", opacity: 0.85 }} />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -952,6 +1137,15 @@ function MarketShareSection({ data, onFieldChange, monthKey }) {
 
 // ── SECCIÓN: Rotación (de personal) ───────────────────────────────────────────
 function RotacionSection({ data, onFieldChange }) {
+  const totales = AGENCIAS.reduce((acc, ag) => {
+    const row = data.rotacion[ag] ?? { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 };
+    acc.plantillaInicial += row.plantillaInicial;
+    acc.altas += row.altas ?? 0;
+    acc.bajas += row.bajas;
+    return acc;
+  }, { plantillaInicial: 0, altas: 0, bajas: 0 });
+  const plantillaTotalFinal = totales.plantillaInicial + totales.altas - totales.bajas;
+
   return (
     <Card>
       <SectionHeader title="ROTACIÓN" icon="👥" />
@@ -960,7 +1154,9 @@ function RotacionSection({ data, onFieldChange }) {
           <tr style={{ color: "#64748b", fontSize: 11 }}>
             <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
             <th style={{ textAlign: "center" }}>PLANTILLA INICIAL</th>
+            <th style={{ textAlign: "center" }}>ALTAS</th>
             <th style={{ textAlign: "center" }}>BAJAS</th>
+            <th style={{ textAlign: "center" }}>PLANTILLA FINAL</th>
             <th style={{ textAlign: "center" }}>% ROTACIÓN</th>
             <th style={{ textAlign: "center" }}>OBJ</th>
             <th style={{ textAlign: "center" }}>STATUS</th>
@@ -968,7 +1164,9 @@ function RotacionSection({ data, onFieldChange }) {
         </thead>
         <tbody>
           {AGENCIAS.map(ag => {
-            const row = data.rotacion[ag] ?? { plantillaInicial: 0, bajas: 0, objetivo: 2.5 };
+            const row = data.rotacion[ag] ?? { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 };
+            const altas = row.altas ?? 0;
+            const plantillaFinal = row.plantillaInicial + altas - row.bajas;
             const pctRotacion = row.plantillaInicial > 0 ? (row.bajas / row.plantillaInicial) * 100 : 0;
             // Cumple si el % está dentro del objetivo, O si solo hubo 1 baja (excepción para agencias chicas)
             const ok = (row.plantillaInicial > 0 && pctRotacion <= row.objetivo) || row.bajas <= 1;
@@ -980,7 +1178,13 @@ function RotacionSection({ data, onFieldChange }) {
                   <NumInput value={row.plantillaInicial} onChange={v => onFieldChange("rotacion", ag, "plantillaInicial", v)} width={70} />
                 </td>
                 <td style={{ textAlign: "center" }}>
+                  <NumInput value={altas} onChange={v => onFieldChange("rotacion", ag, "altas", v)} width={60} />
+                </td>
+                <td style={{ textAlign: "center" }}>
                   <NumInput value={row.bajas} onChange={v => onFieldChange("rotacion", ag, "bajas", v)} width={60} />
+                </td>
+                <td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>
+                  {plantillaFinal}
                 </td>
                 <td style={{ textAlign: "center", color: "#cbd5e1", fontWeight: 700 }}>
                   {row.plantillaInicial > 0 ? `${pctRotacion.toFixed(1)}%` : "—"}
@@ -995,6 +1199,14 @@ function RotacionSection({ data, onFieldChange }) {
               </tr>
             );
           })}
+          <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+            <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
+            <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totales.plantillaInicial}</td>
+            <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totales.altas}</td>
+            <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totales.bajas}</td>
+            <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 800 }}>{plantillaTotalFinal}</td>
+            <td colSpan={3}></td>
+          </tr>
         </tbody>
       </table>
       <div style={{ color: "#475569", fontSize: 11, marginTop: 12, textAlign: "center" }}>
@@ -1257,8 +1469,10 @@ function buildResumenParaIA(data, monthKey) {
   lineas.push("\n--- ROTACIÓN (de personal) ---");
   AGENCIAS.forEach(ag => {
     const r = data.rotacion[ag] ?? {};
+    const altas = r.altas ?? 0;
+    const plantillaFinal = (r.plantillaInicial ?? 0) + altas - (r.bajas ?? 0);
     const pctRot = r.plantillaInicial > 0 ? ((r.bajas / r.plantillaInicial) * 100).toFixed(1) : "N/D";
-    lineas.push(`${ag}: plantilla inicial ${r.plantillaInicial ?? 0}, bajas ${r.bajas ?? 0} → rotación ${pctRot}% (objetivo ≤ ${r.objetivo ?? 0}%, con excepción de cumplimiento si solo hubo 1 baja)`);
+    lineas.push(`${ag}: plantilla inicial ${r.plantillaInicial ?? 0}, altas ${altas}, bajas ${r.bajas ?? 0}, plantilla final ${plantillaFinal} → rotación ${pctRot}% (objetivo ≤ ${r.objetivo ?? 0}%, con excepción de cumplimiento si solo hubo 1 baja)`);
   });
 
   lineas.push("\n--- VAN / VAU ---");
@@ -1886,7 +2100,7 @@ ${detalleMesActual}`;
 }
 
 // ── ROOT ──────────────────────────────────────────────────────────────────────
-export default function App() {
+function Dashboard({ userRole, userAgencia, userEmail }) {
   const [tab, setTab] = useState("operativo"); // operativo | conversion
   const [data, setData] = useState(initialData);
   const [conversionData, setConversionData] = useState(initialConversion);
@@ -2126,12 +2340,12 @@ export default function App() {
       {/* Header */}
       <div style={{
         background: "linear-gradient(135deg, #0d1b2e 0%, #0a2040 100%)",
-        borderBottom: "3px solid #5eead4",
+        borderBottom: "3px solid #3b9eea",
         padding: "18px 28px",
         display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8
       }}>
         <div>
-          <div style={{ color: "#5eead4", fontSize: 11, fontWeight: 700, letterSpacing: 3 }}>FORESIGHT</div>
+          <div style={{ color: "#3b9eea", fontSize: 11, fontWeight: 700, letterSpacing: 3 }}>FORESIGHT</div>
           <h1 style={{ margin: "2px 0 0", fontSize: 23, fontWeight: 700, color: "#f1f5f9", fontFamily: "Georgia, 'Times New Roman', serif" }}>
             Foresight Auto Intelligence
           </h1>
@@ -2139,8 +2353,31 @@ export default function App() {
             CHANGAN · CHESA — {getMonthLabel(viewMonth).charAt(0).toUpperCase() + getMonthLabel(viewMonth).slice(1)}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          {(() => {
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ color: "#cbd5e1", fontSize: 11.5, fontWeight: 600 }}>{userEmail}</div>
+            <div style={{ color: "#64748b", fontSize: 10 }}>
+              {userRole === "director" ? "Director de Marca" : `Gerente — ${userAgencia}`}
+            </div>
+          </div>
+          <button
+            onClick={() => signOut(auth)}
+            title="Cerrar sesión"
+            style={{
+              background: "transparent", border: "1px solid #2a3f5f", color: "#94a3b8",
+              borderRadius: 6, padding: "6px 12px", fontSize: 11, fontWeight: 600, cursor: "pointer"
+            }}
+          >
+            Cerrar sesión
+          </button>
+        </div>
+      </div>
+
+      <div style={{
+        padding: "10px 28px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+        background: "#0a1830", borderBottom: "1px solid #1e3a5f"
+      }}>
+        {(() => {
             const years = Array.from(new Set(availableMonths.map(getYearFromKey))).sort().reverse();
             const viewYear = getYearFromKey(viewMonth);
             const monthsOfYear = availableMonths
@@ -2231,7 +2468,6 @@ export default function App() {
               </>
             )}
           </div>
-        </div>
       </div>
 
       {isHistorico && (
@@ -2296,5 +2532,45 @@ export default function App() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── ROOT REAL — controla sesión y decide Login vs Dashboard ───────────────────
+export default function App() {
+  const [authState, setAuthState] = useState("cargando"); // cargando | sinSesion | conSesion
+  const [userInfo, setUserInfo] = useState(null); // { email, role, agencia }
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        const { role, agencia } = getRoleForEmail(user.email);
+        setUserInfo({ email: user.email, role, agencia });
+        setAuthState("conSesion");
+      } else {
+        setUserInfo(null);
+        setAuthState("sinSesion");
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  if (authState === "cargando") {
+    return (
+      <div style={{ minHeight: "100vh", background: "#070f1a", display: "flex", alignItems: "center", justifyContent: "center", color: "#64748b", fontFamily: "'Inter', 'Segoe UI', sans-serif", fontSize: 13 }}>
+        Cargando…
+      </div>
+    );
+  }
+
+  if (authState === "sinSesion") {
+    return <LoginScreen />;
+  }
+
+  return (
+    <Dashboard
+      userRole={userInfo.role}
+      userAgencia={userInfo.agencia}
+      userEmail={userInfo.email}
+    />
   );
 }
