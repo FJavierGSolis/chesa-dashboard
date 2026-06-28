@@ -546,7 +546,7 @@ function EncuestaDemoPublica() {
           </div>
 
           <div style={{ marginBottom: 20 }}>
-            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>COMENTARIO ADICIONAL (OPCIONAL)</label>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>COMENTARIO O SUGERENCIA ADICIONAL (OPCIONAL)</label>
             <textarea value={comentario} onChange={e => setComentario(e.target.value)} rows={2}
               style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }} />
           </div>
