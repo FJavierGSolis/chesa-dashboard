@@ -798,6 +798,240 @@ function LineasProductoSection({ data, onLineaChange }) {
   );
 }
 
+// ── SECCIÓN: Vista Anual (suma de los 12 meses) ───────────────────────────────
+// Carga los 12 meses de un año y suma ventasJunioInterno, ventasJunioMexico,
+// planesPago y lineasProducto — solo lectura, ya que es un total agregado.
+async function buildVistaAnual(anio) {
+  const meses = [];
+  for (let m = 1; m <= 12; m++) meses.push(`${anio}-${String(m).padStart(2, "0")}`);
+
+  const acumulado = {
+    ventasJunioInterno: Object.fromEntries(AGENCIAS.map(a => [a, { facturado: 0, objetivo: 0 }])),
+    ventasJunioMexico: Object.fromEntries(AGENCIAS.map(a => [a, { facturado: 0, objetivo: 0 }])),
+    planesPago: Object.fromEntries(AGENCIAS.map(a => [a, Object.fromEntries(PLANES.map(p => [p.key, 0]))])),
+    lineasProducto: Object.fromEntries(AGENCIAS.map(a => [a, Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0]))])),
+  };
+  let mesesConDatos = 0;
+
+  for (const mk of meses) {
+    const raw = await fbGet(`datos/${mk}`);
+    if (!raw || typeof raw !== "object" || Object.keys(raw).length === 0) continue;
+    mesesConDatos++;
+    const merged = {};
+    Object.keys(initialData).forEach(section => {
+      merged[section] = decodeFirebaseData(raw[section], initialData[section]);
+    });
+
+    AGENCIAS.forEach(a => {
+      acumulado.ventasJunioInterno[a].facturado += merged.ventasJunioInterno?.[a]?.facturado ?? 0;
+      acumulado.ventasJunioInterno[a].objetivo  += merged.ventasJunioInterno?.[a]?.objetivo ?? 0;
+      acumulado.ventasJunioMexico[a].facturado  += merged.ventasJunioMexico?.[a]?.facturado ?? 0;
+      acumulado.ventasJunioMexico[a].objetivo   += merged.ventasJunioMexico?.[a]?.objetivo ?? 0;
+      PLANES.forEach(p => { acumulado.planesPago[a][p.key] += merged.planesPago?.[a]?.[p.key] ?? 0; });
+      LINEAS_PRODUCTO.forEach(l => { acumulado.lineasProducto[a][l.key] += merged.lineasProducto?.[a]?.[l.key] ?? 0; });
+    });
+  }
+
+  return { acumulado, mesesConDatos };
+}
+
+function VistaAnualSection({ anio }) {
+  const [loading, setLoading] = useState(true);
+  const [datosAnuales, setDatosAnuales] = useState(null);
+  const [mesesConDatos, setMesesConDatos] = useState(0);
+  const [agSelPlan, setAgSelPlan] = useState("TOTAL");
+  const [agSelLinea, setAgSelLinea] = useState("TOTAL");
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const { acumulado, mesesConDatos: mcd } = await buildVistaAnual(anio);
+      setDatosAnuales(acumulado);
+      setMesesConDatos(mcd);
+      setLoading(false);
+    })();
+  }, [anio]);
+
+  if (loading) {
+    return (
+      <Card>
+        <SectionHeader title={`VISTA ANUAL — ${anio}`} icon="🗓️" />
+        <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "30px 0" }}>Sumando los 12 meses de {anio}…</div>
+      </Card>
+    );
+  }
+
+  const totalFact = AGENCIAS.reduce((s, a) => s + datosAnuales.ventasJunioInterno[a].facturado, 0);
+  const totalObj  = AGENCIAS.reduce((s, a) => s + datosAnuales.ventasJunioInterno[a].objetivo, 0);
+  const totalFactMx = AGENCIAS.reduce((s, a) => s + datosAnuales.ventasJunioMexico[a].facturado, 0);
+  const totalObjMx  = AGENCIAS.reduce((s, a) => s + datosAnuales.ventasJunioMexico[a].objetivo, 0);
+
+  const valoresPlan = PLANES.map(p => ({
+    ...p,
+    value: agSelPlan === "TOTAL"
+      ? AGENCIAS.reduce((s, ag) => s + datosAnuales.planesPago[ag][p.key], 0)
+      : datosAnuales.planesPago[agSelPlan][p.key],
+  }));
+  const totalPlan = valoresPlan.reduce((s, v) => s + v.value, 0);
+
+  const valoresLinea = LINEAS_PRODUCTO.map(l => ({
+    ...l,
+    value: agSelLinea === "TOTAL"
+      ? AGENCIAS.reduce((s, ag) => s + datosAnuales.lineasProducto[ag][l.key], 0)
+      : datosAnuales.lineasProducto[agSelLinea][l.key],
+  }));
+  const totalLinea = valoresLinea.reduce((s, v) => s + v.value, 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Card>
+        <SectionHeader title={`VISTA ANUAL — ${anio} (SUMA DE ${mesesConDatos} MESES CON DATOS)`} icon="🗓️" />
+        <div style={{ color: "#475569", fontSize: 11.5, marginBottom: 14 }}>
+          Esta vista es de solo lectura — es la suma de los meses capturados de {anio}. Para editar un mes específico, selecciónalo arriba en lugar de "Año completo".
+        </div>
+
+        <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>VENTAS — TOTAL {anio}</p>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 18 }}>
+          {[
+            { titulo: "OBJETIVO INTERNO", facturado: totalFact, objetivo: totalObj, data: datosAnuales.ventasJunioInterno },
+            { titulo: "OBJETIVO CHANGAN MX", facturado: totalFactMx, objetivo: totalObjMx, data: datosAnuales.ventasJunioMexico },
+          ].map(bloque => (
+            <div key={bloque.titulo} style={{ flex: 1, minWidth: 260 }}>
+              <p style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>{bloque.titulo}</p>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: "#64748b", fontSize: 11 }}>
+                    <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+                    <th style={{ textAlign: "center" }}>FACTURADO</th>
+                    <th style={{ textAlign: "center" }}>OBJETIVO</th>
+                    <th style={{ textAlign: "center" }}>AVANCE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {AGENCIAS.map(ag => {
+                    const row = bloque.data[ag];
+                    const p = pct(row.facturado, row.objetivo);
+                    return (
+                      <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                        <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+                        <td style={{ textAlign: "center", color: "#cbd5e1" }}>{row.facturado}</td>
+                        <td style={{ textAlign: "center", color: "#cbd5e1" }}>{row.objetivo}</td>
+                        <td style={{ textAlign: "center", fontWeight: 700, color: p >= 100 ? "#4ade80" : p >= 50 ? "#D4AF37" : "#f87171" }}>{p}%</td>
+                      </tr>
+                    );
+                  })}
+                  <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                    <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
+                    <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{bloque.facturado}</td>
+                    <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{bloque.objetivo}</td>
+                    <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 800 }}>{pct(bloque.facturado, bloque.objetivo)}%</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card>
+        <SectionHeader title={`VENTAS POR TIPO DE PLAN — TOTAL ${anio}`} icon="🥧" />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+          {["TOTAL", ...AGENCIAS].map(ag => (
+            <button key={ag} onClick={() => setAgSelPlan(ag)} style={{
+              background: agSelPlan === ag ? "#D4AF37" : "#0f2239",
+              color: agSelPlan === ag ? "#0a1628" : "#94a3b8",
+              border: `1px solid ${agSelPlan === ag ? "#D4AF37" : "#1e3a5f"}`,
+              borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>{ag}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "center" }}>
+          <PieChart entries={valoresPlan} />
+          <div style={{ flex: 1, minWidth: 300 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ color: "#64748b", fontSize: 11 }}>
+                  <th style={{ textAlign: "left", paddingBottom: 6 }}>PLAN</th>
+                  <th style={{ textAlign: "center" }}>UNIDADES</th>
+                  <th style={{ textAlign: "right" }}>% PARTICIPACIÓN</th>
+                </tr>
+              </thead>
+              <tbody>
+                {valoresPlan.map(v => {
+                  const p = totalPlan > 0 ? (v.value / totalPlan * 100) : 0;
+                  return (
+                    <tr key={v.key} style={{ borderTop: "1px solid #1e3a5f" }}>
+                      <td style={{ padding: "6px 0" }}>
+                        <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: v.color, marginRight: 7 }} />
+                        <span style={{ color: "#cbd5e1", fontSize: 12 }}>{v.key}</span>
+                      </td>
+                      <td style={{ textAlign: "center", color: "#cbd5e1" }}>{v.value}</td>
+                      <td style={{ textAlign: "right", color: p > 0 ? "#D4AF37" : "#475569", fontWeight: 700 }}>{p.toFixed(1)}%</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                  <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0" }}>TOTAL</td>
+                  <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalPlan}</td>
+                  <td style={{ textAlign: "right", color: "#D4AF37", fontWeight: 700 }}>100%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionHeader title={`VENTAS POR LÍNEA DE PRODUCTO — TOTAL ${anio}`} icon="🥧" />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+          {["TOTAL", ...AGENCIAS].map(ag => (
+            <button key={ag} onClick={() => setAgSelLinea(ag)} style={{
+              background: agSelLinea === ag ? "#D4AF37" : "#0f2239",
+              color: agSelLinea === ag ? "#0a1628" : "#94a3b8",
+              border: `1px solid ${agSelLinea === ag ? "#D4AF37" : "#1e3a5f"}`,
+              borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>{ag}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 28, flexWrap: "wrap", alignItems: "center" }}>
+          <PieChart entries={valoresLinea} />
+          <div style={{ flex: 1, minWidth: 300 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ color: "#64748b", fontSize: 11 }}>
+                  <th style={{ textAlign: "left", paddingBottom: 6 }}>LÍNEA</th>
+                  <th style={{ textAlign: "center" }}>UNIDADES</th>
+                  <th style={{ textAlign: "right" }}>% PARTICIPACIÓN</th>
+                </tr>
+              </thead>
+              <tbody>
+                {valoresLinea.map(v => {
+                  const p = totalLinea > 0 ? (v.value / totalLinea * 100) : 0;
+                  return (
+                    <tr key={v.key} style={{ borderTop: "1px solid #1e3a5f" }}>
+                      <td style={{ padding: "6px 0" }}>
+                        <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: v.color, marginRight: 7 }} />
+                        <span style={{ color: "#cbd5e1", fontSize: 12 }}>{v.key}</span>
+                      </td>
+                      <td style={{ textAlign: "center", color: "#cbd5e1" }}>{v.value}</td>
+                      <td style={{ textAlign: "right", color: p > 0 ? "#D4AF37" : "#475569", fontWeight: 700 }}>{p.toFixed(1)}%</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                  <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0" }}>TOTAL</td>
+                  <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalLinea}</td>
+                  <td style={{ textAlign: "right", color: "#D4AF37", fontWeight: 700 }}>100%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 // ── SECCIÓN: Auditoría Interna ────────────────────────────────────────────────
 function AuditoriaSection({ data, onSimpleChange }) {
   return (
@@ -2044,7 +2278,7 @@ ${lineas}`;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <Card>
-        <SectionHeader title="SATISFACCIÓN CLIENTE — ENCUESTAS 24 HRS" icon="📋" />
+        <SectionHeader title={`SATISFACCIÓN CLIENTE — ENCUESTAS 24 HRS — ${getMonthLabel(monthKey).toUpperCase()}`} icon="📋" />
         <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
           <button onClick={() => setTipoActivo("ventas")} style={{
             background: tipoActivo === "ventas" ? "#3b9eea" : "#0f2239",
@@ -2090,7 +2324,7 @@ ${lineas}`;
             {cargando ? "Procesando…" : `📤 Subir reporte de ${tipoActivo === "ventas" ? "Ventas" : "Servicio"} (.xlsx)`}
           </label>
           <span style={{ color: "#64748b", fontSize: 11.5 }}>
-            Reporte de 24 hrs de {getMonthLabel(monthKey)}. Se procesa en tu navegador, solo se guardan las encuestas con estatus "CONTACTADO".
+            Este archivo se guardará como el histórico de <b>{getMonthLabel(monthKey)}</b> (el mes seleccionado arriba en el dashboard). Se procesa en tu navegador, solo se guardan las encuestas con estatus "CONTACTADO".
           </span>
         </div>
 
@@ -2616,6 +2850,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
 
   const currentMonthKey = getOperativeMonthKey();
   const [viewMonth, setViewMonth] = useState(currentMonthKey); // mes que se está viendo
+  const [vistaAnualActiva, setVistaAnualActiva] = useState(false); // true cuando se elige "Año completo"
   const [availableMonths, setAvailableMonths] = useState([currentMonthKey]);
   const isHistorico = viewMonth !== currentMonthKey;
   const isReadOnly = false; // los meses históricos ahora también son editables (captura retroactiva)
@@ -2904,13 +3139,21 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
                   {years.map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
                 <select
-                  value={viewMonth}
-                  onChange={e => setViewMonth(e.target.value)}
+                  value={vistaAnualActiva ? "ANUAL" : viewMonth}
+                  onChange={e => {
+                    if (e.target.value === "ANUAL") {
+                      setVistaAnualActiva(true);
+                    } else {
+                      setVistaAnualActiva(false);
+                      setViewMonth(e.target.value);
+                    }
+                  }}
                   style={{
                     background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#D4AF37",
                     borderRadius: 6, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer"
                   }}
                 >
+                  <option value="ANUAL">🗓️ Año completo</option>
                   {monthsOfYear.map(mk => (
                     <option key={mk} value={mk}>
                       {MES_NOMBRES[getMonthNumFromKey(mk) - 1].charAt(0).toUpperCase() + MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(1)}
@@ -2934,6 +3177,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🧑‍💼 Conversión Asesores</button>
+            <button onClick={() => setTab("satisfaccionCliente")} style={{
+              background: tab === "satisfaccionCliente" ? "#5eead4" : "transparent",
+              color: tab === "satisfaccionCliente" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>📋 Satisfacción Cliente</button>
             <button onClick={() => setTab("tendencias")} style={{
               background: tab === "tendencias" ? "#5eead4" : "transparent",
               color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
@@ -2958,12 +3207,6 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>💬 Director Comercial</button>
-            <button onClick={() => setTab("satisfaccionCliente")} style={{
-              background: tab === "satisfaccionCliente" ? "#5eead4" : "transparent",
-              color: tab === "satisfaccionCliente" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
-              fontSize: 12, fontWeight: 700, cursor: "pointer"
-            }}>📋 Satisfacción Cliente</button>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {isHistorico ? (
@@ -2996,9 +3239,15 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           <>
             <KpiBar data={data} monthKey={viewMonth} />
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <VentasSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
-              <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
-              <LineasProductoSection data={data} onLineaChange={onLineaChange} />
+              {vistaAnualActiva ? (
+                <VistaAnualSection anio={getYearFromKey(viewMonth)} />
+              ) : (
+                <>
+                  <VentasSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
+                  <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
+                  <LineasProductoSection data={data} onLineaChange={onLineaChange} />
+                </>
+              )}
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <div style={{ flex: 1, minWidth: 280 }}>
                   <AuditoriaSection data={data} onSimpleChange={onSimpleChange} />
