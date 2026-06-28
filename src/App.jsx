@@ -366,6 +366,175 @@ function Badge({ ok }) {
 }
 
 // ── PANTALLA DE LOGIN ──────────────────────────────────────────────────────────
+// ── ENCUESTA PÚBLICA DE DEMO ──────────────────────────────────────────────────
+// Página sin sesión, pensada para que el prospecto la responda desde su celular
+// justo después de la prueba de manejo. Guarda en Firebase bajo encuestasDemo/{monthKey}.
+const ENCUESTA_DEMO_PATH_PREFIX = "encuestasDemo";
+
+function EncuestaDemoPublica() {
+  const [conversionData, setConversionData] = useState(null);
+  const [agencia, setAgencia] = useState("");
+  const [asesorId, setAsesorId] = useState("");
+  const [calificacion, setCalificacion] = useState("");
+  const [legusto, setLegusto] = useState("");
+  const [nolegusto, setNolegusto] = useState("");
+  const [municipio, setMunicipio] = useState("");
+  const [comentario, setComentario] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const raw = await fbGet(CONVERSION_PATH);
+      setConversionData(raw || {});
+    })();
+  }, []);
+
+  const asesoresDeAgencia = (() => {
+    if (!conversionData || !agencia) return [];
+    const agKey = encodeKey(agencia);
+    const obj = conversionData[agKey] || conversionData[agencia] || {};
+    return Object.entries(obj).map(([id, a]) => ({ id, nombre: a.nombre }));
+  })();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!agencia || !asesorId || !calificacion || !municipio.trim()) {
+      setError("Por favor completa agencia, asesor, calificación y municipio/colonia.");
+      return;
+    }
+    setError("");
+    setEnviando(true);
+    try {
+      const asesorNombre = asesoresDeAgencia.find(a => a.id === asesorId)?.nombre || "";
+      const registro = {
+        agencia, asesorId, asesorNombre,
+        calificacion: Number(calificacion),
+        legusto: legusto.trim(), nolegusto: nolegusto.trim(),
+        municipio: municipio.trim(), comentario: comentario.trim(),
+        fecha: new Date().toISOString(),
+      };
+      const monthKey = getOperativeMonthKey();
+      const existentes = await fbGet(`${ENCUESTA_DEMO_PATH_PREFIX}/${monthKey}`);
+      const lista = Array.isArray(existentes) ? existentes : (existentes ? Object.values(existentes) : []);
+      lista.push(registro);
+      await fbSet(`${ENCUESTA_DEMO_PATH_PREFIX}/${monthKey}`, lista);
+      setEnviado(true);
+    } catch (err) {
+      setError("Ocurrió un error al enviar tu respuesta. Intenta de nuevo.");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  if (enviado) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#070f1a", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', 'Segoe UI', sans-serif", padding: 20 }}>
+        <div style={{ maxWidth: 420, textAlign: "center", color: "#f1f5f9" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+          <h2 style={{ fontFamily: "Georgia, serif", fontWeight: 700 }}>¡Gracias por tu opinión!</h2>
+          <p style={{ color: "#94a3b8", fontSize: 14 }}>Tu respuesta nos ayuda a mejorar la experiencia en Changan CHESA.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#070f1a", fontFamily: "'Inter', 'Segoe UI', sans-serif", padding: "30px 16px", display: "flex", justifyContent: "center" }}>
+      <div style={{ width: "100%", maxWidth: 460 }}>
+        <div style={{ textAlign: "center", marginBottom: 8 }}>
+          <img src="/logo-changan.png" alt="Changan" style={{ width: 130, objectFit: "contain" }} />
+        </div>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <h1 style={{ color: "#f1f5f9", fontSize: 19, fontWeight: 700, fontFamily: "Georgia, serif", margin: 0 }}>
+            ¿Cómo fue tu prueba de manejo?
+          </h1>
+          <p style={{ color: "#64748b", fontSize: 12.5, marginTop: 6 }}>Tu opinión nos ayuda a mejorar — toma menos de 1 minuto.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderTop: "3px solid #3b9eea", borderRadius: 12, padding: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>AGENCIA QUE TE ATENDIÓ *</label>
+            <select value={agencia} onChange={e => { setAgencia(e.target.value); setAsesorId(""); }} required
+              style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box" }}>
+              <option value="">Selecciona…</option>
+              {AGENCIAS.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>ASESOR QUE TE ATENDIÓ *</label>
+            <select value={asesorId} onChange={e => setAsesorId(e.target.value)} required disabled={!agencia}
+              style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box" }}>
+              <option value="">{agencia ? "Selecciona…" : "Primero elige tu agencia"}</option>
+              {asesoresDeAgencia.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>
+              CALIFICACIÓN GENERAL DE LA PRUEBA DE MANEJO (0-10) *
+            </label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {Array.from({ length: 11 }, (_, i) => i).map(n => (
+                <button type="button" key={n} onClick={() => setCalificacion(String(n))} style={{
+                  width: 32, height: 32, borderRadius: 6, border: `1px solid ${calificacion === String(n) ? "#3b9eea" : "#1e3a5f"}`,
+                  background: calificacion === String(n) ? "#3b9eea" : "#0a1830",
+                  color: calificacion === String(n) ? "#0a1628" : "#94a3b8",
+                  fontSize: 13, fontWeight: 700, cursor: "pointer"
+                }}>{n}</button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>¿QUÉ TE GUSTÓ DEL VEHÍCULO?</label>
+            <textarea value={legusto} onChange={e => setLegusto(e.target.value)} rows={2}
+              style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }} />
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>¿QUÉ NO TE GUSTÓ O MEJORARÍAS?</label>
+            <textarea value={nolegusto} onChange={e => setNolegusto(e.target.value)} rows={2}
+              style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }} />
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>MUNICIPIO O COLONIA DONDE VIVES *</label>
+            <input type="text" value={municipio} onChange={e => setMunicipio(e.target.value)} required placeholder="Ej. Tuxtla Gutiérrez, Col. Moctezuma"
+              style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box" }} />
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>COMENTARIO ADICIONAL (OPCIONAL)</label>
+            <textarea value={comentario} onChange={e => setComentario(e.target.value)} rows={2}
+              style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }} />
+          </div>
+
+          {error && (
+            <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 6, padding: "8px 12px", color: "#f87171", fontSize: 12, marginBottom: 14 }}>{error}</div>
+          )}
+
+          <button type="submit" disabled={enviando} style={{
+            width: "100%", background: enviando ? "#1e3a5f" : "#3b9eea", color: enviando ? "#64748b" : "#0a1628",
+            border: "none", borderRadius: 8, padding: "12px 0", fontSize: 14, fontWeight: 700, cursor: enviando ? "default" : "pointer"
+          }}>
+            {enviando ? "Enviando…" : "Enviar mi opinión"}
+          </button>
+        </form>
+
+        <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+          <div style={{ background: "#f1f5f9", borderRadius: 6, padding: "5px 10px" }}>
+            <img src="/chesa-logo-v3.png" alt="CHESA" style={{ width: 65, objectFit: "contain" }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── PANTALLA DE LOGIN ──────────────────────────────────────────────────────────
 function LoginScreen({ onLoginSuccess }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -510,7 +679,7 @@ function LoginScreen({ onLoginSuccess }) {
   );
 }
 
-function NumInput({ value, onChange, step = 1, min = 0, width = 60 }) {
+function NumInput({ value, onChange, step = 1, min = 0, width = 60, valueColor }) {
   const [local, setLocal] = useState(String(value));
   useEffect(() => setLocal(String(value)), [value]);
   return (
@@ -524,7 +693,7 @@ function NumInput({ value, onChange, step = 1, min = 0, width = 60 }) {
       onKeyDown={e => { if (e.key === "Enter") { const n = Number(local); if (!isNaN(n)) onChange(n); } }}
       style={{
         width, background: "#0d1b2e", border: "1px solid #2a3f5f",
-        color: "#D4AF37", borderRadius: 4, padding: "2px 6px",
+        color: valueColor || "#D4AF37", borderRadius: 4, padding: "2px 6px",
         fontSize: 13, textAlign: "center", outline: "none",
       }}
     />
@@ -1024,14 +1193,27 @@ function AuditoriaSection({ data, onSimpleChange }) {
           </tr>
         </thead>
         <tbody>
-          {AGENCIAS.map(ag => (
-            <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
-              <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
-              <td style={{ textAlign: "center" }}>
-                <NumInput value={data.auditoria[ag] ?? 0} onChange={v => onSimpleChange("auditoria", ag, v)} step={0.1} width={70} />
-              </td>
-            </tr>
-          ))}
+          {AGENCIAS.map(ag => {
+            const valor = data.auditoria[ag] ?? 0;
+            const bajoObjetivo = valor > 0 && valor < 85;
+            return (
+              <tr key={ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{ag}</td>
+                <td style={{ textAlign: "center" }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <NumInput
+                      value={valor}
+                      onChange={v => onSimpleChange("auditoria", ag, v)}
+                      step={0.1}
+                      width={70}
+                      valueColor={bajoObjetivo ? "#f87171" : undefined}
+                    />
+                    <span style={{ color: bajoObjetivo ? "#f87171" : "#64748b", fontSize: 12, fontWeight: bajoObjetivo ? 700 : 400 }}>%</span>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </Card>
@@ -2491,6 +2673,254 @@ ${lineas}`;
   );
 }
 
+// ── SECCIÓN: Demos (encuesta pública de pruebas de manejo) ───────────────────
+function DemosSection({ monthKey }) {
+  const [datos, setDatos] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [agenciaSel, setAgenciaSel] = useState("TOTAL");
+  const [analisisIA, setAnalisisIA] = useState("");
+  const [loadingIA, setLoadingIA] = useState(false);
+  const [errorIA, setErrorIA] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const raw = await fbGet(`${ENCUESTA_DEMO_PATH_PREFIX}/${monthKey}`);
+      const lista = Array.isArray(raw) ? raw : (raw ? Object.values(raw) : []);
+      setDatos(lista);
+      setAnalisisIA("");
+      setLoading(false);
+    })();
+  }, [monthKey]);
+
+  const linkEncuesta = typeof window !== "undefined" ? `${window.location.origin}/encuesta-demo` : "/encuesta-demo";
+  const [copiado, setCopiado] = useState(false);
+  const copiarLink = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(linkEncuesta);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
+    }
+  };
+
+  const datosFiltrados = (() => {
+    if (!datos) return [];
+    if (agenciaSel === "TOTAL") return datos;
+    return datos.filter(r => r.agencia === agenciaSel);
+  })();
+
+  const promedioGeneral = (() => {
+    const vals = datosFiltrados.map(r => r.calificacion).filter(v => v !== null && v !== undefined);
+    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+  })();
+
+  const porMunicipio = (() => {
+    const map = {};
+    datosFiltrados.forEach(r => {
+      const key = (r.municipio || "Sin especificar").trim();
+      map[key] = (map[key] || 0) + 1;
+    });
+    return Object.entries(map).map(([municipio, count]) => ({ municipio, count })).sort((a, b) => b.count - a.count);
+  })();
+
+  const porAsesor = (() => {
+    const map = {};
+    datosFiltrados.forEach(r => {
+      const key = r.asesorNombre || "Sin asesor";
+      if (!map[key]) map[key] = { asesor: key, agencia: r.agencia, calificaciones: [], total: 0 };
+      map[key].total++;
+      if (r.calificacion !== null && r.calificacion !== undefined) map[key].calificaciones.push(r.calificacion);
+    });
+    return Object.values(map)
+      .map(a => ({ ...a, promedio: a.calificaciones.length ? a.calificaciones.reduce((s, v) => s + v, 0) / a.calificaciones.length : null }))
+      .sort((a, b) => (b.promedio ?? -1) - (a.promedio ?? -1));
+  })();
+
+  const generarAnalisisIA = async () => {
+    if (datosFiltrados.length === 0) return;
+    setLoadingIA(true);
+    setErrorIA("");
+    setAnalisisIA("");
+    try {
+      const lineas = datosFiltrados.map(r =>
+        `- Agencia: ${r.agencia} | Asesor: ${r.asesorNombre} | Calificación: ${r.calificacion} | Municipio: ${r.municipio} | Le gustó: ${r.legusto || "—"} | No le gustó: ${r.nolegusto || "—"} | Comentario: ${r.comentario || "—"}`
+      ).join("\n");
+
+      const prompt = `Eres un director de marketing y comercial con 20 años de experiencia en grupos automotrices. Analiza estas encuestas de satisfacción de PRUEBAS DE MANEJO (demos) de prospectos de CHESA Changan, correspondientes a ${getMonthLabel(monthKey)}.
+
+Cada línea es una respuesta real de un prospecto justo después de su prueba de manejo. Analiza el conjunto y entrega:
+
+1. **Patrones de producto** — qué les gusta y qué no les gusta del vehículo, agrupado por tema
+2. **Zonas con mayor interés** — qué municipios/colonias generan más pruebas de manejo, y qué tan bien calificada queda la experiencia ahí (para enfocar inversión publicitaria)
+3. **Calidad de la experiencia por agencia/asesor** — quién está dejando mejor o peor impresión en la demo
+4. **Recomendación de marketing** — 2-3 acciones concretas sobre dónde invertir más presupuesto publicitario y qué mensajes de producto resaltar, basado en los patrones reales encontrados
+
+Sé directo y específico. Si los datos son insuficientes para alguna sección, dilo brevemente. Formato markdown con encabezados.
+
+ENCUESTAS:
+${lineas}`;
+
+      const response = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const responseData = await response.json();
+      if (!response.ok) {
+        setErrorIA(responseData.error || "Ocurrió un error generando el análisis.");
+        return;
+      }
+      setAnalisisIA(responseData.text || "No se recibió respuesta.");
+    } catch (e) {
+      setErrorIA("Ocurrió un error de conexión. Intenta de nuevo.");
+    } finally {
+      setLoadingIA(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Card>
+        <SectionHeader title={`DEMOS — PRUEBAS DE MANEJO — ${getMonthLabel(monthKey).toUpperCase()}`} icon="🎯" />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 18, background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 14px" }}>
+          <span style={{ color: "#94a3b8", fontSize: 12 }}>Comparte este link con los prospectos al finalizar su prueba de manejo:</span>
+          <code style={{ color: "#3b9eea", fontSize: 12, background: "#0a1830", padding: "3px 8px", borderRadius: 4 }}>{linkEncuesta}</code>
+          <button onClick={copiarLink} style={{
+            background: copiado ? "#4ade80" : "#3b9eea", color: "#0a1628", border: "none",
+            borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+          }}>{copiado ? "✓ Copiado" : "Copiar link"}</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+          {["TOTAL", ...AGENCIAS].map(ag => (
+            <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
+              background: agenciaSel === ag ? "#3b9eea" : "#0f2239",
+              color: agenciaSel === ag ? "#0a1628" : "#94a3b8",
+              border: `1px solid ${agenciaSel === ag ? "#3b9eea" : "#1e3a5f"}`,
+              borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+            }}>{ag}</button>
+          ))}
+        </div>
+
+        {loading ? (
+          <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Cargando…</div>
+        ) : datosFiltrados.length === 0 ? (
+          <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "30px 0" }}>
+            Todavía no hay respuestas de la encuesta de demo para {getMonthLabel(monthKey)}{agenciaSel !== "TOTAL" ? ` en ${agenciaSel}` : ""}.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>
+              <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>DEMOS REGISTRADAS</div>
+                <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datosFiltrados.length}</div>
+              </div>
+              <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>CALIFICACIÓN PROMEDIO</div>
+                <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{promedioGeneral !== null ? promedioGeneral.toFixed(1) : "—"}</div>
+              </div>
+              <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #60a5fa", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>MUNICIPIOS/ZONAS DISTINTAS</div>
+                <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{porMunicipio.length}</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>RANKING DE MUNICIPIOS / ZONAS</p>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: "#64748b", fontSize: 11 }}>
+                      <th style={{ textAlign: "left", paddingBottom: 6 }}>MUNICIPIO / COLONIA</th>
+                      <th style={{ textAlign: "center" }}>DEMOS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {porMunicipio.map(m => (
+                      <tr key={m.municipio} style={{ borderTop: "1px solid #1e3a5f" }}>
+                        <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{m.municipio}</td>
+                        <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{m.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>CALIFICACIÓN POR ASESOR</p>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: "#64748b", fontSize: 11 }}>
+                      <th style={{ textAlign: "left", paddingBottom: 6 }}>ASESOR</th>
+                      <th style={{ textAlign: "center" }}>DEMOS</th>
+                      <th style={{ textAlign: "center" }}>PROMEDIO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {porAsesor.map(a => (
+                      <tr key={a.asesor} style={{ borderTop: "1px solid #1e3a5f" }}>
+                        <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{a.asesor}</td>
+                        <td style={{ textAlign: "center", color: "#cbd5e1" }}>{a.total}</td>
+                        <td style={{ textAlign: "center", fontWeight: 700, color: a.promedio === null ? "#475569" : a.promedio >= 9 ? "#4ade80" : a.promedio >= 7 ? "#D4AF37" : "#f87171" }}>
+                          {a.promedio !== null ? a.promedio.toFixed(1) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </Card>
+
+      {datosFiltrados.length > 0 && (
+        <Card>
+          <SectionHeader title="ANÁLISIS DE PRODUCTO Y ZONAS — CRITERIO EXPERTO" icon="🧠" />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+            <button
+              onClick={generarAnalisisIA}
+              disabled={loadingIA}
+              style={{
+                background: loadingIA ? "#1e3a5f" : "#D4AF37", color: loadingIA ? "#64748b" : "#0a1628",
+                border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 700,
+                cursor: loadingIA ? "default" : "pointer"
+              }}
+            >
+              {loadingIA ? "Analizando…" : "🧠 Analizar producto y zonas de oportunidad"}
+            </button>
+            <span style={{ color: "#64748b", fontSize: 11.5 }}>
+              Identifica qué gusta del vehículo, qué zonas generan más interés, y dónde enfocar inversión publicitaria.
+            </span>
+          </div>
+
+          {errorIA && (
+            <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
+              {errorIA}
+            </div>
+          )}
+
+          {loadingIA && (
+            <div style={{ color: "#94a3b8", fontSize: 13, padding: "20px 0", textAlign: "center" }}>Analizando {datosFiltrados.length} respuestas…</div>
+          )}
+
+          {!loadingIA && analisisIA && (
+            <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px", maxHeight: "70vh", overflowY: "auto" }}>
+              {renderMarkdownGlobal(analisisIA)}
+            </div>
+          )}
+
+          {!loadingIA && !analisisIA && !errorIA && (
+            <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "30px 0" }}>
+              Da clic en el botón para identificar patrones de producto y zonas de oportunidad.
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function AnalisisSection({ data, monthKey, conversionData }) {
   const [loading, setLoading] = useState(false);
   const [resultado, setResultado] = useState("");
@@ -3162,6 +3592,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>📋 Satisfacción Cliente</button>
+            <button onClick={() => setTab("demos")} style={{
+              background: tab === "demos" ? "#5eead4" : "transparent",
+              color: tab === "demos" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>🎯 Demos</button>
             <button onClick={() => setTab("tendencias")} style={{
               background: tab === "tendencias" ? "#5eead4" : "transparent",
               color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
@@ -3264,8 +3700,10 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           <AlertasSection monthKey={currentMonthKey} />
         ) : tab === "chat" ? (
           <ChatSection data={data} monthKey={viewMonth} conversionData={conversionData} />
-        ) : (
+        ) : tab === "satisfaccionCliente" ? (
           <SatisfaccionClienteSection monthKey={viewMonth} />
+        ) : (
+          <DemosSection monthKey={viewMonth} />
         )}
         {!vistaAnualActiva && (
           <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, marginTop: 24 }}>
@@ -3279,6 +3717,11 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
 
 // ── ROOT REAL — controla sesión y decide Login vs Dashboard ───────────────────
 export default function App() {
+  // Ruta pública de la encuesta de demo — no requiere sesión, se revisa antes que nada.
+  if (typeof window !== "undefined" && window.location.pathname.replace(/\/$/, "") === "/encuesta-demo") {
+    return <EncuestaDemoPublica />;
+  }
+
   const [authState, setAuthState] = useState("cargando"); // cargando | sinSesion | conSesion
   const [userInfo, setUserInfo] = useState(null); // { email, role, agencia }
 
