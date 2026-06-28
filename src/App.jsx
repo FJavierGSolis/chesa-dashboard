@@ -1511,24 +1511,23 @@ function buildResumenConversionParaIA(conversionData) {
 
 // ── SECCIÓN: Tendencias ───────────────────────────────────────────────────────
 // Calcula el valor agregado (un solo número) de un indicador a partir del objeto "data" de un mes.
-function computeIndicadorValue(indicador, data) {
+function computeIndicadorValue(indicador, data, agencia) {
+  const agencias = agencia === "TOTAL" ? AGENCIAS : [agencia];
   switch (indicador) {
     case "ventas": {
-      const fact = AGENCIAS.reduce((s, a) => s + (data.ventasJunioInterno?.[a]?.facturado ?? 0), 0);
-      return fact;
+      return agencias.reduce((s, a) => s + (data.ventasJunioInterno?.[a]?.facturado ?? 0), 0);
     }
-    case "auditoria": {
-      const vals = AGENCIAS.map(a => data.auditoria?.[a] ?? 0).filter(v => v > 0);
+    case "ssi": {
+      const vals = agencias.map(a => data.ssi?.[a]?.ssi ?? 0).filter(v => v > 0);
       return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
     }
-    case "satisfaccion": {
-      // Promedio de ISI real de las 5 agencias (proxy general de satisfacción)
-      const vals = AGENCIAS.map(a => data.isi?.[a]?.real ?? 0).filter(v => v > 0);
+    case "csi": {
+      const vals = agencias.map(a => data.csi?.[a]?.csi ?? 0).filter(v => v > 0);
       return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
     }
     case "ms": {
-      const totalVentas = AGENCIAS.reduce((s, a) => s + (data.msMayo?.[a]?.real ?? 0), 0);
-      const totalTiv = AGENCIAS.reduce((s, a) => s + (data.msMayo?.[a]?.tiv ?? 0), 0);
+      const totalVentas = agencias.reduce((s, a) => s + (data.msMayo?.[a]?.real ?? 0), 0);
+      const totalTiv = agencias.reduce((s, a) => s + (data.msMayo?.[a]?.tiv ?? 0), 0);
       return totalTiv > 0 ? (totalVentas / totalTiv) * 100 : 0;
     }
     default:
@@ -1537,10 +1536,10 @@ function computeIndicadorValue(indicador, data) {
 }
 
 const INDICADORES_TENDENCIA = [
-  { key: "ventas",      label: "Ventas (unidades, interno)", suffix: "" },
-  { key: "auditoria",   label: "Auditoría Interna (promedio)", suffix: "" },
-  { key: "satisfaccion",label: "Satisfacción (ISI promedio)", suffix: "%" },
-  { key: "ms",          label: "Market Share (%)", suffix: "%" },
+  { key: "ventas", label: "Ventas",   suffix: "", agenciasValidas: AGENCIAS },
+  { key: "ssi",     label: "SSI",      suffix: "%", agenciasValidas: ["TUXTLA", "TAPACHULA", "OCOSINGO"] },
+  { key: "csi",     label: "CSI",      suffix: "%", agenciasValidas: ["TUXTLA", "TAPACHULA"] },
+  { key: "ms",      label: "Market Share (%)", suffix: "%", agenciasValidas: AGENCIAS },
 ];
 
 function LineChart({ series, width = 760, height = 220, suffix = "" }) {
@@ -1595,6 +1594,7 @@ function LineChart({ series, width = 760, height = 220, suffix = "" }) {
 
 function TendenciasSection({ currentMonthKey }) {
   const [indicador, setIndicador] = useState("ventas");
+  const [agenciaSel, setAgenciaSel] = useState("TOTAL");
   const [compararAnioAnterior, setCompararAnioAnterior] = useState(false);
   const [loading, setLoading] = useState(true);
   const [serieActual, setSerieActual] = useState([]);
@@ -1602,6 +1602,14 @@ function TendenciasSection({ currentMonthKey }) {
 
   const anioActual = getYearFromKey(currentMonthKey);
   const mesActualNum = getMonthNumFromKey(currentMonthKey);
+  const indActual = INDICADORES_TENDENCIA.find(i => i.key === indicador);
+
+  // Si el indicador actual no permite la agencia seleccionada (ej. CSI en Comitán), regresa a TOTAL.
+  useEffect(() => {
+    if (agenciaSel !== "TOTAL" && !indActual.agenciasValidas.includes(agenciaSel)) {
+      setAgenciaSel("TOTAL");
+    }
+  }, [indicador]);
 
   useEffect(() => {
     (async () => {
@@ -1617,7 +1625,7 @@ function TendenciasSection({ currentMonthKey }) {
         Object.keys(initialData).forEach(section => {
           merged[section] = decodeFirebaseData(raw?.[section], initialData[section]);
         });
-        return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged) };
+        return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged, agenciaSel) };
       }));
       setSerieActual(datosActual.map(d => ({ x: d.mes, y: d.value })));
 
@@ -1633,7 +1641,7 @@ function TendenciasSection({ currentMonthKey }) {
           Object.keys(initialData).forEach(section => {
             merged[section] = decodeFirebaseData(raw?.[section], initialData[section]);
           });
-          return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged) };
+          return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged, agenciaSel) };
         }));
         setSerieAnterior(datosAnterior.map(d => ({ x: d.mes, y: d.value })));
       } else {
@@ -1641,7 +1649,7 @@ function TendenciasSection({ currentMonthKey }) {
       }
       setLoading(false);
     })();
-  }, [indicador, compararAnioAnterior, currentMonthKey]);
+  }, [indicador, agenciaSel, compararAnioAnterior, currentMonthKey]);
 
   const ind = INDICADORES_TENDENCIA.find(i => i.key === indicador);
   const series = [
@@ -1649,10 +1657,12 @@ function TendenciasSection({ currentMonthKey }) {
     ...(compararAnioAnterior && serieAnterior.length ? [{ label: `${parseInt(anioActual,10)-1}`, color: "#60a5fa", points: serieAnterior }] : []),
   ];
 
+  const opcionesAgencia = ["TOTAL", ...indActual.agenciasValidas];
+
   return (
     <Card>
-      <SectionHeader title="TENDENCIAS" icon="📉" />
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
+      <SectionHeader title={`TENDENCIAS — ${ind.label.toUpperCase()}`} icon="📉" />
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
         {INDICADORES_TENDENCIA.map(i => (
           <button key={i.key} onClick={() => setIndicador(i.key)} style={{
             background: indicador === i.key ? "#D4AF37" : "#0f2239",
@@ -1667,6 +1677,19 @@ function TendenciasSection({ currentMonthKey }) {
           <input type="checkbox" checked={compararAnioAnterior} onChange={e => setCompararAnioAnterior(e.target.checked)} />
           Comparar vs año anterior
         </label>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        {opcionesAgencia.map(ag => (
+          <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
+            background: agenciaSel === ag ? "#3b9eea" : "#0f2239",
+            color: agenciaSel === ag ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${agenciaSel === ag ? "#3b9eea" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+          }}>
+            {ag}
+          </button>
+        ))}
       </div>
 
       {loading ? (
