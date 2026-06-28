@@ -1861,6 +1861,7 @@ function parseEncuestaWorkbook(workbook, tipoReporte) {
 
 function SatisfaccionClienteSection({ monthKey }) {
   const [tipoActivo, setTipoActivo] = useState("ventas"); // ventas | servicio
+  const [agenciaSel, setAgenciaSel] = useState("TOTAL");
   const [cargando, setCargando] = useState(false);
   const [errorCarga, setErrorCarga] = useState("");
   const [datosVentas, setDatosVentas] = useState(null);
@@ -1908,17 +1909,44 @@ function SatisfaccionClienteSection({ monthKey }) {
     }
   };
 
-  const datos = tipoActivo === "ventas" ? datosVentas : datosServicio;
+  const datosCompletos = tipoActivo === "ventas" ? datosVentas : datosServicio;
+
+  // Lista de sucursales presentes en los datos cargados, para armar el selector dinámicamente.
+  const sucursalesDisponibles = (() => {
+    if (!datosCompletos) return [];
+    return Array.from(new Set(datosCompletos.map(r => r.sucursal).filter(Boolean))).sort();
+  })();
+
+  const datos = (() => {
+    if (!datosCompletos) return null;
+    if (agenciaSel === "TOTAL") return datosCompletos;
+    return datosCompletos.filter(r => r.sucursal === agenciaSel);
+  })();
+
+  // Resetea el filtro de agencia si cambia de tipo (ventas/servicio) y la sucursal ya no existe en ese conjunto.
+  useEffect(() => {
+    if (agenciaSel !== "TOTAL" && datosCompletos && !sucursalesDisponibles.includes(agenciaSel)) {
+      setAgenciaSel("TOTAL");
+    }
+  }, [tipoActivo, datosCompletos]);
 
   // ── Indicadores por asesor ──────────────────────────────────────────────────
+  const QUEJA_VACIA = new Set(["", "—", "sin comentarios", "sin comentario", "sin comentarios.", "sin comentario."]);
+
+  const tieneQueja = (r) => {
+    const q = (r.queja || "").trim().toLowerCase();
+    return q.length > 0 && !QUEJA_VACIA.has(q);
+  };
+
   const porAsesor = (() => {
     if (!datos) return [];
     const map = {};
     datos.forEach(r => {
-      if (!map[r.asesor]) map[r.asesor] = { asesor: r.asesor, sucursal: r.sucursal, calificaciones: [], conComentario: 0, total: 0 };
+      if (!map[r.asesor]) map[r.asesor] = { asesor: r.asesor, sucursal: r.sucursal, calificaciones: [], conComentario: 0, conQueja: 0, total: 0 };
       map[r.asesor].total++;
       if (r.calificacion !== null && r.calificacion !== undefined) map[r.asesor].calificaciones.push(r.calificacion);
-      if (r.comentario && r.comentario.toLowerCase() !== "sin comentarios" && r.comentario.toLowerCase() !== "sin comentario.") map[r.asesor].conComentario++;
+      if (r.comentario && !QUEJA_VACIA.has(r.comentario.toLowerCase())) map[r.asesor].conComentario++;
+      if (tieneQueja(r)) map[r.asesor].conQueja++;
     });
     return Object.values(map)
       .map(a => ({ ...a, promedio: a.calificaciones.length ? a.calificaciones.reduce((s, v) => s + v, 0) / a.calificaciones.length : null }))
@@ -1929,6 +1957,45 @@ function SatisfaccionClienteSection({ monthKey }) {
     if (!datos) return null;
     const vals = datos.map(r => r.calificacion).filter(v => v !== null && v !== undefined);
     return vals.length ? (vals.reduce((s, v) => s + v, 0) / vals.length) : null;
+  })();
+
+  // ── Tasa de quejas y semáforo de riesgo ───────────────────────────────────────
+  const totalQuejas = datos ? datos.filter(tieneQueja).length : 0;
+  const tasaQuejas = datos && datos.length > 0 ? (totalQuejas / datos.length) * 100 : null;
+  const nivelRiesgo = tasaQuejas === null ? null : tasaQuejas >= 15 ? "alto" : tasaQuejas >= 5 ? "medio" : "bajo";
+  const RIESGO_COLOR = { alto: "#f87171", medio: "#D4AF37", bajo: "#4ade80" };
+  const RIESGO_EMOJI = { alto: "🔴", medio: "🟡", bajo: "🟢" };
+  const RIESGO_LABEL = { alto: "Riesgo alto", medio: "Riesgo medio", bajo: "Riesgo bajo" };
+
+  // ── Categorías de queja más frecuentes (sin IA, conteo directo) ───────────────
+  const categoriasQueja = (() => {
+    if (!datos) return [];
+    const map = {};
+    datos.forEach(r => {
+      if (!tieneQueja(r)) return;
+      const cat = r.queja.trim();
+      map[cat] = (map[cat] || 0) + 1;
+    });
+    return Object.entries(map)
+      .map(([categoria, count]) => ({ categoria, count }))
+      .sort((a, b) => b.count - a.count);
+  })();
+
+  // Semáforo de riesgo por agencia (siempre sobre el conjunto completo, no el ya filtrado, para comparar entre plazas)
+  const riesgoPorAgencia = (() => {
+    if (!datosCompletos) return [];
+    const map = {};
+    datosCompletos.forEach(r => {
+      if (!r.sucursal) return;
+      if (!map[r.sucursal]) map[r.sucursal] = { total: 0, quejas: 0 };
+      map[r.sucursal].total++;
+      if (tieneQueja(r)) map[r.sucursal].quejas++;
+    });
+    return Object.entries(map).map(([sucursal, v]) => {
+      const tasa = v.total > 0 ? (v.quejas / v.total) * 100 : 0;
+      const nivel = tasa >= 15 ? "alto" : tasa >= 5 ? "medio" : "bajo";
+      return { sucursal, total: v.total, quejas: v.quejas, tasa, nivel };
+    }).sort((a, b) => b.tasa - a.tasa);
   })();
 
   const generarAnalisisIA = async () => {
@@ -1993,6 +2060,21 @@ ${lineas}`;
           }}>🔧 Servicio</button>
         </div>
 
+        {sucursalesDisponibles.length > 0 && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+            {["TOTAL", ...sucursalesDisponibles].map(ag => (
+              <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
+                background: agenciaSel === ag ? "#3b9eea" : "#0f2239",
+                color: agenciaSel === ag ? "#0a1628" : "#94a3b8",
+                border: `1px solid ${agenciaSel === ag ? "#3b9eea" : "#1e3a5f"}`,
+                borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+              }}>
+                {ag}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
           <input
             ref={fileInputRef} type="file" accept=".xlsx,.xls"
@@ -2039,6 +2121,17 @@ ${lineas}`;
                 <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>ASESORES EVALUADOS</div>
                 <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{porAsesor.length}</div>
               </div>
+              <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${nivelRiesgo ? RIESGO_COLOR[nivelRiesgo] : "#1e3a5f"}`, borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TASA DE QUEJAS</div>
+                <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{tasaQuejas !== null ? `${tasaQuejas.toFixed(1)}%` : "—"}</div>
+                <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>{totalQuejas} de {datos.length} encuestas</div>
+              </div>
+              <div style={{ background: "#0f2239", border: `1px solid ${nivelRiesgo ? RIESGO_COLOR[nivelRiesgo] : "#1e3a5f"}55`, borderTop: `3px solid ${nivelRiesgo ? RIESGO_COLOR[nivelRiesgo] : "#1e3a5f"}`, borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>NIVEL DE RIESGO</div>
+                <div style={{ color: nivelRiesgo ? RIESGO_COLOR[nivelRiesgo] : "#f1f5f9", fontSize: 18, fontWeight: 800 }}>
+                  {nivelRiesgo ? `${RIESGO_EMOJI[nivelRiesgo]} ${RIESGO_LABEL[nivelRiesgo]}` : "—"}
+                </div>
+              </div>
             </div>
 
             <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>CALIFICACIÓN POR ASESOR</p>
@@ -2048,6 +2141,7 @@ ${lineas}`;
                   <th style={{ textAlign: "left", paddingBottom: 6 }}>ASESOR</th>
                   <th style={{ textAlign: "center" }}>SUCURSAL</th>
                   <th style={{ textAlign: "center" }}>ENCUESTAS</th>
+                  <th style={{ textAlign: "center" }}>QUEJAS</th>
                   <th style={{ textAlign: "center" }}>PROMEDIO</th>
                 </tr>
               </thead>
@@ -2057,6 +2151,7 @@ ${lineas}`;
                     <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{a.asesor}</td>
                     <td style={{ textAlign: "center", color: "#64748b", fontSize: 12 }}>{a.sucursal}</td>
                     <td style={{ textAlign: "center", color: "#cbd5e1" }}>{a.total}</td>
+                    <td style={{ textAlign: "center", color: a.conQueja > 0 ? "#f87171" : "#475569", fontWeight: a.conQueja > 0 ? 700 : 400 }}>{a.conQueja}</td>
                     <td style={{ textAlign: "center", fontWeight: 700, color: a.promedio === null ? "#475569" : a.promedio >= 9 ? "#4ade80" : a.promedio >= 7 ? "#D4AF37" : "#f87171" }}>
                       {a.promedio !== null ? a.promedio.toFixed(1) : "—"}
                     </td>
@@ -2067,6 +2162,72 @@ ${lineas}`;
           </>
         )}
       </Card>
+
+      {datos && datos.length > 0 && (
+        <Card>
+          <SectionHeader title="QUEJAS — CATEGORÍAS Y RIESGO POR AGENCIA" icon="🚩" />
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 280 }}>
+              <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>
+                MOTIVOS DE QUEJA MÁS FRECUENTES {agenciaSel !== "TOTAL" ? `— ${agenciaSel}` : ""}
+              </p>
+              {categoriasQueja.length === 0 ? (
+                <div style={{ color: "#475569", fontSize: 12.5, padding: "16px 0" }}>Sin quejas registradas en este conjunto.</div>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: "#64748b", fontSize: 11 }}>
+                      <th style={{ textAlign: "left", paddingBottom: 6 }}>MOTIVO</th>
+                      <th style={{ textAlign: "center" }}>CASOS</th>
+                      <th style={{ textAlign: "right" }}>%</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {categoriasQueja.map(c => (
+                      <tr key={c.categoria} style={{ borderTop: "1px solid #1e3a5f" }}>
+                        <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{c.categoria}</td>
+                        <td style={{ textAlign: "center", color: "#f87171", fontWeight: 700 }}>{c.count}</td>
+                        <td style={{ textAlign: "right", color: "#64748b" }}>{((c.count / totalQuejas) * 100).toFixed(0)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {riesgoPorAgencia.length > 1 && (
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>SEMÁFORO DE RIESGO POR AGENCIA</p>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: "#64748b", fontSize: 11 }}>
+                      <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+                      <th style={{ textAlign: "center" }}>ENCUESTAS</th>
+                      <th style={{ textAlign: "center" }}>QUEJAS</th>
+                      <th style={{ textAlign: "center" }}>TASA</th>
+                      <th style={{ textAlign: "center" }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {riesgoPorAgencia.map(r => (
+                      <tr key={r.sucursal} style={{ borderTop: "1px solid #1e3a5f" }}>
+                        <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{r.sucursal}</td>
+                        <td style={{ textAlign: "center", color: "#cbd5e1" }}>{r.total}</td>
+                        <td style={{ textAlign: "center", color: "#f87171" }}>{r.quejas}</td>
+                        <td style={{ textAlign: "center", fontWeight: 700, color: RIESGO_COLOR[r.nivel] }}>{r.tasa.toFixed(1)}%</td>
+                        <td style={{ textAlign: "center" }}>{RIESGO_EMOJI[r.nivel]}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div style={{ color: "#475569", fontSize: 10.5, marginTop: 12, textAlign: "center" }}>
+            Riesgo: 🟢 menor a 5% de quejas · 🟡 entre 5% y 15% · 🔴 mayor a 15%
+          </div>
+        </Card>
+      )}
 
       {datos && datos.length > 0 && (
         <Card>
