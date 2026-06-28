@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from "firebase/auth";
+import * as XLSX from "xlsx";
 
 // ── Firebase config (SDK completo, para Authentication) ──────────────────────
 const firebaseConfig = {
@@ -1797,6 +1798,325 @@ function renderMarkdownGlobal(md) {
   return out;
 }
 
+// ── SECCIÓN: Satisfacción Cliente (encuestas 24 hrs) ──────────────────────────
+const SATISFACCION_PATH_PREFIX = "satisfaccionCliente"; // satisfaccionCliente/{monthKey}/{tipo: ventas|servicio}
+
+// Busca una columna por coincidencia parcial (insensible a mayúsculas/acentos simples),
+// porque los encabezados del Excel son largos y varían entre hojas/teléfono/whatsapp.
+function findColumn(columns, keywords) {
+  const norm = s => (s || "").toString().toLowerCase()
+    .replace(/[áàä]/g, "a").replace(/[éèë]/g, "e").replace(/[íìï]/g, "i")
+    .replace(/[óòö]/g, "o").replace(/[úùü]/g, "u");
+  for (const col of columns) {
+    const c = norm(col);
+    if (keywords.every(k => c.includes(norm(k)))) return col;
+  }
+  return null;
+}
+
+function parseEncuestaWorkbook(workbook, tipoReporte) {
+  // tipoReporte: "ventas" | "servicio" — solo afecta etiquetas, el parseo es genérico.
+  const registros = [];
+  workbook.SheetNames.forEach(sheetName => {
+    const ws = workbook.Sheets[sheetName];
+    // Encabezados reales están en la fila 2 (índice 1) en estos reportes.
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+    if (rows.length < 3) return;
+    const headers = rows[1];
+    const colEstatus   = findColumn(headers, ["ESTATUS", "INTENTO"]);
+    const colAsesor    = findColumn(headers, ["NOMBRE", "ASESOR"]);
+    const colSucursal  = findColumn(headers, ["SUCURSAL"]);
+    const colCalif     = headers.find(h => (h || "").toString().toLowerCase().includes("escala") && (h || "").toString().toLowerCase().includes("calific"));
+    const colQueja      = findColumn(headers, ["MOTIVO", "QUEJA"]) || findColumn(headers, ["FALLA"]);
+    const colFaltaPara10 = findColumn(headers, ["FALTA", "10"]);
+    const colComentario  = findColumn(headers, ["COMENTARIO"]);
+
+    const idx = (col) => col ? headers.indexOf(col) : -1;
+    const iEstatus = idx(colEstatus), iAsesor = idx(colAsesor), iSucursal = idx(colSucursal);
+    const iCalif = idx(colCalif), iQueja = idx(colQueja), iFalta = idx(colFaltaPara10), iComentario = idx(colComentario);
+
+    for (let r = 2; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || iEstatus < 0) continue;
+      const estatus = (row[iEstatus] || "").toString().toUpperCase().trim();
+      if (estatus !== "CONTACTADO") continue; // solo encuestas realmente respondidas
+
+      const califRaw = iCalif >= 0 ? row[iCalif] : null;
+      const califNum = typeof califRaw === "number" ? califRaw : parseFloat(califRaw);
+      const tieneCalificacion = !isNaN(califNum) && califRaw !== null && califRaw !== "";
+
+      registros.push({
+        asesor: (row[iAsesor] || "Sin asesor").toString().trim(),
+        sucursal: (row[iSucursal] || "").toString().trim().toUpperCase(),
+        canal: sheetName.toUpperCase().includes("WHATSAPP") ? "WHATSAPP" : "TELEFONICO",
+        calificacion: tieneCalificacion ? califNum : null,
+        queja: iQueja >= 0 && row[iQueja] ? row[iQueja].toString().trim() : "",
+        faltaPara10: iFalta >= 0 && row[iFalta] ? row[iFalta].toString().trim() : "",
+        comentario: iComentario >= 0 && row[iComentario] ? row[iComentario].toString().trim() : "",
+      });
+    }
+  });
+  return registros;
+}
+
+function SatisfaccionClienteSection({ monthKey }) {
+  const [tipoActivo, setTipoActivo] = useState("ventas"); // ventas | servicio
+  const [cargando, setCargando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState("");
+  const [datosVentas, setDatosVentas] = useState(null);
+  const [datosServicio, setDatosServicio] = useState(null);
+  const [loadingDatos, setLoadingDatos] = useState(true);
+  const [analisisIA, setAnalisisIA] = useState("");
+  const [loadingIA, setLoadingIA] = useState(false);
+  const [errorIA, setErrorIA] = useState("");
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingDatos(true);
+      const v = await fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/ventas`);
+      const s = await fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/servicio`);
+      setDatosVentas(Array.isArray(v) ? v : (v ? Object.values(v) : null));
+      setDatosServicio(Array.isArray(s) ? s : (s ? Object.values(s) : null));
+      setAnalisisIA("");
+      setLoadingDatos(false);
+    })();
+  }, [monthKey]);
+
+  const handleFile = async (e, tipo) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCargando(true);
+    setErrorCarga("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const registros = parseEncuestaWorkbook(wb, tipo);
+      if (registros.length === 0) {
+        setErrorCarga("No se encontraron encuestas con estatus CONTACTADO en este archivo. Verifica que sea el reporte correcto.");
+        setCargando(false);
+        return;
+      }
+      await fbSet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/${tipo}`, registros);
+      if (tipo === "ventas") setDatosVentas(registros); else setDatosServicio(registros);
+      setAnalisisIA("");
+    } catch (err) {
+      setErrorCarga("No se pudo leer el archivo. Verifica que sea un Excel válido (.xlsx) del reporte de 24 hrs.");
+    } finally {
+      setCargando(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const datos = tipoActivo === "ventas" ? datosVentas : datosServicio;
+
+  // ── Indicadores por asesor ──────────────────────────────────────────────────
+  const porAsesor = (() => {
+    if (!datos) return [];
+    const map = {};
+    datos.forEach(r => {
+      if (!map[r.asesor]) map[r.asesor] = { asesor: r.asesor, sucursal: r.sucursal, calificaciones: [], conComentario: 0, total: 0 };
+      map[r.asesor].total++;
+      if (r.calificacion !== null && r.calificacion !== undefined) map[r.asesor].calificaciones.push(r.calificacion);
+      if (r.comentario && r.comentario.toLowerCase() !== "sin comentarios" && r.comentario.toLowerCase() !== "sin comentario.") map[r.asesor].conComentario++;
+    });
+    return Object.values(map)
+      .map(a => ({ ...a, promedio: a.calificaciones.length ? a.calificaciones.reduce((s, v) => s + v, 0) / a.calificaciones.length : null }))
+      .sort((a, b) => (b.promedio ?? -1) - (a.promedio ?? -1));
+  })();
+
+  const promedioGeneral = (() => {
+    if (!datos) return null;
+    const vals = datos.map(r => r.calificacion).filter(v => v !== null && v !== undefined);
+    return vals.length ? (vals.reduce((s, v) => s + v, 0) / vals.length) : null;
+  })();
+
+  const generarAnalisisIA = async () => {
+    if (!datos || datos.length === 0) return;
+    setLoadingIA(true);
+    setErrorIA("");
+    setAnalisisIA("");
+    try {
+      const lineas = datos.map(r =>
+        `- Asesor: ${r.asesor} | Sucursal: ${r.sucursal} | Canal: ${r.canal} | Calificación: ${r.calificacion ?? "N/D"} | Motivo de queja: ${r.queja || "—"} | Qué faltó para el 10: ${r.faltaPara10 || "—"} | Comentario: ${r.comentario || "—"}`
+      ).join("\n");
+
+      const prompt = `Eres un director comercial con 20 años de experiencia en grupos automotrices, especializado en experiencia del cliente. Analiza estas encuestas de satisfacción de ${tipoActivo === "ventas" ? "VENTAS (24 hrs después de la entrega)" : "SERVICIO (24 hrs después de la entrega del taller)"} de CHESA Changan, correspondientes a ${getMonthLabel(monthKey)}.
+
+Cada línea es una encuesta real respondida por un cliente. Analiza TODO el conjunto y entrega:
+
+1. **Principales elogios** — los comentarios positivos más repetidos, agrupados por tema (ej. "trato del asesor", "rapidez en la entrega"), citando cuántas veces aparece cada patrón
+2. **Principales insatisfacciones** — las quejas y comentarios negativos más repetidos, agrupados por tema, citando cuántas veces aparece cada patrón
+3. **Asesores a destacar** — quiénes reciben elogios consistentes
+4. **Asesores que requieren atención** — quiénes acumulan quejas o calificaciones bajas, y por qué razón específica según los comentarios
+5. **Recomendación accionable** — 2-3 acciones concretas para el siguiente mes basadas en los patrones encontrados
+
+Sé directo y específico, usa los nombres reales. Si los datos son insuficientes para alguna sección, dilo brevemente. Formato markdown con encabezados.
+
+ENCUESTAS:
+${lineas}`;
+
+      const response = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const responseData = await response.json();
+      if (!response.ok) {
+        setErrorIA(responseData.error || "Ocurrió un error generando el análisis.");
+        return;
+      }
+      setAnalisisIA(responseData.text || "No se recibió respuesta.");
+    } catch (e) {
+      setErrorIA("Ocurrió un error de conexión. Intenta de nuevo.");
+    } finally {
+      setLoadingIA(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Card>
+        <SectionHeader title="SATISFACCIÓN CLIENTE — ENCUESTAS 24 HRS" icon="📋" />
+        <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+          <button onClick={() => setTipoActivo("ventas")} style={{
+            background: tipoActivo === "ventas" ? "#3b9eea" : "#0f2239",
+            color: tipoActivo === "ventas" ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${tipoActivo === "ventas" ? "#3b9eea" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>🚗 Ventas</button>
+          <button onClick={() => setTipoActivo("servicio")} style={{
+            background: tipoActivo === "servicio" ? "#3b9eea" : "#0f2239",
+            color: tipoActivo === "servicio" ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${tipoActivo === "servicio" ? "#3b9eea" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>🔧 Servicio</button>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+          <input
+            ref={fileInputRef} type="file" accept=".xlsx,.xls"
+            onChange={e => handleFile(e, tipoActivo)}
+            style={{ display: "none" }}
+            id={`file-${tipoActivo}`}
+          />
+          <label htmlFor={`file-${tipoActivo}`} style={{
+            background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
+            border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
+            cursor: cargando ? "default" : "pointer", display: "inline-block"
+          }}>
+            {cargando ? "Procesando…" : `📤 Subir reporte de ${tipoActivo === "ventas" ? "Ventas" : "Servicio"} (.xlsx)`}
+          </label>
+          <span style={{ color: "#64748b", fontSize: 11.5 }}>
+            Reporte de 24 hrs de {getMonthLabel(monthKey)}. Se procesa en tu navegador, solo se guardan las encuestas con estatus "CONTACTADO".
+          </span>
+        </div>
+
+        {errorCarga && (
+          <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
+            {errorCarga}
+          </div>
+        )}
+
+        {loadingDatos ? (
+          <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Cargando…</div>
+        ) : !datos ? (
+          <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "30px 0" }}>
+            Todavía no se ha cargado el reporte de {tipoActivo === "ventas" ? "Ventas" : "Servicio"} para {getMonthLabel(monthKey)}.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>
+              <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>ENCUESTAS RESPONDIDAS</div>
+                <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.length}</div>
+              </div>
+              <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>CALIFICACIÓN PROMEDIO</div>
+                <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{promedioGeneral !== null ? promedioGeneral.toFixed(1) : "—"}</div>
+              </div>
+              <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #60a5fa", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>ASESORES EVALUADOS</div>
+                <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{porAsesor.length}</div>
+              </div>
+            </div>
+
+            <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>CALIFICACIÓN POR ASESOR</p>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ color: "#64748b", fontSize: 11 }}>
+                  <th style={{ textAlign: "left", paddingBottom: 6 }}>ASESOR</th>
+                  <th style={{ textAlign: "center" }}>SUCURSAL</th>
+                  <th style={{ textAlign: "center" }}>ENCUESTAS</th>
+                  <th style={{ textAlign: "center" }}>PROMEDIO</th>
+                </tr>
+              </thead>
+              <tbody>
+                {porAsesor.map(a => (
+                  <tr key={a.asesor} style={{ borderTop: "1px solid #1e3a5f" }}>
+                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{a.asesor}</td>
+                    <td style={{ textAlign: "center", color: "#64748b", fontSize: 12 }}>{a.sucursal}</td>
+                    <td style={{ textAlign: "center", color: "#cbd5e1" }}>{a.total}</td>
+                    <td style={{ textAlign: "center", fontWeight: 700, color: a.promedio === null ? "#475569" : a.promedio >= 9 ? "#4ade80" : a.promedio >= 7 ? "#D4AF37" : "#f87171" }}>
+                      {a.promedio !== null ? a.promedio.toFixed(1) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
+      </Card>
+
+      {datos && datos.length > 0 && (
+        <Card>
+          <SectionHeader title="ANÁLISIS DE COMENTARIOS — CRITERIO EXPERTO" icon="🧠" />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+            <button
+              onClick={generarAnalisisIA}
+              disabled={loadingIA}
+              style={{
+                background: loadingIA ? "#1e3a5f" : "#D4AF37", color: loadingIA ? "#64748b" : "#0a1628",
+                border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 700,
+                cursor: loadingIA ? "default" : "pointer"
+              }}
+            >
+              {loadingIA ? "Analizando comentarios…" : "🧠 Analizar elogios e insatisfacciones"}
+            </button>
+            <span style={{ color: "#64748b", fontSize: 11.5 }}>
+              Lee todos los comentarios y calificaciones de {tipoActivo === "ventas" ? "Ventas" : "Servicio"} para identificar patrones por asesor.
+            </span>
+          </div>
+
+          {errorIA && (
+            <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
+              {errorIA}
+            </div>
+          )}
+
+          {loadingIA && (
+            <div style={{ color: "#94a3b8", fontSize: 13, padding: "20px 0", textAlign: "center" }}>
+              Analizando {datos.length} encuestas…
+            </div>
+          )}
+
+          {!loadingIA && analisisIA && (
+            <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px", maxHeight: "70vh", overflowY: "auto" }}>
+              {renderMarkdownGlobal(analisisIA)}
+            </div>
+          )}
+
+          {!loadingIA && !analisisIA && !errorIA && (
+            <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "30px 0" }}>
+              Da clic en el botón para identificar los elogios e insatisfacciones más repetidos.
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function AnalisisSection({ data, monthKey, conversionData }) {
   const [loading, setLoading] = useState(false);
   const [resultado, setResultado] = useState("");
@@ -2477,6 +2797,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>💬 Director Comercial</button>
+            <button onClick={() => setTab("satisfaccionCliente")} style={{
+              background: tab === "satisfaccionCliente" ? "#5eead4" : "transparent",
+              color: tab === "satisfaccionCliente" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>📋 Satisfacción Cliente</button>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {isHistorico ? (
@@ -2547,8 +2873,10 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           <AnalisisSection data={data} monthKey={viewMonth} conversionData={conversionData} />
         ) : tab === "alertas" ? (
           <AlertasSection monthKey={currentMonthKey} />
-        ) : (
+        ) : tab === "chat" ? (
           <ChatSection data={data} monthKey={viewMonth} conversionData={conversionData} />
+        ) : (
+          <SatisfaccionClienteSection monthKey={viewMonth} />
         )}
         <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, marginTop: 24 }}>
           Los cambios se sincronizan automáticamente con Firebase · Actualización cada 15 seg
