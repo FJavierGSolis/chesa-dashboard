@@ -502,9 +502,7 @@ function LoginScreen({ onLoginSuccess }) {
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 24, paddingTop: 16, borderTop: "1px solid #1e3a5f" }}>
-          <div style={{ background: "#f1f5f9", borderRadius: 6, padding: "5px 10px", display: "flex", alignItems: "center" }}>
-            <img src="/chesa-logo-v2.png" alt="CHESA" style={{ width: 80, objectFit: "contain" }} />
-          </div>
+          <img src="/chesa-logo-v3.png" alt="CHESA" style={{ width: 85, objectFit: "contain", opacity: 0.9 }} />
         </div>
       </div>
     </div>
