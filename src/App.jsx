@@ -1903,6 +1903,46 @@ function ConversionTable({ agencia, asesores, fuentesSel, onFieldChange, onAdd, 
                 </tr>
               );
             })}
+            {ids.length > 0 && (() => {
+              const totalesFuente = {};
+              FUENTES_LEAD.forEach(f => { totalesFuente[f.key] = 0; });
+              let totalLeads = 0;
+              const totalesCampo = { contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAgendadas: 0, demosAsistidas: 0, creditos: 0, creditosOk: 0, creditosRechazados: 0, ventas: 0 };
+              ids.forEach(id => {
+                const row = asesores[id];
+                FUENTES_LEAD.forEach(f => { totalesFuente[f.key] += row[f.key] ?? 0; });
+                totalLeads += leadsDeFuentes(row, fuentesSel);
+                Object.keys(totalesCampo).forEach(c => { totalesCampo[c] += row[c] ?? 0; });
+              });
+              return (
+                <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                  <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
+                  {FUENTES_LEAD.map(f => (
+                    <td key={f.key} style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalesFuente[f.key]}</td>
+                  ))}
+                  <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 800 }}>{totalLeads}</td>
+                  {["contactados", "citasAgendadas", "citasAsistidas", "demosAgendadas", "demosAsistidas", "creditos", "creditosOk", "creditosRechazados", "ventas"].map(c => (
+                    <td key={c} style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalesCampo[c]}</td>
+                  ))}
+                  <td></td>
+                  {ETAPAS.map(et => {
+                    const num = totalesCampo[et.num] ?? (et.num === "leads" ? totalLeads : 0);
+                    const den = et.den === "leads" ? totalLeads : (totalesCampo[et.den] ?? 0);
+                    const ratio = den > 0 ? num / den : 0;
+                    const p = Math.round(ratio * 100);
+                    const ok = den > 0 && ratio >= et.objetivo;
+                    return (
+                      <td key={et.key} style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: den === 0 ? "#475569" : ok ? "#4ade80" : "#f87171" }}>
+                          {den === 0 ? "—" : `${p}%`}
+                        </div>
+                      </td>
+                    );
+                  })}
+                  <td colSpan={2}></td>
+                </tr>
+              );
+            })()}
           </tbody>
         </table>
       </div>
@@ -2015,6 +2055,90 @@ function agregarFuentesLeads(registros) {
   };
 }
 
+// Funnel visual: barras horizontales decrecientes mostrando el resultado real de cada etapa,
+// el objetivo esperado (línea de referencia), y el % de paso entre etapas consecutivas.
+function FunnelEtapas({ etapasData }) {
+  // etapasData: [{ label, valor, objetivoPct, denPrevia }]
+  const maxValor = Math.max(1, ...etapasData.map(e => e.valor));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {etapasData.map((e, i) => {
+        const anchoPct = (e.valor / maxValor) * 100;
+        const pasoPct = i > 0 && etapasData[i - 1].valor > 0 ? (e.valor / etapasData[i - 1].valor * 100) : null;
+        const cumpleObjetivo = pasoPct !== null && e.objetivoPct !== null ? pasoPct >= e.objetivoPct : null;
+        return (
+          <div key={e.label}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+              <span style={{ color: "#cbd5e1", fontSize: 12.5, fontWeight: 600 }}>{e.label}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {pasoPct !== null && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: cumpleObjetivo ? "#4ade80" : "#f87171" }}>
+                    {pasoPct.toFixed(0)}% paso {e.objetivoPct !== null && `(obj. ${e.objetivoPct}%)`}
+                  </span>
+                )}
+                <span style={{ color: "#f1f5f9", fontSize: 14, fontWeight: 800 }}>{e.valor}</span>
+              </span>
+            </div>
+            <div style={{ background: "#0a1830", borderRadius: 5, height: 22, overflow: "hidden", position: "relative" }}>
+              <div style={{
+                width: `${anchoPct}%`, height: "100%",
+                background: i === etapasData.length - 1 ? "#4ade80" : "#3b9eea",
+                borderRadius: 5, transition: "width .3s",
+                display: "flex", alignItems: "center", paddingLeft: 8
+              }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function FunnelAgencia({ agencia, conversionData }) {
+  const asesores = Object.values(conversionData[agencia] ?? {});
+  const totales = { leads: 0, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAgendadas: 0, demosAsistidas: 0, ventas: 0 };
+  asesores.forEach(a => {
+    totales.leads += leadsDeFuentes(a);
+    totales.contactados += a.contactados ?? 0;
+    totales.citasAgendadas += a.citasAgendadas ?? 0;
+    totales.citasAsistidas += a.citasAsistidas ?? 0;
+    totales.demosAgendadas += a.demosAgendadas ?? 0;
+    totales.demosAsistidas += a.demosAsistidas ?? 0;
+    totales.ventas += a.ventas ?? 0;
+  });
+
+  const etapasData = [
+    { label: "Leads", valor: totales.leads, objetivoPct: null },
+    { label: "Contactados", valor: totales.contactados, objetivoPct: Math.round(ETAPAS.find(e => e.key === "contactados").objetivo * 100) },
+    { label: "Citas Agendadas", valor: totales.citasAgendadas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "citasAgendadas").objetivo * 100) },
+    { label: "Citas Asistidas", valor: totales.citasAsistidas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "citasAsistidas").objetivo * 100) },
+    { label: "Demos Agendadas", valor: totales.demosAgendadas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "demosAgendadas").objetivo * 100) },
+    { label: "Demos Asistidas", valor: totales.demosAsistidas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "demosAsistidas").objetivo * 100) },
+    { label: "Ventas", valor: totales.ventas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "ventas").objetivo * 100) },
+  ];
+
+  const tasaCierreGlobal = totales.leads > 0 ? (totales.ventas / totales.leads * 100) : null;
+
+  return (
+    <Card>
+      <SectionHeader title={`FUNNEL DE VENTAS — ${agencia}`} icon="🪜" />
+      {asesores.length === 0 ? (
+        <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "20px 0" }}>
+          Sin asesores registrados en {agencia} todavía.
+        </div>
+      ) : (
+        <>
+          <FunnelEtapas etapasData={etapasData} />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: "1px solid #1e3a5f" }}>
+            <span style={{ color: "#94a3b8", fontSize: 11.5 }}>Tasa de cierre global (Ventas ÷ Leads)</span>
+            <span style={{ color: "#D4AF37", fontSize: 16, fontWeight: 800 }}>{tasaCierreGlobal !== null ? `${tasaCierreGlobal.toFixed(1)}%` : "—"}</span>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function PieChartLeyenda({ datos, colores, size = 170 }) {
   // datos: [{ label, value }]
   const entries = datos.map((d, i) => ({ ...d, color: colores[i % colores.length] }));
@@ -2042,7 +2166,7 @@ function PieChartLeyenda({ datos, colores, size = 170 }) {
 const COLORES_ESTATUS = { "Sin Atender": "#f87171", "Asignado": "#fbbf24", "Contactado": "#60a5fa", "Finalizado": "#4ade80", "Abandonados": "#94a3b8", "1 Ventas": "#34d399", "2 Ventas": "#10b981" };
 const COLORES_TEMPERATURA = { "Caliente": "#f87171", "Tibio": "#fbbf24", "Frio": "#60a5fa", "Sin dato": "#475569" };
 
-function FuentesLeadsSection({ monthKey, onSincronizarConversion }) {
+function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData }) {
   const [agenciaSel, setAgenciaSel] = useState(AGENCIAS[0]);
   const [datosPorAgencia, setDatosPorAgencia] = useState({});
   const [cargando, setCargando] = useState(false);
@@ -2089,7 +2213,37 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion }) {
     }
   };
 
-  const datos = datosPorAgencia[agenciaSel];
+  const datos = (() => {
+    if (agenciaSel !== "TODAS") return datosPorAgencia[agenciaSel];
+    const agenciasConDatos = AGENCIAS.filter(ag => datosPorAgencia[ag]);
+    if (agenciasConDatos.length === 0) return null;
+
+    const combinado = {
+      total: 0,
+      porFuente: Object.fromEntries(FUENTES_LEAD.map(f => [f.key, 0])),
+      porEstatus: {},
+      porTemperatura: {},
+      porProducto: {},
+      porAsesor: {},
+    };
+    combinado.porFuente.otros = 0;
+
+    agenciasConDatos.forEach(ag => {
+      const d = datosPorAgencia[ag];
+      combinado.total += d.total;
+      FUENTES_LEAD.forEach(f => { combinado.porFuente[f.key] += d.porFuente[f.key] ?? 0; });
+      combinado.porFuente.otros += d.porFuente.otros ?? 0;
+      Object.entries(d.porEstatus).forEach(([k, v]) => { combinado.porEstatus[k] = (combinado.porEstatus[k] ?? 0) + v; });
+      Object.entries(d.porTemperatura).forEach(([k, v]) => { combinado.porTemperatura[k] = (combinado.porTemperatura[k] ?? 0) + v; });
+      Object.entries(d.porProducto).forEach(([k, v]) => { combinado.porProducto[k] = (combinado.porProducto[k] ?? 0) + v; });
+      Object.entries(d.porAsesor).forEach(([asesor, fuentes]) => {
+        const key = `${ag} — ${asesor}`; // se distingue por agencia, ya que puede haber nombres repetidos
+        combinado.porAsesor[key] = { ...fuentes };
+      });
+    });
+
+    return combinado;
+  })();
 
   const datosFuentePie = datos ? FUENTES_LEAD.map(f => ({ label: f.label, value: datos.porFuente[f.key] ?? 0 })) : [];
   const coloresFuente = FUENTES_LEAD.map(f => f.color);
@@ -2114,6 +2268,16 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion }) {
       <Card>
         <SectionHeader title={`FUENTES Y LEADS — ${getMonthLabel(monthKey).toUpperCase()}`} icon="📡" />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+          <button onClick={() => setAgenciaSel("TODAS")} style={{
+            background: agenciaSel === "TODAS" ? "#D4AF37" : "#0f2239",
+            color: agenciaSel === "TODAS" ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${agenciaSel === "TODAS" ? "#D4AF37" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>
+            🌐 TODAS LAS AGENCIAS {AGENCIAS.filter(ag => datosPorAgencia[ag]).length > 0
+              ? `(${AGENCIAS.reduce((s, ag) => s + (datosPorAgencia[ag]?.total ?? 0), 0)})`
+              : ""}
+          </button>
           {AGENCIAS.map(ag => (
             <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
               background: agenciaSel === ag ? "#3b9eea" : "#0f2239",
@@ -2124,19 +2288,26 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion }) {
           ))}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-fuentes-leads" />
-          <label htmlFor="file-fuentes-leads" style={{
-            background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
-            border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
-            cursor: cargando ? "default" : "pointer", display: "inline-block"
-          }}>
-            {cargando ? "Procesando…" : `📤 Subir reporte de ${agenciaSel} (.xlsx)`}
-          </label>
-          <span style={{ color: "#64748b", fontSize: 11.5 }}>
-            Reporte de Fuentes de la plataforma, correspondiente a {getMonthLabel(monthKey)}. Se procesa en tu navegador.
-          </span>
-        </div>
+        {agenciaSel !== "TODAS" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-fuentes-leads" />
+            <label htmlFor="file-fuentes-leads" style={{
+              background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
+              border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
+              cursor: cargando ? "default" : "pointer", display: "inline-block"
+            }}>
+              {cargando ? "Procesando…" : `📤 Subir reporte de ${agenciaSel} (.xlsx)`}
+            </label>
+            <span style={{ color: "#64748b", fontSize: 11.5 }}>
+              Reporte de Fuentes de la plataforma, correspondiente a {getMonthLabel(monthKey)}. Se procesa en tu navegador.
+            </span>
+          </div>
+        )}
+        {agenciaSel === "TODAS" && (
+          <div style={{ color: "#3b9eea", fontSize: 11.5, marginBottom: 16, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "6px 10px" }}>
+            Vista global — suma de las agencias que ya tengan su reporte cargado este mes. Para cargar un archivo, selecciona la agencia específica.
+          </div>
+        )}
 
         {errorCarga && (
           <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
@@ -2235,6 +2406,12 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion }) {
             </div>
           </Card>
         </>
+      )}
+
+      {conversionData && (
+        agenciaSel === "TODAS"
+          ? AGENCIAS.map(ag => <FunnelAgencia key={ag} agencia={ag} conversionData={conversionData} />)
+          : <FunnelAgencia agencia={agenciaSel === "TODAS" ? AGENCIAS[0] : agenciaSel} conversionData={conversionData} />
       )}
     </div>
   );
@@ -4312,7 +4489,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
             onRemove={onRemoveAsesor}
           />
         ) : tab === "fuentesLeads" ? (
-          <FuentesLeadsSection monthKey={viewMonth} onSincronizarConversion={onSincronizarConversion} />
+          <FuentesLeadsSection monthKey={viewMonth} onSincronizarConversion={onSincronizarConversion} conversionData={conversionData} />
         ) : tab === "tendencias" ? (
           <TendenciasSection currentMonthKey={currentMonthKey} />
         ) : tab === "analisis" ? (
