@@ -2462,7 +2462,62 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
   );
 }
 
-function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove }) {
+// Mapea el nombre de agencia tal como viene en el reporte de Estadísticas Vendedor
+// (formato "Agencia: Changan X") a nuestras claves internas.
+function mapearAgenciaReporte(nombreRaw) {
+  const n = (nombreRaw || "").toLowerCase();
+  if (n.includes("tapachula")) return "TAPACHULA";
+  if (n.includes("cristobal") || n.includes("cristóbal")) return "SAN CRISTÓBAL";
+  if (n.includes("ocosingo")) return "OCOSINGO";
+  if (n.includes("comitan") || n.includes("comitán")) return "COMITÁN";
+  if (n.includes("tuxtla")) return "TUXTLA";
+  return null;
+}
+
+// Parsea el reporte "Estadísticas Vendedor" (Usuario, Leads, Contactados, Citas, Demos, Créditos, Ventas, Tiempo de respuesta).
+function parseEmbudoAsesoresWorkbook(workbook) {
+  const ws = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: true });
+
+  const resultado = {}; // { AGENCIA: { nombreAsesor: {contactados, citasAgendadas, ...} } }
+  let agenciaActual = null;
+  let headerIdx = null;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const val1 = row[1];
+    if (typeof val1 === "string" && val1.startsWith("Agencia:")) {
+      agenciaActual = mapearAgenciaReporte(val1.replace("Agencia:", "").trim());
+      if (agenciaActual && !resultado[agenciaActual]) resultado[agenciaActual] = {};
+      headerIdx = null;
+      continue;
+    }
+    if (typeof val1 === "string" && val1.trim() === "Usuario") {
+      headerIdx = row;
+      continue;
+    }
+    if (agenciaActual && headerIdx && typeof val1 === "string" && val1.trim() && row[2] !== null && row[2] !== undefined) {
+      const nombre = val1.trim();
+      resultado[agenciaActual][nombre] = {
+        leads: Number(row[2]) || 0,
+        contactados: Number(row[3]) || 0,
+        citasAgendadas: Number(row[4]) || 0,
+        citasAsistidas: Number(row[5]) || 0,
+        demosAgendadas: Number(row[6]) || 0,
+        demosAsistidas: Number(row[7]) || 0,
+        creditos: Number(row[8]) || 0,
+        creditosOk: Number(row[9]) || 0,
+        creditosRechazados: Number(row[10]) || 0,
+        ventas: Number(row[11]) || 0,
+        tiempoRespuesta: row[12] != null ? String(row[12]) : "",
+      };
+    }
+  }
+  return resultado;
+}
+
+function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove, onSincronizarEmbudo }) {
   const [agenciaSel, setAgenciaSel] = useState("TUXTLA"); // o "TODAS"
   const [fuentesSel, setFuentesSel] = useState(FUENTES_LEAD.map(f => f.key)); // todas activas por defecto
   const asesoresAgenciaUnica = conversionData[agenciaSel] ?? {};
@@ -2508,6 +2563,34 @@ function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove }) {
     });
   };
 
+  const [cargandoEmbudo, setCargandoEmbudo] = useState(false);
+  const [errorEmbudo, setErrorEmbudo] = useState("");
+  const fileInputEmbudoRef = useRef(null);
+
+  const handleFileEmbudo = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCargandoEmbudo(true);
+    setErrorEmbudo("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const porAgencia = parseEmbudoAsesoresWorkbook(wb);
+      const totalAgencias = Object.keys(porAgencia).length;
+      if (totalAgencias === 0) {
+        setErrorEmbudo("No se encontraron agencias reconocidas en este archivo. Verifica que sea el reporte de Estadísticas Vendedor.");
+        setCargandoEmbudo(false);
+        return;
+      }
+      if (onSincronizarEmbudo) onSincronizarEmbudo(porAgencia);
+    } catch (err) {
+      setErrorEmbudo("No se pudo leer el archivo. Verifica que sea un Excel válido del reporte de Estadísticas Vendedor.");
+    } finally {
+      setCargandoEmbudo(false);
+      if (fileInputEmbudoRef.current) fileInputEmbudoRef.current.value = "";
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -2535,7 +2618,20 @@ function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove }) {
         }}>
           ✨ Estandarizar nombres
         </button>
+        <input ref={fileInputEmbudoRef} type="file" accept=".xlsx,.xls" onChange={handleFileEmbudo} style={{ display: "none" }} id="file-embudo-asesores" />
+        <label htmlFor="file-embudo-asesores" style={{
+          background: cargandoEmbudo ? "#1e3a5f" : "#D4AF37", color: cargandoEmbudo ? "#64748b" : "#0a1628",
+          border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11.5, fontWeight: 700,
+          cursor: cargandoEmbudo ? "default" : "pointer", display: "inline-block"
+        }}>
+          {cargandoEmbudo ? "Procesando…" : "📤 Subir Contactados/Citas/Demos (.xlsx)"}
+        </label>
       </div>
+      {errorEmbudo && (
+        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "8px 12px", color: "#f87171", fontSize: 12.5 }}>
+          {errorEmbudo}
+        </div>
+      )}
       <div>
         <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>FUENTES DE LEADS (selecciona una o varias)</p>
         <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
@@ -3447,6 +3543,56 @@ ${lineas}`;
 }
 
 // ── SECCIÓN: Demos (encuesta pública de pruebas de manejo) ───────────────────
+// Palabras de conexión muy comunes en español, que no aportan significado al analizar
+// comentarios cortos de satisfacción — se excluyen del conteo de conceptos.
+const STOPWORDS_ES = new Set([
+  "el","la","los","las","un","una","unos","unas","de","del","al","a","en","que","y","o",
+  "es","fue","ser","muy","mas","más","pero","con","por","para","su","sus","me","mi","lo",
+  "le","les","se","no","si","sí","como","esta","está","esto","eso","todo","todos","nada",
+  "bien","buen","buena","buenos","buenas","gusta","gustó","gustaron","car","carro","auto",
+  "vehiculo","vehículo","fue","tan","ya","solo","sólo","poco","mucho","muy","cosa","cosas",
+]);
+
+function extraerConceptos(textos) {
+  const conteo = {};
+  textos.forEach(t => {
+    if (!t) return;
+    const palabras = t
+      .toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quita acentos para agrupar mejor
+      .replace(/[^a-záéíóúñ\s]/gi, " ")
+      .split(/\s+/)
+      .filter(p => p.length > 3 && !STOPWORDS_ES.has(p));
+    palabras.forEach(p => { conteo[p] = (conteo[p] ?? 0) + 1; });
+  });
+  return Object.entries(conteo)
+    .map(([concepto, count]) => ({ concepto, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+}
+
+function BarrasConceptos({ datos, color }) {
+  if (datos.length === 0) {
+    return <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: "16px 0" }}>Sin suficientes comentarios para identificar patrones.</div>;
+  }
+  const maxCount = Math.max(...datos.map(d => d.count));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {datos.map(d => (
+        <div key={d.concepto}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 2 }}>
+            <span style={{ color: "#cbd5e1", textTransform: "capitalize" }}>{d.concepto}</span>
+            <span style={{ color: "#94a3b8", fontWeight: 700 }}>{d.count}</span>
+          </div>
+          <div style={{ background: "#0a1830", borderRadius: 4, height: 10, overflow: "hidden" }}>
+            <div style={{ width: `${(d.count / maxCount) * 100}%`, height: "100%", background: color, borderRadius: 4 }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DemosSection({ monthKey }) {
   const [datos, setDatos] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -3495,6 +3641,9 @@ function DemosSection({ monthKey }) {
     });
     return Object.entries(map).map(([municipio, count]) => ({ municipio, count })).sort((a, b) => b.count - a.count);
   })();
+
+  const conceptosLeGusto = extraerConceptos(datosFiltrados.map(r => r.legusto));
+  const conceptosNoLeGusto = extraerConceptos(datosFiltrados.map(r => r.nolegusto));
 
   const porAsesor = (() => {
     const map = {};
@@ -3595,6 +3744,17 @@ ${lineas}`;
               <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #60a5fa", borderRadius: 8, padding: "12px 14px" }}>
                 <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>MUNICIPIOS/ZONAS DISTINTAS</div>
                 <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{porMunicipio.length}</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 24 }}>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 10, letterSpacing: .8 }}>👍 LO QUE MÁS LES GUSTÓ</p>
+                <BarrasConceptos datos={conceptosLeGusto} color="#4ade80" />
+              </div>
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 10, letterSpacing: .8 }}>👎 LO QUE MENOS LES GUSTÓ</p>
+                <BarrasConceptos datos={conceptosNoLeGusto} color="#f87171" />
               </div>
             </div>
 
@@ -4122,6 +4282,49 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
     });
   };
 
+  // Sincroniza Contactados/Citas/Demos/Créditos/Ventas/Tiempo de respuesta extraídos del
+  // reporte de Estadísticas Vendedor hacia Conversión de Asesores, SIN tocar los campos
+  // de fuente (que vienen del reporte de Fuentes y Leads). Crea asesores nuevos si no existen.
+  const onSincronizarEmbudo = (porAgencia) => {
+    setConversionData(prev => {
+      const next = { ...prev };
+      Object.entries(porAgencia).forEach(([agencia, porAsesorEmbudo]) => {
+        const asesoresAgencia = { ...(next[agencia] || {}) };
+        const nombreToId = {};
+        Object.entries(asesoresAgencia).forEach(([id, a]) => {
+          nombreToId[estandarizarNombre(a.nombre).toUpperCase()] = id;
+        });
+
+        Object.entries(porAsesorEmbudo).forEach(([nombreRaw, embudo]) => {
+          if (!nombreRaw || nombreRaw.trim().toLowerCase() === "sin asignar") return;
+          const nombreEstandar = estandarizarNombre(nombreRaw);
+          const key = nombreEstandar.toUpperCase();
+          let id = nombreToId[key];
+          if (!id) {
+            id = genAsesorId();
+            asesoresAgencia[id] = asesorBlank();
+            asesoresAgencia[id].nombre = nombreEstandar;
+            nombreToId[key] = id;
+          }
+          asesoresAgencia[id].contactados = embudo.contactados;
+          asesoresAgencia[id].citasAgendadas = embudo.citasAgendadas;
+          asesoresAgencia[id].citasAsistidas = embudo.citasAsistidas;
+          asesoresAgencia[id].demosAgendadas = embudo.demosAgendadas;
+          asesoresAgencia[id].demosAsistidas = embudo.demosAsistidas;
+          asesoresAgencia[id].creditos = embudo.creditos;
+          asesoresAgencia[id].creditosOk = embudo.creditosOk;
+          asesoresAgencia[id].creditosRechazados = embudo.creditosRechazados;
+          asesoresAgencia[id].ventas = embudo.ventas;
+          asesoresAgencia[id].tiempoRespuesta = embudo.tiempoRespuesta;
+        });
+
+        next[agencia] = asesoresAgencia;
+      });
+      scheduleSaveConversion(next);
+      return next;
+    });
+  };
+
   // Sincroniza los leads por fuente extraídos del reporte de Fuentes y Leads hacia
   // Conversión de Asesores. Busca por coincidencia de nombre (normalizado); si no
   // existe el asesor en esa agencia, lo crea automáticamente con el nombre estandarizado.
@@ -4134,6 +4337,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
       });
 
       Object.entries(porAsesorFuentes).forEach(([nombreRaw, fuentes]) => {
+        if (!nombreRaw || nombreRaw.trim().toLowerCase() === "sin asignar") return; // no se contabiliza como asesor real
         const nombreEstandar = estandarizarNombre(nombreRaw);
         const key = nombreEstandar.toUpperCase();
         let id = nombreToId[key];
@@ -4534,6 +4738,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
             onFieldChange={onAsesorFieldChange}
             onAdd={onAddAsesor}
             onRemove={onRemoveAsesor}
+            onSincronizarEmbudo={onSincronizarEmbudo}
           />
         ) : tab === "fuentesLeads" ? (
           <FuentesLeadsSection monthKey={viewMonth} onSincronizarConversion={onSincronizarConversion} conversionData={conversionData} />
