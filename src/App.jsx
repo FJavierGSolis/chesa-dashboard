@@ -1945,10 +1945,14 @@ function corregirEncoding(texto) {
 function parseFuentesLeadsWorkbook(workbook) {
   const sheetName = workbook.SheetNames[0];
   const ws = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  // blankrows:true evita que SheetJS salte filas; sheet_to_json con header:1 puede devolver
+  // arreglos de distinta longitud si las últimas celdas de una fila están vacías — por eso
+  // normalizamos cada fila a la longitud de los encabezados antes de leer por índice.
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: true });
   if (rows.length < 3) return [];
 
   const headers = rows[1].map(h => corregirEncoding(h));
+  const numCols = headers.length;
   const idx = (nombre) => headers.findIndex(h => (h || "").toString().toLowerCase().trim() === nombre.toLowerCase());
 
   const iFecha = idx("Fecha de Alta");
@@ -1961,16 +1965,23 @@ function parseFuentesLeadsWorkbook(workbook) {
 
   const registros = [];
   for (let r = 2; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row || !row[iFuente]) continue;
+    let row = rows[r];
+    if (!row) continue;
+    // Normaliza la longitud de la fila para que row[iFuente] nunca quede fuera de rango
+    // por celdas vacías al final que SheetJS recorta.
+    if (row.length < numCols) {
+      row = [...row, ...Array(numCols - row.length).fill(null)];
+    }
+    const fuenteCelda = row[iFuente];
+    if (fuenteCelda === null || fuenteCelda === undefined || String(fuenteCelda).trim() === "") continue;
     registros.push({
       fecha: iFecha >= 0 ? row[iFecha] : null,
       nombreCliente: iNombre >= 0 ? corregirEncoding(row[iNombre]) : "",
       producto: iProducto >= 0 ? corregirEncoding(row[iProducto]) : "Sin especificar",
       temperatura: iTemperatura >= 0 ? (row[iTemperatura] || "Sin dato") : "Sin dato",
       asesor: iAsesor >= 0 && row[iAsesor] ? corregirEncoding(row[iAsesor]).trim() : "Sin asignar",
-      fuenteRaw: iFuente >= 0 ? row[iFuente] : "",
-      fuente: mapearFuenteExcel(iFuente >= 0 ? row[iFuente] : ""),
+      fuenteRaw: fuenteCelda,
+      fuente: mapearFuenteExcel(fuenteCelda),
       estatus: iEstatus >= 0 ? (row[iEstatus] || "Sin estatus") : "Sin estatus",
     });
   }
