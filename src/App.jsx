@@ -113,8 +113,9 @@ const LINEAS_PRODUCTO = [
 const CONVERSION_PATH = "conversionAsesores";
 
 const FUENTES_LEAD = [
-  { key: "esfuerzosPropios", label: "Esfuerzos Propios" },
-  { key: "asignadosBDC",     label: "Asignados por BDC" },
+  { key: "digitalBDC",       label: "Digital BDC" },
+  { key: "digitalMarca",     label: "Digital Marca" },
+  { key: "esfuerzosPropios", label: "Esfuerzos Propios del APV" },
   { key: "piso",             label: "Piso" },
 ];
 
@@ -131,19 +132,30 @@ const genAsesorId = () => `a_${Date.now()}_${Math.random().toString(36).slice(2,
 
 const asesorBlank = () => ({
   nombre: "Nuevo Asesor",
-  esfuerzosPropios: 0, asignadosBDC: 0, piso: 0,
+  digitalBDC: 0, digitalMarca: 0, esfuerzosPropios: 0, piso: 0,
   contactados: 0, citasAgendadas: 0, citasAsistidas: 0,
   demosAgendadas: 0, demosAsistidas: 0,
   creditos: 0, creditosOk: 0, creditosRechazados: 0,
   ventas: 0, tiempoRespuesta: "",
 });
 
-// Devuelve el total de leads de un asesor (suma de las 3 fuentes), o el valor de una fuente específica.
-function leadsDeFuente(asesor, fuente) {
-  if (!fuente || fuente === "TOTAL") {
-    return (asesor.esfuerzosPropios ?? 0) + (asesor.asignadosBDC ?? 0) + (asesor.piso ?? 0);
-  }
-  return asesor[fuente] ?? 0;
+// Suma los leads de un asesor según un arreglo de fuentes seleccionadas.
+// Si fuentesSel está vacío o incluye todas, equivale al total general.
+function leadsDeFuentes(asesor, fuentesSel) {
+  const claves = (fuentesSel && fuentesSel.length > 0) ? fuentesSel : FUENTES_LEAD.map(f => f.key);
+  return claves.reduce((s, k) => s + (asesor[k] ?? 0), 0);
+}
+
+// Estandariza un nombre propio: cada palabra con su primera letra en mayúscula, resto en minúscula.
+// Maneja correctamente acentos y nombres compuestos.
+function estandarizarNombre(nombre) {
+  if (!nombre) return nombre;
+  return nombre
+    .toLowerCase()
+    .split(" ")
+    .filter(Boolean)
+    .map(palabra => palabra.charAt(0).toUpperCase() + palabra.slice(1))
+    .join(" ");
 }
 
 // Datos iniciales tomados del Reporte de Estadísticas Vendedor (ene–may 2026), agencia Tuxtla
@@ -740,7 +752,7 @@ function LoginScreen({ onLoginSuccess }) {
   );
 }
 
-function NumInput({ value, onChange, step = 1, min = 0, width = 60, valueColor }) {
+function NumInput({ value, onChange, step = 1, min = 0, width = 60, valueColor, disabled }) {
   const [local, setLocal] = useState(String(value));
   useEffect(() => setLocal(String(value)), [value]);
   return (
@@ -749,13 +761,14 @@ function NumInput({ value, onChange, step = 1, min = 0, width = 60, valueColor }
       value={local}
       min={min}
       step={step}
+      disabled={disabled}
       onChange={e => setLocal(e.target.value)}
       onBlur={() => { const n = Number(local); if (!isNaN(n)) onChange(n); }}
       onKeyDown={e => { if (e.key === "Enter") { const n = Number(local); if (!isNaN(n)) onChange(n); } }}
       style={{
-        width, background: "#0d1b2e", border: "1px solid #2a3f5f",
-        color: valueColor || "#D4AF37", borderRadius: 4, padding: "2px 6px",
-        fontSize: 13, textAlign: "center", outline: "none",
+        width, background: disabled ? "#0a1830" : "#0d1b2e", border: "1px solid #2a3f5f",
+        color: disabled ? "#475569" : (valueColor || "#D4AF37"), borderRadius: 4, padding: "2px 6px",
+        fontSize: 13, textAlign: "center", outline: "none", cursor: disabled ? "not-allowed" : "text",
       }}
     />
   );
@@ -1715,8 +1728,8 @@ function KpiBar({ data, monthKey }) {
 }
 
 // ── SECCIÓN: Conversión de Asesores ───────────────────────────────────────────
-function ConversionKpiBar({ asesores, fuenteSel }) {
-  const rows = Object.values(asesores).map(a => ({ ...a, leads: leadsDeFuente(a, fuenteSel) }));
+function ConversionKpiBar({ asesores, fuentesSel }) {
+  const rows = Object.values(asesores).map(a => ({ ...a, leads: leadsDeFuentes(a, fuentesSel) }));
   const sum = (f) => rows.reduce((s, r) => s + (Number(r[f]) || 0), 0);
   const totales = {
     leads: sum("leads"), contactados: sum("contactados"), citasAgendadas: sum("citasAgendadas"),
@@ -1774,33 +1787,35 @@ const DESEMPENO_INFO = {
   sinDatos: { color: "#475569", emoji: "⚪", label: "Sin datos suficientes" },
 };
 
-function ConversionTable({ agencia, asesores, fuenteSel, onFieldChange, onAdd, onRemove }) {
+function ConversionTable({ agencia, asesores, fuentesSel, onFieldChange, onAdd, onRemove, soloLectura }) {
   const ids = Object.keys(asesores);
-  const mostrarFuentes = fuenteSel === "TOTAL";
+  const todasSeleccionadas = fuentesSel.length === FUENTES_LEAD.length;
 
   return (
     <Card>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <SectionHeader title={`ASESORES — ${agencia}`} icon="🧑‍💼" />
-        <button onClick={() => onAdd(agencia)} style={{
-          background: "#D4AF3722", border: "1px solid #D4AF37", color: "#D4AF37",
-          borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 14
-        }}>
-          + Agregar asesor
-        </button>
+        {!soloLectura && (
+          <button onClick={() => onAdd(agencia)} style={{
+            background: "#D4AF3722", border: "1px solid #D4AF37", color: "#D4AF37",
+            borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 14
+          }}>
+            + Agregar asesor
+          </button>
+        )}
       </div>
+      {soloLectura && (
+        <div style={{ color: "#3b9eea", fontSize: 11.5, marginBottom: 14, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "6px 10px" }}>
+          Vista global — los datos se editan desde la agencia correspondiente de cada asesor.
+        </div>
+      )}
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1500 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1550 }}>
           <thead>
             <tr style={{ color: "#64748b", fontSize: 10.5 }}>
               <th style={{ textAlign: "left", paddingBottom: 6, minWidth: 160 }}>ASESOR</th>
-              {mostrarFuentes && (
-                <>
-                  {FUENTES_LEAD.map(f => <th key={f.key} style={{ textAlign: "center", minWidth: 90 }}>{f.label}</th>)}
-                  <th style={{ textAlign: "center", minWidth: 70 }}>Total Leads</th>
-                </>
-              )}
-              {!mostrarFuentes && <th style={{ textAlign: "center", minWidth: 70 }}>Leads ({FUENTES_LEAD.find(f => f.key === fuenteSel)?.label})</th>}
+              {FUENTES_LEAD.map(f => <th key={f.key} style={{ textAlign: "center", minWidth: 90 }}>{f.label}</th>)}
+              <th style={{ textAlign: "center", minWidth: 80 }}>{todasSeleccionadas ? "Total Leads" : "Leads (filtro)"}</th>
               <th style={{ textAlign: "center", minWidth: 70 }}>Contact.</th>
               <th style={{ textAlign: "center", minWidth: 80 }}>Citas Agend.</th>
               <th style={{ textAlign: "center", minWidth: 80 }}>Citas Asist.</th>
@@ -1818,13 +1833,13 @@ function ConversionTable({ agencia, asesores, fuenteSel, onFieldChange, onAdd, o
           </thead>
           <tbody>
             {ids.length === 0 && (
-              <tr><td colSpan={20} style={{ color: "#475569", padding: "14px 0", textAlign: "center", fontSize: 12 }}>
+              <tr><td colSpan={22} style={{ color: "#475569", padding: "14px 0", textAlign: "center", fontSize: 12 }}>
                 Sin asesores registrados en {agencia}. Usa "+ Agregar asesor" para empezar.
               </td></tr>
             )}
             {ids.map(id => {
               const row = asesores[id];
-              const leadsActivos = leadsDeFuente(row, fuenteSel);
+              const leadsActivos = leadsDeFuentes(row, fuentesSel);
               const rowDerivado = { ...row, leads: leadsActivos };
               const desempeno = calcularDesempenoAsesor(rowDerivado);
               const dInfo = DESEMPENO_INFO[desempeno.nivel];
@@ -1837,22 +1852,15 @@ function ConversionTable({ agencia, asesores, fuenteSel, onFieldChange, onAdd, o
                       style={{ width: "100%", background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#f1f5f9", borderRadius: 4, padding: "3px 6px", fontSize: 12.5 }}
                     />
                   </td>
-                  {mostrarFuentes && (
-                    <>
-                      {FUENTES_LEAD.map(f => (
-                        <td key={f.key} style={{ textAlign: "center" }}>
-                          <NumInput value={row[f.key] ?? 0} onChange={v => onFieldChange(agencia, id, f.key, v)} width={62} />
-                        </td>
-                      ))}
-                      <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{leadsActivos}</td>
-                    </>
-                  )}
-                  {!mostrarFuentes && (
-                    <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{leadsActivos}</td>
-                  )}
+                  {FUENTES_LEAD.map(f => (
+                    <td key={f.key} style={{ textAlign: "center" }}>
+                      <NumInput value={row[f.key] ?? 0} onChange={v => onFieldChange(agencia, id, f.key, v)} width={58} disabled={soloLectura} />
+                    </td>
+                  ))}
+                  <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{leadsActivos}</td>
                   {["contactados", "citasAgendadas", "citasAsistidas", "demosAgendadas", "demosAsistidas", "creditos", "creditosOk", "creditosRechazados", "ventas"].map(c => (
                     <td key={c} style={{ textAlign: "center" }}>
-                      <NumInput value={row[c] ?? 0} onChange={v => onFieldChange(agencia, id, c, v)} width={58} />
+                      <NumInput value={row[c] ?? 0} onChange={v => onFieldChange(agencia, id, c, v)} width={58} disabled={soloLectura} />
                     </td>
                   ))}
                   <td style={{ textAlign: "center" }}>
@@ -1904,12 +1912,62 @@ function ConversionTable({ agencia, asesores, fuenteSel, onFieldChange, onAdd, o
 }
 
 function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove }) {
-  const [agenciaSel, setAgenciaSel] = useState("TUXTLA");
-  const [fuenteSel, setFuenteSel] = useState("TOTAL");
-  const asesores = conversionData[agenciaSel] ?? {};
+  const [agenciaSel, setAgenciaSel] = useState("TUXTLA"); // o "TODAS"
+  const [fuentesSel, setFuentesSel] = useState(FUENTES_LEAD.map(f => f.key)); // todas activas por defecto
+  const asesoresAgenciaUnica = conversionData[agenciaSel] ?? {};
+
+  const toggleFuente = (key) => {
+    setFuentesSel(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
+
+  // Cuando se elige "TODAS", combinamos los asesores de las 5 agencias en un solo objeto,
+  // prefijando el id para evitar colisiones, y guardamos a qué agencia pertenece cada uno
+  // para poder seguir editando con onFieldChange (que requiere agencia real, no "TODAS").
+  const asesoresCombinados = (() => {
+    if (agenciaSel !== "TODAS") return asesoresAgenciaUnica;
+    const combinado = {};
+    AGENCIAS.forEach(ag => {
+      Object.entries(conversionData[ag] ?? {}).forEach(([id, a]) => {
+        combinado[`${ag}__${id}`] = { ...a, _agenciaReal: ag, _idReal: id };
+      });
+    });
+    return combinado;
+  })();
+
+  // onFieldChange/onRemove necesitan la agencia real del asesor cuando estamos en "TODAS".
+  const onFieldChangeCombinado = (agenciaParam, idParam, campo, val) => {
+    if (agenciaSel !== "TODAS") return onFieldChange(agenciaParam, idParam, campo, val);
+    const asesor = asesoresCombinados[idParam];
+    onFieldChange(asesor._agenciaReal, asesor._idReal, campo, val);
+  };
+  const onRemoveCombinado = (agenciaParam, idParam) => {
+    if (agenciaSel !== "TODAS") return onRemove(agenciaParam, idParam);
+    const asesor = asesoresCombinados[idParam];
+    onRemove(asesor._agenciaReal, asesor._idReal);
+  };
+
+  const totalAsesoresGlobal = AGENCIAS.reduce((s, ag) => s + Object.keys(conversionData[ag] ?? {}).length, 0);
+
+  const estandarizarTodos = () => {
+    AGENCIAS.forEach(ag => {
+      Object.entries(conversionData[ag] ?? {}).forEach(([id, a]) => {
+        const limpio = estandarizarNombre(a.nombre);
+        if (limpio !== a.nombre) onFieldChange(ag, id, "nombre", limpio);
+      });
+    });
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button onClick={() => setAgenciaSel("TODAS")} style={{
+          background: agenciaSel === "TODAS" ? "#3b9eea" : "#0f2239",
+          color: agenciaSel === "TODAS" ? "#0a1628" : "#94a3b8",
+          border: `1px solid ${agenciaSel === "TODAS" ? "#3b9eea" : "#1e3a5f"}`,
+          borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+        }}>
+          🌐 TODAS LAS AGENCIAS <span style={{ opacity: .7, fontWeight: 400 }}>({totalAsesoresGlobal})</span>
+        </button>
         {AGENCIAS.map(ag => (
           <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
             background: agenciaSel === ag ? "#D4AF37" : "#0f2239",
@@ -1920,25 +1978,37 @@ function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove }) {
             {ag} <span style={{ opacity: .7, fontWeight: 400 }}>({Object.keys(conversionData[ag] ?? {}).length})</span>
           </button>
         ))}
+        <button onClick={estandarizarTodos} style={{
+          background: "transparent", color: "#94a3b8", border: "1px solid #2a3f5f",
+          borderRadius: 6, padding: "6px 14px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", marginLeft: "auto"
+        }}>
+          ✨ Estandarizar nombres
+        </button>
       </div>
       <div>
-        <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>FUENTE DE LEADS</p>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {["TOTAL", ...FUENTES_LEAD.map(f => f.key)].map(key => {
-            const label = key === "TOTAL" ? "TOTAL (todas las fuentes)" : FUENTES_LEAD.find(f => f.key === key).label;
-            return (
-              <button key={key} onClick={() => setFuenteSel(key)} style={{
-                background: fuenteSel === key ? "#3b9eea" : "#0f2239",
-                color: fuenteSel === key ? "#0a1628" : "#94a3b8",
-                border: `1px solid ${fuenteSel === key ? "#3b9eea" : "#1e3a5f"}`,
-                borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
-              }}>{label}</button>
-            );
-          })}
+        <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>FUENTES DE LEADS (selecciona una o varias)</p>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {FUENTES_LEAD.map(f => (
+            <label key={f.key} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: fuentesSel.includes(f.key) ? "#f1f5f9" : "#64748b", fontSize: 12.5 }}>
+              <input type="checkbox" checked={fuentesSel.includes(f.key)} onChange={() => toggleFuente(f.key)} />
+              {f.label}
+            </label>
+          ))}
         </div>
+        {fuentesSel.length === 0 && (
+          <div style={{ color: "#f87171", fontSize: 11.5, marginTop: 6 }}>Selecciona al menos una fuente para ver resultados.</div>
+        )}
       </div>
-      <ConversionKpiBar asesores={asesores} fuenteSel={fuenteSel} />
-      <ConversionTable agencia={agenciaSel} asesores={asesores} fuenteSel={fuenteSel} onFieldChange={onFieldChange} onAdd={onAdd} onRemove={onRemove} />
+      <ConversionKpiBar asesores={asesoresCombinados} fuentesSel={fuentesSel} />
+      <ConversionTable
+        agencia={agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}
+        asesores={asesoresCombinados}
+        fuentesSel={fuentesSel}
+        onFieldChange={onFieldChangeCombinado}
+        onAdd={agenciaSel === "TODAS" ? undefined : onAdd}
+        onRemove={onRemoveCombinado}
+        soloLectura={agenciaSel === "TODAS"}
+      />
       <div style={{ color: "#475569", fontSize: 11, textAlign: "center" }}>
         % Contactados = Contactados/Leads (obj. 60%) · % Citas Agendadas = Citas Agendadas/Contactados (obj. 60%) ·
         % Citas Asistidas = Citas Asistidas/Citas Agendadas (obj. 60%) · % Demos Agendadas = Demos Agendadas/Citas Asistidas (obj. 60%) ·
@@ -2043,15 +2113,17 @@ function buildResumenConversionParaIA(conversionData) {
     lineas.push(`${ag} (${ids.length} asesores):`);
     ids.forEach(id => {
       const a = asesores[id];
-      const pctContactados = a.leads > 0 ? ((a.contactados / a.leads) * 100).toFixed(0) : "N/D";
+      const leads = leadsDeFuentes(a);
+      const pctContactados = leads > 0 ? ((a.contactados / leads) * 100).toFixed(0) : "N/D";
       const pctCitasAg = a.contactados > 0 ? ((a.citasAgendadas / a.contactados) * 100).toFixed(0) : "N/D";
       const pctCitasAs = a.citasAgendadas > 0 ? ((a.citasAsistidas / a.citasAgendadas) * 100).toFixed(0) : "N/D";
-      const pctDemos = a.citasAsistidas > 0 ? ((a.demosAsistidas / a.citasAsistidas) * 100).toFixed(0) : "N/D";
+      const pctDemosAg = a.citasAsistidas > 0 ? ((a.demosAgendadas / a.citasAsistidas) * 100).toFixed(0) : "N/D";
+      const pctDemos = a.demosAgendadas > 0 ? ((a.demosAsistidas / a.demosAgendadas) * 100).toFixed(0) : "N/D";
       const pctVentas = a.demosAsistidas > 0 ? ((a.ventas / a.demosAsistidas) * 100).toFixed(0) : "N/D";
-      lineas.push(`  - ${a.nombre}: leads ${a.leads}, contactados ${a.contactados} (${pctContactados}%), citas agendadas ${a.citasAgendadas} (${pctCitasAg}%), citas asistidas ${a.citasAsistidas} (${pctCitasAs}%), demos asistidas ${a.demosAsistidas} (${pctDemos}%), ventas ${a.ventas} (${pctVentas}%)`);
+      lineas.push(`  - ${a.nombre}: leads ${leads} (Digital BDC ${a.digitalBDC ?? 0}, Digital Marca ${a.digitalMarca ?? 0}, Esfuerzos Propios ${a.esfuerzosPropios ?? 0}, Piso ${a.piso ?? 0}), contactados ${a.contactados} (${pctContactados}%), citas agendadas ${a.citasAgendadas} (${pctCitasAg}%), citas asistidas ${a.citasAsistidas} (${pctCitasAs}%), demos agendadas ${a.demosAgendadas ?? 0} (${pctDemosAg}%), demos asistidas ${a.demosAsistidas} (${pctDemos}%), créditos ${a.creditos ?? 0} (OK ${a.creditosOk ?? 0}, rechazados ${a.creditosRechazados ?? 0}), ventas ${a.ventas} (${pctVentas}%), tiempo de respuesta ${a.tiempoRespuesta || "N/D"}`);
     });
   });
-  lineas.push("\nObjetivos del embudo: % Contactados ≥60%, % Citas Agendadas ≥60%, % Citas Asistidas ≥60%, % Demos Asistidas ≥50%, % Ventas ≥80%.");
+  lineas.push("\nObjetivos del embudo: % Contactados ≥60%, % Citas Agendadas ≥60%, % Citas Asistidas ≥60%, % Demos Agendadas ≥60%, % Demos Asistidas ≥50%, % Ventas ≥80%.");
   return lineas.join("\n");
 }
 
