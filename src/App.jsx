@@ -113,10 +113,12 @@ const LINEAS_PRODUCTO = [
 const CONVERSION_PATH = "conversionAsesores";
 
 const FUENTES_LEAD = [
-  { key: "digitalBDC",       label: "Digital BDC" },
-  { key: "digitalMarca",     label: "Digital Marca" },
-  { key: "esfuerzosPropios", label: "Esfuerzos Propios del APV" },
-  { key: "piso",             label: "Piso" },
+  { key: "metaIntegraciones", label: "META/Integraciones",   color: "#3b9eea" },
+  { key: "marca",             label: "Marca",                color: "#D4AF37" },
+  { key: "piso",              label: "PISO",                 color: "#4ade80" },
+  { key: "formOnline",        label: "Form Online (Digital)",color: "#c084fc" },
+  { key: "calle",             label: "Calle (Prospección)",  color: "#fb923c" },
+  { key: "fbChat",            label: "FB Chat (Digital)",    color: "#f472b6" },
 ];
 
 const ETAPAS = [
@@ -132,7 +134,7 @@ const genAsesorId = () => `a_${Date.now()}_${Math.random().toString(36).slice(2,
 
 const asesorBlank = () => ({
   nombre: "Nuevo Asesor",
-  digitalBDC: 0, digitalMarca: 0, esfuerzosPropios: 0, piso: 0,
+  metaIntegraciones: 0, marca: 0, piso: 0, formOnline: 0, calle: 0, fbChat: 0,
   contactados: 0, citasAgendadas: 0, citasAsistidas: 0,
   demosAgendadas: 0, demosAsistidas: 0,
   creditos: 0, creditosOk: 0, creditosRechazados: 0,
@@ -1810,7 +1812,7 @@ function ConversionTable({ agencia, asesores, fuentesSel, onFieldChange, onAdd, 
         </div>
       )}
       <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1550 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1750 }}>
           <thead>
             <tr style={{ color: "#64748b", fontSize: 10.5 }}>
               <th style={{ textAlign: "left", paddingBottom: 6, minWidth: 160 }}>ASESOR</th>
@@ -1908,6 +1910,322 @@ function ConversionTable({ agencia, asesores, fuentesSel, onFieldChange, onAdd, 
         Desempeño: 🟢 cumple objetivo en todas las etapas evaluadas · 🟡 falla en hasta 1 de cada 3 etapas · 🔴 falla en más de 1 de cada 3 etapas.
       </div>
     </Card>
+  );
+}
+
+// ── SECCIÓN: Fuentes y Leads (detalle real desde el reporte de la plataforma) ──
+const FUENTES_LEADS_PATH = "fuentesLeads"; // fuentesLeads/{monthKey}/{AGENCIA}
+
+// Mapea el texto de "Fuente" tal como viene en el Excel a nuestras claves internas.
+function mapearFuenteExcel(fuenteRaw) {
+  const f = (fuenteRaw || "").toString().toLowerCase();
+  if (f.includes("meta") || f.includes("integracion")) return "metaIntegraciones";
+  if (f.includes("marca")) return "marca";
+  if (f.includes("piso")) return "piso";
+  if (f.includes("form online") || f.includes("form_online") || f.includes("formonline")) return "formOnline";
+  if (f.includes("calle") || f.includes("prosp")) return "calle";
+  if (f.includes("fb chat") || f.includes("fbchat")) return "fbChat";
+  return "otros";
+}
+
+// Corrige el encoding roto típico de estos reportes (UTF-8 mal interpretado como Latin-1).
+function corregirEncoding(texto) {
+  if (!texto || typeof texto !== "string") return texto;
+  try {
+    // Heurística simple: reemplazo de secuencias mal codificadas más comunes en estos reportes.
+    return texto
+      .replace(/Ã©/g, "é").replace(/Ã¡/g, "á").replace(/Ã­/g, "í").replace(/Ã³/g, "ó").replace(/Ãº/g, "ú")
+      .replace(/Ã±/g, "ñ").replace(/Ã‘/g, "Ñ").replace(/Â¿/g, "¿").replace(/Â¡/g, "¡")
+      .replace(/Ã‰/g, "É").replace(/Ã/g, "Í");
+  } catch {
+    return texto;
+  }
+}
+
+function parseFuentesLeadsWorkbook(workbook) {
+  const sheetName = workbook.SheetNames[0];
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  if (rows.length < 3) return [];
+
+  const headers = rows[1].map(h => corregirEncoding(h));
+  const idx = (nombre) => headers.findIndex(h => (h || "").toString().toLowerCase().trim() === nombre.toLowerCase());
+
+  const iFecha = idx("Fecha de Alta");
+  const iProducto = idx("Producto");
+  const iTemperatura = idx("Temperatura");
+  const iAsesor = idx("Asesor");
+  const iFuente = idx("Fuente");
+  const iEstatus = idx("Estatus");
+  const iNombre = idx("Nombre");
+
+  const registros = [];
+  for (let r = 2; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || !row[iFuente]) continue;
+    registros.push({
+      fecha: iFecha >= 0 ? row[iFecha] : null,
+      nombreCliente: iNombre >= 0 ? corregirEncoding(row[iNombre]) : "",
+      producto: iProducto >= 0 ? corregirEncoding(row[iProducto]) : "Sin especificar",
+      temperatura: iTemperatura >= 0 ? (row[iTemperatura] || "Sin dato") : "Sin dato",
+      asesor: iAsesor >= 0 && row[iAsesor] ? corregirEncoding(row[iAsesor]).trim() : "Sin asignar",
+      fuenteRaw: iFuente >= 0 ? row[iFuente] : "",
+      fuente: mapearFuenteExcel(iFuente >= 0 ? row[iFuente] : ""),
+      estatus: iEstatus >= 0 ? (row[iEstatus] || "Sin estatus") : "Sin estatus",
+    });
+  }
+  return registros;
+}
+
+// Agrega los registros individuales en los totales que necesita el dashboard.
+function agregarFuentesLeads(registros) {
+  const porFuente = {};
+  FUENTES_LEAD.forEach(f => { porFuente[f.key] = 0; });
+  porFuente.otros = 0;
+
+  const porEstatus = {};
+  const porTemperatura = {};
+  const porProducto = {};
+  const porAsesor = {};
+
+  registros.forEach(r => {
+    porFuente[r.fuente] = (porFuente[r.fuente] ?? 0) + 1;
+    porEstatus[r.estatus] = (porEstatus[r.estatus] ?? 0) + 1;
+    porTemperatura[r.temperatura] = (porTemperatura[r.temperatura] ?? 0) + 1;
+    porProducto[r.producto] = (porProducto[r.producto] ?? 0) + 1;
+    if (!porAsesor[r.asesor]) porAsesor[r.asesor] = {};
+    porAsesor[r.asesor][r.fuente] = (porAsesor[r.asesor][r.fuente] ?? 0) + 1;
+  });
+
+  return {
+    total: registros.length,
+    porFuente, porEstatus, porTemperatura, porProducto, porAsesor,
+    registros, // se guarda el detalle completo también, por si se necesita después
+  };
+}
+
+function PieChartLeyenda({ datos, colores, size = 170 }) {
+  // datos: [{ label, value }]
+  const entries = datos.map((d, i) => ({ ...d, color: colores[i % colores.length] }));
+  const total = entries.reduce((s, e) => s + e.value, 0);
+  return (
+    <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+      <PieChart entries={entries} size={size} />
+      <div style={{ flex: 1, minWidth: 180 }}>
+        {entries.filter(e => e.value > 0).sort((a, b) => b.value - a.value).map(e => {
+          const pct = total > 0 ? (e.value / total * 100) : 0;
+          return (
+            <div key={e.label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, fontSize: 12 }}>
+              <span style={{ width: 9, height: 9, borderRadius: "50%", background: e.color, flexShrink: 0 }} />
+              <span style={{ color: "#cbd5e1", flex: 1 }}>{e.label}</span>
+              <span style={{ color: "#94a3b8", fontWeight: 700 }}>{e.value}</span>
+              <span style={{ color: "#64748b", fontSize: 11, minWidth: 38, textAlign: "right" }}>{pct.toFixed(0)}%</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const COLORES_ESTATUS = { "Sin Atender": "#f87171", "Asignado": "#fbbf24", "Contactado": "#60a5fa", "Finalizado": "#4ade80", "Abandonados": "#94a3b8", "1 Ventas": "#34d399", "2 Ventas": "#10b981" };
+const COLORES_TEMPERATURA = { "Caliente": "#f87171", "Tibio": "#fbbf24", "Frio": "#60a5fa", "Sin dato": "#475569" };
+
+function FuentesLeadsSection({ monthKey, onSincronizarConversion }) {
+  const [agenciaSel, setAgenciaSel] = useState(AGENCIAS[0]);
+  const [datosPorAgencia, setDatosPorAgencia] = useState({});
+  const [cargando, setCargando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState("");
+  const [loadingDatos, setLoadingDatos] = useState(true);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingDatos(true);
+      const raw = await fbGet(`${FUENTES_LEADS_PATH}/${monthKey}`);
+      setDatosPorAgencia(raw || {});
+      setLoadingDatos(false);
+    })();
+  }, [monthKey]);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCargando(true);
+    setErrorCarga("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const registros = parseFuentesLeadsWorkbook(wb);
+      if (registros.length === 0) {
+        setErrorCarga("No se encontraron leads en este archivo. Verifica que sea el reporte correcto.");
+        setCargando(false);
+        return;
+      }
+      const agregado = agregarFuentesLeads(registros);
+      await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, agregado);
+      setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: agregado }));
+
+      // Ofrece sincronizar automáticamente los leads por fuente hacia Conversión de Asesores.
+      if (onSincronizarConversion) {
+        onSincronizarConversion(agenciaSel, agregado.porAsesor);
+      }
+    } catch (err) {
+      setErrorCarga("No se pudo leer el archivo. Verifica que sea un Excel válido del reporte de Fuentes.");
+    } finally {
+      setCargando(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const datos = datosPorAgencia[agenciaSel];
+
+  const datosFuentePie = datos ? FUENTES_LEAD.map(f => ({ label: f.label, value: datos.porFuente[f.key] ?? 0 })) : [];
+  const coloresFuente = FUENTES_LEAD.map(f => f.color);
+
+  const datosEstatusPie = datos ? Object.entries(datos.porEstatus).map(([label, value]) => ({ label, value })) : [];
+  const coloresEstatus = datosEstatusPie.map(d => COLORES_ESTATUS[d.label] || "#64748b");
+
+  const datosTemperaturaPie = datos ? Object.entries(datos.porTemperatura).map(([label, value]) => ({ label, value })) : [];
+  const coloresTemperatura = datosTemperaturaPie.map(d => COLORES_TEMPERATURA[d.label] || "#64748b");
+
+  const datosProductoPie = datos
+    ? Object.entries(datos.porProducto).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([label, value]) => ({ label, value }))
+    : [];
+  const coloresProducto = ["#3b9eea", "#D4AF37", "#4ade80", "#c084fc", "#fb923c", "#f472b6", "#60a5fa", "#fbbf24"];
+
+  // Tasa de cierre estimada: ventas / total de leads.
+  const ventasTotal = datos ? ((datos.porEstatus["1 Ventas"] ?? 0) + (datos.porEstatus["2 Ventas"] ?? 0)) : 0;
+  const tasaCierre = datos && datos.total > 0 ? (ventasTotal / datos.total * 100) : null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Card>
+        <SectionHeader title={`FUENTES Y LEADS — ${getMonthLabel(monthKey).toUpperCase()}`} icon="📡" />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+          {AGENCIAS.map(ag => (
+            <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
+              background: agenciaSel === ag ? "#3b9eea" : "#0f2239",
+              color: agenciaSel === ag ? "#0a1628" : "#94a3b8",
+              border: `1px solid ${agenciaSel === ag ? "#3b9eea" : "#1e3a5f"}`,
+              borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>{ag}{datosPorAgencia[ag] ? ` (${datosPorAgencia[ag].total})` : ""}</button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-fuentes-leads" />
+          <label htmlFor="file-fuentes-leads" style={{
+            background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
+            border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
+            cursor: cargando ? "default" : "pointer", display: "inline-block"
+          }}>
+            {cargando ? "Procesando…" : `📤 Subir reporte de ${agenciaSel} (.xlsx)`}
+          </label>
+          <span style={{ color: "#64748b", fontSize: 11.5 }}>
+            Reporte de Fuentes de la plataforma, correspondiente a {getMonthLabel(monthKey)}. Se procesa en tu navegador.
+          </span>
+        </div>
+
+        {errorCarga && (
+          <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
+            {errorCarga}
+          </div>
+        )}
+
+        {loadingDatos ? (
+          <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Cargando…</div>
+        ) : !datos ? (
+          <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "30px 0" }}>
+            Todavía no se ha cargado el reporte de {agenciaSel} para {getMonthLabel(monthKey)}.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TOTAL LEADS</div>
+              <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.total}</div>
+            </div>
+            <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>VENTAS CERRADAS</div>
+              <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{ventasTotal}</div>
+            </div>
+            <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #60a5fa", borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TASA DE CIERRE</div>
+              <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{tasaCierre !== null ? `${tasaCierre.toFixed(1)}%` : "—"}</div>
+            </div>
+            <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #f87171", borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>SIN ATENDER</div>
+              <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.porEstatus["Sin Atender"] ?? 0}</div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {datos && (
+        <>
+          <Card>
+            <SectionHeader title="DISTRIBUCIÓN POR FUENTE" icon="🥧" />
+            <PieChartLeyenda datos={datosFuentePie} colores={coloresFuente} />
+          </Card>
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 320 }}>
+              <Card>
+                <SectionHeader title="EMBUDO POR ESTATUS" icon="🥧" />
+                <PieChartLeyenda datos={datosEstatusPie} colores={coloresEstatus} size={150} />
+              </Card>
+            </div>
+            <div style={{ flex: 1, minWidth: 320 }}>
+              <Card>
+                <SectionHeader title="TEMPERATURA DEL LEAD" icon="🥧" />
+                <PieChartLeyenda datos={datosTemperaturaPie} colores={coloresTemperatura} size={150} />
+              </Card>
+            </div>
+          </div>
+
+          <Card>
+            <SectionHeader title="TOP PRODUCTOS DE INTERÉS" icon="🥧" />
+            <PieChartLeyenda datos={datosProductoPie} colores={coloresProducto} />
+          </Card>
+
+          <Card>
+            <SectionHeader title="LEADS POR ASESOR Y FUENTE" icon="🧑‍💼" />
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ color: "#64748b", fontSize: 10.5 }}>
+                    <th style={{ textAlign: "left", paddingBottom: 6 }}>ASESOR</th>
+                    {FUENTES_LEAD.map(f => <th key={f.key} style={{ textAlign: "center" }}>{f.label}</th>)}
+                    <th style={{ textAlign: "center" }}>TOTAL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(datos.porAsesor).sort((a, b) => {
+                    const totalA = Object.values(a[1]).reduce((s, v) => s + v, 0);
+                    const totalB = Object.values(b[1]).reduce((s, v) => s + v, 0);
+                    return totalB - totalA;
+                  }).map(([asesor, fuentes]) => {
+                    const total = Object.values(fuentes).reduce((s, v) => s + v, 0);
+                    return (
+                      <tr key={asesor} style={{ borderTop: "1px solid #1e3a5f" }}>
+                        <td style={{ padding: "5px 0", color: "#cbd5e1" }}>{asesor}</td>
+                        {FUENTES_LEAD.map(f => (
+                          <td key={f.key} style={{ textAlign: "center", color: "#94a3b8" }}>{fuentes[f.key] ?? 0}</td>
+                        ))}
+                        <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{total}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ color: "#475569", fontSize: 10.5, marginTop: 10 }}>
+              Esta información se sincroniza automáticamente con los campos de fuente en Conversión de Asesores al subir el reporte.
+            </div>
+          </Card>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -2120,7 +2438,7 @@ function buildResumenConversionParaIA(conversionData) {
       const pctDemosAg = a.citasAsistidas > 0 ? ((a.demosAgendadas / a.citasAsistidas) * 100).toFixed(0) : "N/D";
       const pctDemos = a.demosAgendadas > 0 ? ((a.demosAsistidas / a.demosAgendadas) * 100).toFixed(0) : "N/D";
       const pctVentas = a.demosAsistidas > 0 ? ((a.ventas / a.demosAsistidas) * 100).toFixed(0) : "N/D";
-      lineas.push(`  - ${a.nombre}: leads ${leads} (Digital BDC ${a.digitalBDC ?? 0}, Digital Marca ${a.digitalMarca ?? 0}, Esfuerzos Propios ${a.esfuerzosPropios ?? 0}, Piso ${a.piso ?? 0}), contactados ${a.contactados} (${pctContactados}%), citas agendadas ${a.citasAgendadas} (${pctCitasAg}%), citas asistidas ${a.citasAsistidas} (${pctCitasAs}%), demos agendadas ${a.demosAgendadas ?? 0} (${pctDemosAg}%), demos asistidas ${a.demosAsistidas} (${pctDemos}%), créditos ${a.creditos ?? 0} (OK ${a.creditosOk ?? 0}, rechazados ${a.creditosRechazados ?? 0}), ventas ${a.ventas} (${pctVentas}%), tiempo de respuesta ${a.tiempoRespuesta || "N/D"}`);
+      lineas.push(`  - ${a.nombre}: leads ${leads} (META/Integraciones ${a.metaIntegraciones ?? 0}, Marca ${a.marca ?? 0}, PISO ${a.piso ?? 0}, Form Online ${a.formOnline ?? 0}, Calle ${a.calle ?? 0}, FB Chat ${a.fbChat ?? 0}), contactados ${a.contactados} (${pctContactados}%), citas agendadas ${a.citasAgendadas} (${pctCitasAg}%), citas asistidas ${a.citasAsistidas} (${pctCitasAs}%), demos agendadas ${a.demosAgendadas ?? 0} (${pctDemosAg}%), demos asistidas ${a.demosAsistidas} (${pctDemos}%), créditos ${a.creditos ?? 0} (OK ${a.creditosOk ?? 0}, rechazados ${a.creditosRechazados ?? 0}), ventas ${a.ventas} (${pctVentas}%), tiempo de respuesta ${a.tiempoRespuesta || "N/D"}`);
     });
   });
   lineas.push("\nObjetivos del embudo: % Contactados ≥60%, % Citas Agendadas ≥60%, % Citas Asistidas ≥60%, % Demos Agendadas ≥60%, % Demos Asistidas ≥50%, % Ventas ≥80%.");
@@ -3569,6 +3887,38 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
     });
   };
 
+  // Sincroniza los leads por fuente extraídos del reporte de Fuentes y Leads hacia
+  // Conversión de Asesores. Busca por coincidencia de nombre (normalizado); si no
+  // existe el asesor en esa agencia, lo crea automáticamente con el nombre estandarizado.
+  const onSincronizarConversion = (agencia, porAsesorFuentes) => {
+    setConversionData(prev => {
+      const asesoresAgencia = { ...(prev[agencia] || {}) };
+      const nombreToId = {};
+      Object.entries(asesoresAgencia).forEach(([id, a]) => {
+        nombreToId[estandarizarNombre(a.nombre).toUpperCase()] = id;
+      });
+
+      Object.entries(porAsesorFuentes).forEach(([nombreRaw, fuentes]) => {
+        const nombreEstandar = estandarizarNombre(nombreRaw);
+        const key = nombreEstandar.toUpperCase();
+        let id = nombreToId[key];
+        if (!id) {
+          id = genAsesorId();
+          asesoresAgencia[id] = asesorBlank();
+          asesoresAgencia[id].nombre = nombreEstandar;
+          nombreToId[key] = id;
+        }
+        FUENTES_LEAD.forEach(f => {
+          asesoresAgencia[id][f.key] = fuentes[f.key] ?? 0;
+        });
+      });
+
+      const next = { ...prev, [agencia]: asesoresAgencia };
+      scheduleSaveConversion(next);
+      return next;
+    });
+  };
+
   // ── Lista de meses disponibles: desde mayo 2024 hasta el mes operativo actual ─
   useEffect(() => {
     setAvailableMonths(getAllMonthsRange(currentMonthKey).reverse()); // más reciente primero
@@ -3838,6 +4188,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🧑‍💼 Conversión Asesores</button>
+            <button onClick={() => setTab("fuentesLeads")} style={{
+              background: tab === "fuentesLeads" ? "#5eead4" : "transparent",
+              color: tab === "fuentesLeads" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>📡 Fuentes y Leads</button>
             <button onClick={() => setTab("satisfaccionCliente")} style={{
               background: tab === "satisfaccionCliente" ? "#5eead4" : "transparent",
               color: tab === "satisfaccionCliente" ? "#0a1628" : "#94a3b8",
@@ -3944,6 +4300,8 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
             onAdd={onAddAsesor}
             onRemove={onRemoveAsesor}
           />
+        ) : tab === "fuentesLeads" ? (
+          <FuentesLeadsSection monthKey={viewMonth} onSincronizarConversion={onSincronizarConversion} />
         ) : tab === "tendencias" ? (
           <TendenciasSection currentMonthKey={currentMonthKey} />
         ) : tab === "analisis" ? (
