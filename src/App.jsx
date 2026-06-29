@@ -2094,11 +2094,14 @@ function FunnelEtapas({ etapasData }) {
   );
 }
 
-function FunnelAgencia({ agencia, conversionData }) {
+function FunnelAgencia({ agencia, conversionData, fuentesSel }) {
   const asesores = Object.values(conversionData[agencia] ?? {});
-  const totales = { leads: 0, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAgendadas: 0, demosAsistidas: 0, ventas: 0 };
+  const todasSeleccionadas = !fuentesSel || fuentesSel.length === FUENTES_LEAD.length;
+
+  const totales = { leadsTotal: 0, leadsFiltrado: 0, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAgendadas: 0, demosAsistidas: 0, ventas: 0 };
   asesores.forEach(a => {
-    totales.leads += leadsDeFuentes(a);
+    totales.leadsTotal += leadsDeFuentes(a);
+    totales.leadsFiltrado += leadsDeFuentes(a, fuentesSel);
     totales.contactados += a.contactados ?? 0;
     totales.citasAgendadas += a.citasAgendadas ?? 0;
     totales.citasAsistidas += a.citasAsistidas ?? 0;
@@ -2107,17 +2110,23 @@ function FunnelAgencia({ agencia, conversionData }) {
     totales.ventas += a.ventas ?? 0;
   });
 
+  // El embudo posterior a Leads se captura agregado por asesor, no por fuente.
+  // Si hay un filtro activo, aplicamos la misma proporción de leads filtrados/totales
+  // al resto de etapas, como estimación — se indica claramente en la interfaz.
+  const proporcion = totales.leadsTotal > 0 ? (totales.leadsFiltrado / totales.leadsTotal) : 0;
+  const escalar = (v) => todasSeleccionadas ? v : Math.round(v * proporcion);
+
   const etapasData = [
-    { label: "Leads", valor: totales.leads, objetivoPct: null },
-    { label: "Contactados", valor: totales.contactados, objetivoPct: Math.round(ETAPAS.find(e => e.key === "contactados").objetivo * 100) },
-    { label: "Citas Agendadas", valor: totales.citasAgendadas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "citasAgendadas").objetivo * 100) },
-    { label: "Citas Asistidas", valor: totales.citasAsistidas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "citasAsistidas").objetivo * 100) },
-    { label: "Demos Agendadas", valor: totales.demosAgendadas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "demosAgendadas").objetivo * 100) },
-    { label: "Demos Asistidas", valor: totales.demosAsistidas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "demosAsistidas").objetivo * 100) },
-    { label: "Ventas", valor: totales.ventas, objetivoPct: Math.round(ETAPAS.find(e => e.key === "ventas").objetivo * 100) },
+    { label: "Leads", valor: totales.leadsFiltrado, objetivoPct: null },
+    { label: "Contactados", valor: escalar(totales.contactados), objetivoPct: Math.round(ETAPAS.find(e => e.key === "contactados").objetivo * 100) },
+    { label: "Citas Agendadas", valor: escalar(totales.citasAgendadas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "citasAgendadas").objetivo * 100) },
+    { label: "Citas Asistidas", valor: escalar(totales.citasAsistidas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "citasAsistidas").objetivo * 100) },
+    { label: "Demos Agendadas", valor: escalar(totales.demosAgendadas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "demosAgendadas").objetivo * 100) },
+    { label: "Demos Asistidas", valor: escalar(totales.demosAsistidas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "demosAsistidas").objetivo * 100) },
+    { label: "Ventas", valor: escalar(totales.ventas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "ventas").objetivo * 100) },
   ];
 
-  const tasaCierreGlobal = totales.leads > 0 ? (totales.ventas / totales.leads * 100) : null;
+  const tasaCierreGlobal = totales.leadsFiltrado > 0 ? (escalar(totales.ventas) / totales.leadsFiltrado * 100) : null;
 
   return (
     <Card>
@@ -2128,6 +2137,11 @@ function FunnelAgencia({ agencia, conversionData }) {
         </div>
       ) : (
         <>
+          {!todasSeleccionadas && (
+            <div style={{ color: "#3b9eea", fontSize: 11, marginBottom: 12, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "6px 10px" }}>
+              Leads filtrados por fuente seleccionada. Las etapas posteriores son una estimación proporcional, ya que se capturan por asesor sin desglose de fuente.
+            </div>
+          )}
           <FunnelEtapas etapasData={etapasData} />
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: "1px solid #1e3a5f" }}>
             <span style={{ color: "#94a3b8", fontSize: 11.5 }}>Tasa de cierre global (Ventas ÷ Leads)</span>
@@ -2168,11 +2182,16 @@ const COLORES_TEMPERATURA = { "Caliente": "#f87171", "Tibio": "#fbbf24", "Frio":
 
 function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData }) {
   const [agenciaSel, setAgenciaSel] = useState(AGENCIAS[0]);
+  const [fuentesSel, setFuentesSel] = useState(FUENTES_LEAD.map(f => f.key)); // todas activas por defecto
   const [datosPorAgencia, setDatosPorAgencia] = useState({});
   const [cargando, setCargando] = useState(false);
   const [errorCarga, setErrorCarga] = useState("");
   const [loadingDatos, setLoadingDatos] = useState(true);
   const fileInputRef = useRef(null);
+
+  const toggleFuente = (key) => {
+    setFuentesSel(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  };
 
   useEffect(() => {
     (async () => {
@@ -2213,36 +2232,36 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
     }
   };
 
-  const datos = (() => {
-    if (agenciaSel !== "TODAS") return datosPorAgencia[agenciaSel];
+  // Todos los registros individuales de la agencia (o las 5, si se eligió TODAS),
+  // ya con la clave de fuente normalizada, para poder filtrar con precisión.
+  const todosLosRegistros = (() => {
+    if (agenciaSel !== "TODAS") return datosPorAgencia[agenciaSel]?.registros ?? [];
     const agenciasConDatos = AGENCIAS.filter(ag => datosPorAgencia[ag]);
-    if (agenciasConDatos.length === 0) return null;
+    return agenciasConDatos.flatMap(ag => (datosPorAgencia[ag]?.registros ?? []).map(r => ({ ...r, _agencia: ag })));
+  })();
 
-    const combinado = {
-      total: 0,
-      porFuente: Object.fromEntries(FUENTES_LEAD.map(f => [f.key, 0])),
-      porEstatus: {},
-      porTemperatura: {},
-      porProducto: {},
-      porAsesor: {},
-    };
-    combinado.porFuente.otros = 0;
+  const todasFuentesSeleccionadas = fuentesSel.length === FUENTES_LEAD.length;
+  const registrosFiltrados = todasFuentesSeleccionadas
+    ? todosLosRegistros
+    : todosLosRegistros.filter(r => fuentesSel.includes(r.fuente));
 
-    agenciasConDatos.forEach(ag => {
-      const d = datosPorAgencia[ag];
-      combinado.total += d.total;
-      FUENTES_LEAD.forEach(f => { combinado.porFuente[f.key] += d.porFuente[f.key] ?? 0; });
-      combinado.porFuente.otros += d.porFuente.otros ?? 0;
-      Object.entries(d.porEstatus).forEach(([k, v]) => { combinado.porEstatus[k] = (combinado.porEstatus[k] ?? 0) + v; });
-      Object.entries(d.porTemperatura).forEach(([k, v]) => { combinado.porTemperatura[k] = (combinado.porTemperatura[k] ?? 0) + v; });
-      Object.entries(d.porProducto).forEach(([k, v]) => { combinado.porProducto[k] = (combinado.porProducto[k] ?? 0) + v; });
-      Object.entries(d.porAsesor).forEach(([asesor, fuentes]) => {
-        const key = `${ag} — ${asesor}`; // se distingue por agencia, ya que puede haber nombres repetidos
-        combinado.porAsesor[key] = { ...fuentes };
+  // Reagrega todo (KPIs y gráficas) a partir de los registros ya filtrados por fuente.
+  const datos = (() => {
+    if (registrosFiltrados.length === 0 && (agenciaSel === "TODAS" ? todosLosRegistros.length === 0 : !datosPorAgencia[agenciaSel])) {
+      return null;
+    }
+    const agregado = agregarFuentesLeads(registrosFiltrados);
+    // Para "porAsesor" en vista TODAS, distinguimos por agencia en la etiqueta.
+    if (agenciaSel === "TODAS") {
+      const porAsesorConAgencia = {};
+      registrosFiltrados.forEach(r => {
+        const key = `${r._agencia} — ${r.asesor}`;
+        if (!porAsesorConAgencia[key]) porAsesorConAgencia[key] = {};
+        porAsesorConAgencia[key][r.fuente] = (porAsesorConAgencia[key][r.fuente] ?? 0) + 1;
       });
-    });
-
-    return combinado;
+      agregado.porAsesor = porAsesorConAgencia;
+    }
+    return agregado;
   })();
 
   const datosFuentePie = datos ? FUENTES_LEAD.map(f => ({ label: f.label, value: datos.porFuente[f.key] ?? 0 })) : [];
@@ -2308,6 +2327,22 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
             Vista global — suma de las agencias que ya tengan su reporte cargado este mes. Para cargar un archivo, selecciona la agencia específica.
           </div>
         )}
+
+        <div style={{ marginBottom: 16 }}>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>FUENTES (selecciona una o varias — filtra todo lo de abajo)</p>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+            {FUENTES_LEAD.map(f => (
+              <label key={f.key} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: fuentesSel.includes(f.key) ? "#f1f5f9" : "#64748b", fontSize: 12.5 }}>
+                <input type="checkbox" checked={fuentesSel.includes(f.key)} onChange={() => toggleFuente(f.key)} />
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: f.color, display: "inline-block" }} />
+                {f.label}
+              </label>
+            ))}
+          </div>
+          {fuentesSel.length === 0 && (
+            <div style={{ color: "#f87171", fontSize: 11.5, marginTop: 6 }}>Selecciona al menos una fuente para ver resultados.</div>
+          )}
+        </div>
 
         {errorCarga && (
           <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
@@ -2410,8 +2445,8 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
 
       {conversionData && (
         agenciaSel === "TODAS"
-          ? AGENCIAS.map(ag => <FunnelAgencia key={ag} agencia={ag} conversionData={conversionData} />)
-          : <FunnelAgencia agencia={agenciaSel === "TODAS" ? AGENCIAS[0] : agenciaSel} conversionData={conversionData} />
+          ? AGENCIAS.map(ag => <FunnelAgencia key={ag} agencia={ag} conversionData={conversionData} fuentesSel={fuentesSel} />)
+          : <FunnelAgencia agencia={agenciaSel === "TODAS" ? AGENCIAS[0] : agenciaSel} conversionData={conversionData} fuentesSel={fuentesSel} />
       )}
     </div>
   );
