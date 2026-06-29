@@ -440,6 +440,7 @@ function EncuestaDemoPublica() {
   const [conversionData, setConversionData] = useState(null);
   const [agencia, setAgencia] = useState("");
   const [asesorId, setAsesorId] = useState("");
+  const [version, setVersion] = useState("");
   const [calificacion, setCalificacion] = useState("");
   const [legusto, setLegusto] = useState("");
   const [nolegusto, setNolegusto] = useState("");
@@ -466,8 +467,8 @@ function EncuestaDemoPublica() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!agencia || !asesorId || !calificacion || !municipio.trim()) {
-      setError("Por favor completa agencia, asesor, calificación y municipio/colonia.");
+    if (!agencia || !asesorId || !version || !calificacion || !municipio.trim()) {
+      setError("Por favor completa agencia, asesor, versión, calificación y municipio/colonia.");
       return;
     }
     setError("");
@@ -475,7 +476,7 @@ function EncuestaDemoPublica() {
     try {
       const asesorNombre = asesoresDeAgencia.find(a => a.id === asesorId)?.nombre || "";
       const registro = {
-        agencia, asesorId, asesorNombre,
+        agencia, asesorId, asesorNombre, version,
         calificacion: Number(calificacion),
         legusto: legusto.trim(), nolegusto: nolegusto.trim(),
         municipio: municipio.trim(), colonia: colonia.trim(), comentario: comentario.trim(),
@@ -535,6 +536,15 @@ function EncuestaDemoPublica() {
               style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box" }}>
               <option value="">{agencia ? "Selecciona…" : "Primero elige tu agencia"}</option>
               {asesoresDeAgencia.map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+            </select>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>VERSIÓN QUE PROBASTE *</label>
+            <select value={version} onChange={e => setVersion(e.target.value)} required
+              style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box" }}>
+              <option value="">Selecciona…</option>
+              {LINEAS_PRODUCTO.map(l => <option key={l.key} value={l.key}>{l.key}</option>)}
             </select>
           </div>
 
@@ -3506,7 +3516,7 @@ function DemosSection({ monthKey }) {
     setAnalisisIA("");
     try {
       const lineas = datosFiltrados.map(r =>
-        `- Agencia: ${r.agencia} | Asesor: ${r.asesorNombre} | Calificación: ${r.calificacion} | Municipio: ${r.municipio} | Le gustó: ${r.legusto || "—"} | No le gustó: ${r.nolegusto || "—"} | Comentario: ${r.comentario || "—"}`
+        `- Agencia: ${r.agencia} | Asesor: ${r.asesorNombre} | Versión probada: ${r.version || "—"} | Calificación: ${r.calificacion} | Municipio: ${r.municipio} | Le gustó: ${r.legusto || "—"} | No le gustó: ${r.nolegusto || "—"} | Comentario: ${r.comentario || "—"}`
       ).join("\n");
 
       const prompt = `Eres un director de marketing y comercial con 20 años de experiencia en grupos automotrices. Analiza estas encuestas de satisfacción de PRUEBAS DE MANEJO (demos) de prospectos de CHESA Changan, correspondientes a ${getMonthLabel(monthKey)}.
@@ -3642,6 +3652,7 @@ ${lineas}`;
                     <th style={{ textAlign: "left", paddingBottom: 6 }}>FECHA</th>
                     <th style={{ textAlign: "left" }}>AGENCIA</th>
                     <th style={{ textAlign: "left" }}>ASESOR</th>
+                    <th style={{ textAlign: "left" }}>VERSIÓN</th>
                     <th style={{ textAlign: "center" }}>CALIF.</th>
                     <th style={{ textAlign: "left" }}>MUNICIPIO</th>
                     <th style={{ textAlign: "left" }}>COLONIA</th>
@@ -3655,6 +3666,7 @@ ${lineas}`;
                       </td>
                       <td style={{ color: "#cbd5e1" }}>{r.agencia}</td>
                       <td style={{ color: "#cbd5e1" }}>{r.asesorNombre}</td>
+                      <td style={{ color: "#94a3b8" }}>{r.version || "—"}</td>
                       <td style={{ textAlign: "center", fontWeight: 700, color: r.calificacion >= 9 ? "#4ade80" : r.calificacion >= 7 ? "#D4AF37" : "#f87171" }}>{r.calificacion}</td>
                       <td style={{ color: "#cbd5e1" }}>{r.municipio}</td>
                       <td style={{ color: "#64748b" }}>{r.colonia || "—"}</td>
