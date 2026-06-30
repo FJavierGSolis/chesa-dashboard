@@ -2481,36 +2481,58 @@ function parseEmbudoAsesoresWorkbook(workbook) {
 
   const resultado = {}; // { AGENCIA: { nombreAsesor: {contactados, citasAgendadas, ...} } }
   let agenciaActual = null;
-  let headerIdx = null;
+  let enBloqueDatos = false;
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (!row) continue;
-    const val1 = row[1];
-    if (typeof val1 === "string" && val1.startsWith("Agencia:")) {
-      agenciaActual = mapearAgenciaReporte(val1.replace("Agencia:", "").trim());
+
+    // Buscar "Agencia:" en cualquier celda de la fila (no solo row[1])
+    const agenciaCell = row.find(cell =>
+      typeof cell === "string" && cell.trim().startsWith("Agencia:")
+    );
+    if (agenciaCell) {
+      agenciaActual = mapearAgenciaReporte(agenciaCell.replace("Agencia:", "").trim());
       if (agenciaActual && !resultado[agenciaActual]) resultado[agenciaActual] = {};
-      headerIdx = null;
+      enBloqueDatos = false;
       continue;
     }
-    if (typeof val1 === "string" && val1.trim() === "Usuario") {
-      headerIdx = row;
+
+    // Buscar "Usuario" en cualquier celda de la fila
+    const usuarioCell = row.find(cell =>
+      typeof cell === "string" && cell.trim() === "Usuario"
+    );
+    if (usuarioCell) {
+      enBloqueDatos = true;
       continue;
     }
-    if (agenciaActual && headerIdx && typeof val1 === "string" && val1.trim() && row[2] !== null && row[2] !== undefined) {
-      const nombre = val1.trim();
-      resultado[agenciaActual][nombre] = {
-        leads: Number(row[2]) || 0,
-        contactados: Number(row[3]) || 0,
-        citasAgendadas: Number(row[4]) || 0,
-        citasAsistidas: Number(row[5]) || 0,
-        demosAgendadas: Number(row[6]) || 0,
-        demosAsistidas: Number(row[7]) || 0,
-        creditos: Number(row[8]) || 0,
-        creditosOk: Number(row[9]) || 0,
-        creditosRechazados: Number(row[10]) || 0,
-        ventas: Number(row[11]) || 0,
-        tiempoRespuesta: row[12] != null ? String(row[12]) : "",
+
+    // Leer fila de asesor
+    if (agenciaActual && enBloqueDatos) {
+      // Primera celda string no vacía = nombre del asesor
+      const nombre = row.find(cell => typeof cell === "string" && cell.trim().length > 0);
+      if (!nombre || nombre.trim() === "") continue;
+
+      // Convierte null/undefined/""/strings numéricas → número
+      const n = (idx) => {
+        const v = row[idx];
+        if (v === null || v === undefined || v === "") return 0;
+        const num = Number(v);
+        return isNaN(num) ? 0 : num;
+      };
+
+      resultado[agenciaActual][nombre.trim()] = {
+        leads:               n(2),
+        contactados:         n(3),
+        citasAgendadas:      n(4),
+        citasAsistidas:      n(5),
+        demosAgendadas:      n(6),
+        demosAsistidas:      n(7),
+        creditos:            n(8),
+        creditosOk:          n(9),
+        creditosRechazados:  n(10),
+        ventas:              n(11),
+        tiempoRespuesta:     row[12] != null ? String(row[12]) : "",
       };
     }
   }
