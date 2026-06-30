@@ -110,7 +110,7 @@ const LINEAS_PRODUCTO = [
 ];
 
 // ── Conversión de Asesores ────────────────────────────────────────────────────
-const CONVERSION_PATH = "conversionAsesores";
+const FUNNEL_PATH = "funnelVentas"; // funnelVentas/{monthKey}/{AGENCIA}
 
 const FUENTES_LEAD = [
   { key: "metaIntegraciones", label: "META/Integraciones",   color: "#3b9eea" },
@@ -121,64 +121,31 @@ const FUENTES_LEAD = [
   { key: "fbChat",            label: "FB Chat (Digital)",    color: "#f472b6" },
 ];
 
-const ETAPAS = [
-  { key: "contactados",     label: "Contactados",      num: "contactados",     den: "leads",           objetivo: 0.60 },
-  { key: "citasAgendadas",  label: "Citas Agendadas",  num: "citasAgendadas",  den: "contactados",     objetivo: 0.60 },
-  { key: "citasAsistidas",  label: "Citas Asistidas",  num: "citasAsistidas",  den: "citasAgendadas",  objetivo: 0.60 },
-  { key: "demosAgendadas",  label: "Demos Agendadas",  num: "demosAgendadas",  den: "citasAsistidas",  objetivo: 0.60 },
-  { key: "demosAsistidas",  label: "Demos Asistidas",  num: "demosAsistidas",  den: "demosAgendadas",  objetivo: 0.50 },
-  { key: "ventas",          label: "Ventas",           num: "ventas",          den: "demosAsistidas",  objetivo: 0.80 },
+// Etapas del Funnel de Ventas, capturadas manualmente por agencia.
+// "leads" se alimenta automáticamente del reporte de Fuentes (suma de FUENTES_LEAD);
+// el resto se captura a mano. Cada etapa muestra el % de paso respecto a la etapa anterior.
+const ETAPAS_FUNNEL = [
+  { key: "leads",           label: "Leads",            objetivo: null },
+  { key: "asignados",       label: "Asignados",        objetivo: 0.90 },
+  { key: "contactados",     label: "Contactados",      objetivo: 0.60 },
+  { key: "citasAgendadas",  label: "Citas Agendadas",  objetivo: 0.60 },
+  { key: "citasAsistidas",  label: "Citas Asistidas",  objetivo: 0.60 },
+  { key: "demosAgendadas",  label: "Demos Agendadas",  objetivo: 0.60 },
+  { key: "demosAsistidas",  label: "Demos Asistidas",  objetivo: 0.50 },
+  { key: "ventas",          label: "Ventas",           objetivo: 0.80 },
 ];
 
-const genAsesorId = () => `a_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-
-const asesorBlank = () => ({
-  nombre: "Nuevo Asesor",
-  metaIntegraciones: 0, marca: 0, piso: 0, formOnline: 0, calle: 0, fbChat: 0,
-  contactados: 0, citasAgendadas: 0, citasAsistidas: 0,
-  demosAgendadas: 0, demosAsistidas: 0,
-  creditos: 0, creditosOk: 0, creditosRechazados: 0,
-  ventas: 0, tiempoRespuesta: "",
+const funnelAgenciaBlank = () => ({
+  leads: 0, asignados: 0, contactados: 0, citasAgendadas: 0, citasAsistidas: 0,
+  demosAgendadas: 0, demosAsistidas: 0, ventas: 0,
 });
 
-// Suma los leads de un asesor según un arreglo de fuentes seleccionadas.
-// Si fuentesSel está vacío o incluye todas, equivale al total general.
-function leadsDeFuentes(asesor, fuentesSel) {
-  const claves = (fuentesSel && fuentesSel.length > 0) ? fuentesSel : FUENTES_LEAD.map(f => f.key);
-  return claves.reduce((s, k) => s + (asesor[k] ?? 0), 0);
-}
-
-// Estandariza un nombre propio: cada palabra con su primera letra en mayúscula, resto en minúscula.
-// Maneja correctamente acentos y nombres compuestos.
-function estandarizarNombre(nombre) {
-  if (!nombre) return nombre;
-  return nombre
-    .toLowerCase()
-    .split(" ")
-    .filter(Boolean)
-    .map(palabra => palabra.charAt(0).toUpperCase() + palabra.slice(1))
-    .join(" ");
-}
-
-// Datos iniciales tomados del Reporte de Estadísticas Vendedor (ene–may 2026), agencia Tuxtla
-const initialConversion = {
-  TUXTLA: {
-    a01: { nombre: "Adrian Clemente", leads: 0, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAsistidas: 0, ventas: 0 },
-    a02: { nombre: "Alejandra Concilco Roblero", leads: 67, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAsistidas: 0, ventas: 0 },
-    a03: { nombre: "Catherine Flores Aguilar", leads: 97, contactados: 0, citasAgendadas: 1, citasAsistidas: 1, demosAsistidas: 0, ventas: 0 },
-    a04: { nombre: "Emilio Perez", leads: 59, contactados: 47, citasAgendadas: 11, citasAsistidas: 0, demosAsistidas: 0, ventas: 1 },
-    a05: { nombre: "Henry Diaz", leads: 48, contactados: 48, citasAgendadas: 3, citasAsistidas: 0, demosAsistidas: 1, ventas: 0 },
-    a06: { nombre: "Jose Ivan Cruz Cruz", leads: 84, contactados: 74, citasAgendadas: 10, citasAsistidas: 2, demosAsistidas: 0, ventas: 0 },
-    a07: { nombre: "Nehemias Toledo", leads: 138, contactados: 118, citasAgendadas: 35, citasAsistidas: 19, demosAsistidas: 3, ventas: 2 },
-    a08: { nombre: "Ricardo Ramos Cha Tux Gut", leads: 381, contactados: 10, citasAgendadas: 1, citasAsistidas: 1, demosAsistidas: 0, ventas: 0 },
-    a09: { nombre: "Sergio Ezequiel Lopez Dominguez", leads: 583, contactados: 1, citasAgendadas: 0, citasAsistidas: 0, demosAsistidas: 0, ventas: 0 },
-    a10: { nombre: "Vanesa Morales", leads: 388, contactados: 304, citasAgendadas: 78, citasAsistidas: 19, demosAsistidas: 2, ventas: 8 },
-    a11: { nombre: "Victor Berzunza", leads: 125, contactados: 45, citasAgendadas: 32, citasAsistidas: 13, demosAsistidas: 2, ventas: 2 },
-  },
-  TAPACHULA: {},
-  "SAN CRISTÓBAL": {},
-  COMITÁN: {},
-  OCOSINGO: {},
+const initialFunnel = {
+  TUXTLA:          funnelAgenciaBlank(),
+  TAPACHULA:       funnelAgenciaBlank(),
+  "SAN CRISTÓBAL": funnelAgenciaBlank(),
+  COMITÁN:         funnelAgenciaBlank(),
+  OCOSINGO:        funnelAgenciaBlank(),
 };
 
 const initialData = {
@@ -436,8 +403,15 @@ function Badge({ ok }) {
 // justo después de la prueba de manejo. Guarda en Firebase bajo encuestasDemo/{monthKey}.
 const ENCUESTA_DEMO_PATH_PREFIX = "encuestasDemo";
 
+// Catálogo simple de asesores por agencia (solo nombre), gestionado desde la pestaña Demos.
+// Reemplaza al antiguo modelo de "Conversión de Asesores"; solo alimenta el selector
+// de la encuesta pública de prueba de manejo.
+const ASESORES_CATALOGO_PATH = "asesoresCatalogo"; // asesoresCatalogo/{AGENCIA} = { id: nombre, ... }
+const genAsesorId = () => `a_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+
 function EncuestaDemoPublica() {
-  const [conversionData, setConversionData] = useState(null);
+  const [catalogoAsesores, setCatalogoAsesores] = useState(null);
   const [agencia, setAgencia] = useState("");
   const [asesorId, setAsesorId] = useState("");
   const [version, setVersion] = useState("");
@@ -453,16 +427,16 @@ function EncuestaDemoPublica() {
 
   useEffect(() => {
     (async () => {
-      const raw = await fbGet(CONVERSION_PATH);
-      setConversionData(raw || {});
+      const raw = await fbGet(ASESORES_CATALOGO_PATH);
+      setCatalogoAsesores(raw || {});
     })();
   }, []);
 
   const asesoresDeAgencia = (() => {
-    if (!conversionData || !agencia) return [];
+    if (!catalogoAsesores || !agencia) return [];
     const agKey = encodeKey(agencia);
-    const obj = conversionData[agKey] || conversionData[agencia] || {};
-    return Object.entries(obj).map(([id, a]) => ({ id, nombre: a.nombre }));
+    const obj = catalogoAsesores[agKey] || catalogoAsesores[agencia] || {};
+    return Object.entries(obj).map(([id, nombre]) => ({ id, nombre }));
   })();
 
   const handleSubmit = async (e) => {
@@ -1739,230 +1713,6 @@ function KpiBar({ data, monthKey }) {
   );
 }
 
-// ── SECCIÓN: Conversión de Asesores ───────────────────────────────────────────
-function ConversionKpiBar({ asesores, fuentesSel }) {
-  const rows = Object.values(asesores).map(a => ({ ...a, leads: leadsDeFuentes(a, fuentesSel) }));
-  const sum = (f) => rows.reduce((s, r) => s + (Number(r[f]) || 0), 0);
-  const totales = {
-    leads: sum("leads"), contactados: sum("contactados"), citasAgendadas: sum("citasAgendadas"),
-    citasAsistidas: sum("citasAsistidas"), demosAgendadas: sum("demosAgendadas"), demosAsistidas: sum("demosAsistidas"), ventas: sum("ventas"),
-  };
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>
-      {ETAPAS.map(et => {
-        const num = totales[et.num], den = totales[et.den];
-        const ratio = den > 0 ? num / den : 0;
-        const p = Math.round(ratio * 100);
-        const ok = ratio >= et.objetivo;
-        const cumplen = rows.filter(r => {
-          const d = Number(r[et.den]) || 0, n = Number(r[et.num]) || 0;
-          return d > 0 && (n / d) >= et.objetivo;
-        }).length;
-        return (
-          <div key={et.key} style={{
-            background: "#0f2239", border: `1px solid ${ok ? "#16a34a55" : "#1e3a5f"}`,
-            borderTop: `3px solid ${ok ? "#4ade80" : "#D4AF37"}`,
-            borderRadius: 8, padding: "12px 14px"
-          }}>
-            <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8, marginBottom: 4 }}>% {et.label.toUpperCase()}</div>
-            <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{p}%</div>
-            <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>obj. {Math.round(et.objetivo * 100)}% · {cumplen}/{rows.length} asesores cumplen</div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function calcularDesempenoAsesor(asesorDerivado) {
-  // Cuenta en cuántas etapas el asesor está por debajo del objetivo (solo cuenta etapas con denominador > 0).
-  let etapasEvaluadas = 0, etapasBajas = 0;
-  ETAPAS.forEach(et => {
-    const den = Number(asesorDerivado[et.den]) || 0;
-    const num = Number(asesorDerivado[et.num]) || 0;
-    if (den > 0) {
-      etapasEvaluadas++;
-      if (num / den < et.objetivo) etapasBajas++;
-    }
-  });
-  if (etapasEvaluadas === 0) return { nivel: "sinDatos", etapasBajas, etapasEvaluadas };
-  const ratio = etapasBajas / etapasEvaluadas;
-  if (ratio === 0) return { nivel: "bueno", etapasBajas, etapasEvaluadas };
-  if (ratio <= 0.34) return { nivel: "atencion", etapasBajas, etapasEvaluadas };
-  return { nivel: "bajo", etapasBajas, etapasEvaluadas };
-}
-
-const DESEMPENO_INFO = {
-  bueno:    { color: "#4ade80", emoji: "🟢", label: "Buen desempeño" },
-  atencion: { color: "#D4AF37", emoji: "🟡", label: "Necesita atención" },
-  bajo:     { color: "#f87171", emoji: "🔴", label: "Bajo desempeño" },
-  sinDatos: { color: "#475569", emoji: "⚪", label: "Sin datos suficientes" },
-};
-
-function ConversionTable({ agencia, asesores, fuentesSel, onFieldChange, onAdd, onRemove, soloLectura }) {
-  const ids = Object.keys(asesores);
-  const todasSeleccionadas = fuentesSel.length === FUENTES_LEAD.length;
-
-  return (
-    <Card>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-        <SectionHeader title={`ASESORES — ${agencia}`} icon="🧑‍💼" />
-        {!soloLectura && (
-          <button onClick={() => onAdd(agencia)} style={{
-            background: "#D4AF3722", border: "1px solid #D4AF37", color: "#D4AF37",
-            borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 14
-          }}>
-            + Agregar asesor
-          </button>
-        )}
-      </div>
-      {soloLectura && (
-        <div style={{ color: "#3b9eea", fontSize: 11.5, marginBottom: 14, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "6px 10px" }}>
-          Vista global — los datos se editan desde la agencia correspondiente de cada asesor.
-        </div>
-      )}
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, minWidth: 1750 }}>
-          <thead>
-            <tr style={{ color: "#64748b", fontSize: 10.5 }}>
-              <th style={{ textAlign: "left", paddingBottom: 6, minWidth: 160 }}>ASESOR</th>
-              {FUENTES_LEAD.map(f => <th key={f.key} style={{ textAlign: "center", minWidth: 90 }}>{f.label}</th>)}
-              <th style={{ textAlign: "center", minWidth: 80 }}>{todasSeleccionadas ? "Total Leads" : "Leads (filtro)"}</th>
-              <th style={{ textAlign: "center", minWidth: 70 }}>Contact.</th>
-              <th style={{ textAlign: "center", minWidth: 80 }}>Citas Agend.</th>
-              <th style={{ textAlign: "center", minWidth: 80 }}>Citas Asist.</th>
-              <th style={{ textAlign: "center", minWidth: 90 }}>Demos Agend.</th>
-              <th style={{ textAlign: "center", minWidth: 90 }}>Demos Asist.</th>
-              <th style={{ textAlign: "center", minWidth: 65 }}>Créditos</th>
-              <th style={{ textAlign: "center", minWidth: 65 }}>Créd. OK</th>
-              <th style={{ textAlign: "center", minWidth: 65 }}>Créd. Rech.</th>
-              <th style={{ textAlign: "center", minWidth: 65 }}>Ventas</th>
-              <th style={{ textAlign: "center", minWidth: 90 }}>T. Respuesta</th>
-              {ETAPAS.map(et => <th key={et.key} style={{ textAlign: "center", minWidth: 95 }}>% {et.label}</th>)}
-              <th style={{ textAlign: "center", minWidth: 110 }}>DESEMPEÑO</th>
-              <th style={{ minWidth: 30 }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {ids.length === 0 && (
-              <tr><td colSpan={22} style={{ color: "#475569", padding: "14px 0", textAlign: "center", fontSize: 12 }}>
-                Sin asesores registrados en {agencia}. Usa "+ Agregar asesor" para empezar.
-              </td></tr>
-            )}
-            {ids.map(id => {
-              const row = asesores[id];
-              const leadsActivos = leadsDeFuentes(row, fuentesSel);
-              const rowDerivado = { ...row, leads: leadsActivos };
-              const desempeno = calcularDesempenoAsesor(rowDerivado);
-              const dInfo = DESEMPENO_INFO[desempeno.nivel];
-              return (
-                <tr key={id} style={{ borderTop: "1px solid #1e3a5f" }}>
-                  <td style={{ padding: "6px 0" }}>
-                    <input
-                      defaultValue={row.nombre}
-                      onBlur={e => onFieldChange(agencia, id, "nombre", e.target.value)}
-                      style={{ width: "100%", background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#f1f5f9", borderRadius: 4, padding: "3px 6px", fontSize: 12.5 }}
-                    />
-                  </td>
-                  {FUENTES_LEAD.map(f => (
-                    <td key={f.key} style={{ textAlign: "center" }}>
-                      <NumInput value={row[f.key] ?? 0} onChange={v => onFieldChange(agencia, id, f.key, v)} width={58} disabled={soloLectura} />
-                    </td>
-                  ))}
-                  <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{leadsActivos}</td>
-                  {["contactados", "citasAgendadas", "citasAsistidas", "demosAgendadas", "demosAsistidas", "creditos", "creditosOk", "creditosRechazados", "ventas"].map(c => (
-                    <td key={c} style={{ textAlign: "center" }}>
-                      <NumInput value={row[c] ?? 0} onChange={v => onFieldChange(agencia, id, c, v)} width={58} disabled={soloLectura} />
-                    </td>
-                  ))}
-                  <td style={{ textAlign: "center" }}>
-                    <input
-                      defaultValue={row.tiempoRespuesta || ""}
-                      onBlur={e => onFieldChange(agencia, id, "tiempoRespuesta", e.target.value)}
-                      placeholder="Ej. 7 Min"
-                      style={{ width: 80, background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#cbd5e1", borderRadius: 4, padding: "3px 6px", fontSize: 11.5, textAlign: "center" }}
-                    />
-                  </td>
-                  {ETAPAS.map(et => {
-                    const num = Number(rowDerivado[et.num]) || 0, den = Number(rowDerivado[et.den]) || 0;
-                    const ratio = den > 0 ? num / den : 0;
-                    const p = Math.round(ratio * 100);
-                    const ok = den > 0 && ratio >= et.objetivo;
-                    return (
-                      <td key={et.key} style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: den === 0 ? "#475569" : ok ? "#4ade80" : "#f87171" }}>
-                          {den === 0 ? "—" : `${p}%`}
-                        </div>
-                        {den > 0 && <ProgressBar value={num} max={Math.max(den * et.objetivo, num)} />}
-                      </td>
-                    );
-                  })}
-                  <td style={{ textAlign: "center" }}>
-                    <span style={{
-                      display: "inline-block", padding: "3px 8px", borderRadius: 12, fontSize: 10.5, fontWeight: 700,
-                      background: `${dInfo.color}22`, border: `1px solid ${dInfo.color}`, color: dInfo.color, whiteSpace: "nowrap"
-                    }}>
-                      {dInfo.emoji} {dInfo.label}
-                    </span>
-                  </td>
-                  <td style={{ textAlign: "center" }}>
-                    <button onClick={() => onRemove(agencia, id)} title="Eliminar asesor" style={{
-                      background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 14, fontWeight: 700
-                    }}>✕</button>
-                  </td>
-                </tr>
-              );
-            })}
-            {ids.length > 0 && (() => {
-              const totalesFuente = {};
-              FUENTES_LEAD.forEach(f => { totalesFuente[f.key] = 0; });
-              let totalLeads = 0;
-              const totalesCampo = { contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAgendadas: 0, demosAsistidas: 0, creditos: 0, creditosOk: 0, creditosRechazados: 0, ventas: 0 };
-              ids.forEach(id => {
-                const row = asesores[id];
-                FUENTES_LEAD.forEach(f => { totalesFuente[f.key] += row[f.key] ?? 0; });
-                totalLeads += leadsDeFuentes(row, fuentesSel);
-                Object.keys(totalesCampo).forEach(c => { totalesCampo[c] += row[c] ?? 0; });
-              });
-              return (
-                <tr style={{ borderTop: "2px solid #D4AF3755" }}>
-                  <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
-                  {FUENTES_LEAD.map(f => (
-                    <td key={f.key} style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalesFuente[f.key]}</td>
-                  ))}
-                  <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 800 }}>{totalLeads}</td>
-                  {["contactados", "citasAgendadas", "citasAsistidas", "demosAgendadas", "demosAsistidas", "creditos", "creditosOk", "creditosRechazados", "ventas"].map(c => (
-                    <td key={c} style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{totalesCampo[c]}</td>
-                  ))}
-                  <td></td>
-                  {ETAPAS.map(et => {
-                    const num = totalesCampo[et.num] ?? (et.num === "leads" ? totalLeads : 0);
-                    const den = et.den === "leads" ? totalLeads : (totalesCampo[et.den] ?? 0);
-                    const ratio = den > 0 ? num / den : 0;
-                    const p = Math.round(ratio * 100);
-                    const ok = den > 0 && ratio >= et.objetivo;
-                    return (
-                      <td key={et.key} style={{ textAlign: "center" }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: den === 0 ? "#475569" : ok ? "#4ade80" : "#f87171" }}>
-                          {den === 0 ? "—" : `${p}%`}
-                        </div>
-                      </td>
-                    );
-                  })}
-                  <td colSpan={2}></td>
-                </tr>
-              );
-            })()}
-          </tbody>
-        </table>
-      </div>
-      <div style={{ color: "#475569", fontSize: 10.5, marginTop: 10 }}>
-        Desempeño: 🟢 cumple objetivo en todas las etapas evaluadas · 🟡 falla en hasta 1 de cada 3 etapas · 🔴 falla en más de 1 de cada 3 etapas.
-      </div>
-    </Card>
-  );
-}
-
 // ── SECCIÓN: Fuentes y Leads (detalle real desde el reporte de la plataforma) ──
 const FUENTES_LEADS_PATH = "fuentesLeads"; // fuentesLeads/{monthKey}/{AGENCIA}
 
@@ -2067,99 +1817,61 @@ function agregarFuentesLeads(registros) {
 
 // Funnel visual: barras horizontales decrecientes mostrando el resultado real de cada etapa,
 // el objetivo esperado (línea de referencia), y el % de paso entre etapas consecutivas.
+// Embudo visual real: trapecios apilados que se van angostando según el valor de cada etapa.
 function FunnelEtapas({ etapasData }) {
-  // etapasData: [{ label, valor, objetivoPct, denPrevia }]
+  // etapasData: [{ label, valor, objetivoPct }]
   const maxValor = Math.max(1, ...etapasData.map(e => e.valor));
+  const widthSvg = 640;
+  const stepHeight = 56;
+  const gap = 6;
+  const totalHeight = etapasData.length * (stepHeight + gap) - gap;
+  const minAnchoPct = 0.16; // ancho mínimo del trapecio para que la última etapa siga siendo visible
+
+  const anchoFracPara = (valor) => {
+    const frac = maxValor > 0 ? valor / maxValor : 0;
+    return minAnchoPct + (1 - minAnchoPct) * frac;
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {etapasData.map((e, i) => {
-        const anchoPct = (e.valor / maxValor) * 100;
-        const pasoPct = i > 0 && etapasData[i - 1].valor > 0 ? (e.valor / etapasData[i - 1].valor * 100) : null;
-        const cumpleObjetivo = pasoPct !== null && e.objetivoPct !== null ? pasoPct >= e.objetivoPct : null;
-        return (
-          <div key={e.label}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
-              <span style={{ color: "#cbd5e1", fontSize: 12.5, fontWeight: 600 }}>{e.label}</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <svg width="100%" viewBox={`0 0 ${widthSvg} ${totalHeight}`} style={{ maxWidth: widthSvg }}>
+        {etapasData.map((e, i) => {
+          const fracTop = anchoFracPara(e.valor);
+          const fracBottom = i < etapasData.length - 1 ? anchoFracPara(etapasData[i + 1].valor) : fracTop * 0.92;
+          const yTop = i * (stepHeight + gap);
+          const yBottom = yTop + stepHeight;
+          const topWidth = widthSvg * fracTop;
+          const bottomWidth = widthSvg * fracBottom;
+          const xTopLeft = (widthSvg - topWidth) / 2;
+          const xTopRight = xTopLeft + topWidth;
+          const xBottomLeft = (widthSvg - bottomWidth) / 2;
+          const xBottomRight = xBottomLeft + bottomWidth;
+          const pasoPct = i > 0 && etapasData[i - 1].valor > 0 ? (e.valor / etapasData[i - 1].valor * 100) : null;
+          const cumpleObjetivo = pasoPct !== null && e.objetivoPct !== null ? pasoPct >= e.objetivoPct : null;
+          const fill = i === etapasData.length - 1 ? "#16a34a" : (cumpleObjetivo === false ? "#7f1d1d" : "#1d4f8f");
+          const stroke = i === etapasData.length - 1 ? "#4ade80" : (cumpleObjetivo === false ? "#f87171" : "#3b9eea");
+          return (
+            <g key={e.label}>
+              <polygon
+                points={`${xTopLeft},${yTop} ${xTopRight},${yTop} ${xBottomRight},${yBottom} ${xBottomLeft},${yBottom}`}
+                fill={fill}
+                stroke={stroke}
+                strokeWidth="1.5"
+              />
+              <text x={widthSvg / 2} y={yTop + stepHeight / 2 - 6} textAnchor="middle" fontSize="13" fontWeight="700" fill="#f1f5f9">
+                {e.label}
+              </text>
+              <text x={widthSvg / 2} y={yTop + stepHeight / 2 + 14} textAnchor="middle" fontSize="15" fontWeight="800" fill="#f1f5f9">
+                {e.valor}
                 {pasoPct !== null && (
-                  <span style={{ fontSize: 11, fontWeight: 700, color: cumpleObjetivo ? "#4ade80" : "#f87171" }}>
-                    {pasoPct.toFixed(0)}% paso {e.objetivoPct !== null && `(obj. ${e.objetivoPct}%)`}
-                  </span>
+                  <tspan fontSize="11" fontWeight="700" fill={cumpleObjetivo ? "#86efac" : "#fca5a5"}> · {pasoPct.toFixed(0)}% paso{e.objetivoPct !== null ? ` (obj. ${e.objetivoPct}%)` : ""}</tspan>
                 )}
-                <span style={{ color: "#f1f5f9", fontSize: 14, fontWeight: 800 }}>{e.valor}</span>
-              </span>
-            </div>
-            <div style={{ background: "#0a1830", borderRadius: 5, height: 22, overflow: "hidden", position: "relative" }}>
-              <div style={{
-                width: `${anchoPct}%`, height: "100%",
-                background: i === etapasData.length - 1 ? "#4ade80" : "#3b9eea",
-                borderRadius: 5, transition: "width .3s",
-                display: "flex", alignItems: "center", paddingLeft: 8
-              }} />
-            </div>
-          </div>
-        );
-      })}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
-  );
-}
-
-function FunnelAgencia({ agencia, conversionData, fuentesSel }) {
-  const asesores = Object.values(conversionData[agencia] ?? {});
-  const todasSeleccionadas = !fuentesSel || fuentesSel.length === FUENTES_LEAD.length;
-
-  const totales = { leadsTotal: 0, leadsFiltrado: 0, contactados: 0, citasAgendadas: 0, citasAsistidas: 0, demosAgendadas: 0, demosAsistidas: 0, ventas: 0 };
-  asesores.forEach(a => {
-    totales.leadsTotal += leadsDeFuentes(a);
-    totales.leadsFiltrado += leadsDeFuentes(a, fuentesSel);
-    totales.contactados += a.contactados ?? 0;
-    totales.citasAgendadas += a.citasAgendadas ?? 0;
-    totales.citasAsistidas += a.citasAsistidas ?? 0;
-    totales.demosAgendadas += a.demosAgendadas ?? 0;
-    totales.demosAsistidas += a.demosAsistidas ?? 0;
-    totales.ventas += a.ventas ?? 0;
-  });
-
-  // El embudo posterior a Leads se captura agregado por asesor, no por fuente.
-  // Si hay un filtro activo, aplicamos la misma proporción de leads filtrados/totales
-  // al resto de etapas, como estimación — se indica claramente en la interfaz.
-  const proporcion = totales.leadsTotal > 0 ? (totales.leadsFiltrado / totales.leadsTotal) : 0;
-  const escalar = (v) => todasSeleccionadas ? v : Math.round(v * proporcion);
-
-  const etapasData = [
-    { label: "Leads", valor: totales.leadsFiltrado, objetivoPct: null },
-    { label: "Contactados", valor: escalar(totales.contactados), objetivoPct: Math.round(ETAPAS.find(e => e.key === "contactados").objetivo * 100) },
-    { label: "Citas Agendadas", valor: escalar(totales.citasAgendadas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "citasAgendadas").objetivo * 100) },
-    { label: "Citas Asistidas", valor: escalar(totales.citasAsistidas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "citasAsistidas").objetivo * 100) },
-    { label: "Demos Agendadas", valor: escalar(totales.demosAgendadas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "demosAgendadas").objetivo * 100) },
-    { label: "Demos Asistidas", valor: escalar(totales.demosAsistidas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "demosAsistidas").objetivo * 100) },
-    { label: "Ventas", valor: escalar(totales.ventas), objetivoPct: Math.round(ETAPAS.find(e => e.key === "ventas").objetivo * 100) },
-  ];
-
-  const tasaCierreGlobal = totales.leadsFiltrado > 0 ? (escalar(totales.ventas) / totales.leadsFiltrado * 100) : null;
-
-  return (
-    <Card>
-      <SectionHeader title={`FUNNEL DE VENTAS — ${agencia}`} icon="🪜" />
-      {asesores.length === 0 ? (
-        <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "20px 0" }}>
-          Sin asesores registrados en {agencia} todavía.
-        </div>
-      ) : (
-        <>
-          {!todasSeleccionadas && (
-            <div style={{ color: "#3b9eea", fontSize: 11, marginBottom: 12, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "6px 10px" }}>
-              Leads filtrados por fuente seleccionada. Las etapas posteriores son una estimación proporcional, ya que se capturan por asesor sin desglose de fuente.
-            </div>
-          )}
-          <FunnelEtapas etapasData={etapasData} />
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: "1px solid #1e3a5f" }}>
-            <span style={{ color: "#94a3b8", fontSize: 11.5 }}>Tasa de cierre global (Ventas ÷ Leads)</span>
-            <span style={{ color: "#D4AF37", fontSize: 16, fontWeight: 800 }}>{tasaCierreGlobal !== null ? `${tasaCierreGlobal.toFixed(1)}%` : "—"}</span>
-          </div>
-        </>
-      )}
-    </Card>
   );
 }
 
@@ -2190,7 +1902,7 @@ function PieChartLeyenda({ datos, colores, size = 170 }) {
 const COLORES_ESTATUS = { "Sin Atender": "#f87171", "Asignado": "#fbbf24", "Contactado": "#60a5fa", "Finalizado": "#4ade80", "Abandonados": "#94a3b8", "1 Ventas": "#34d399", "2 Ventas": "#10b981" };
 const COLORES_TEMPERATURA = { "Caliente": "#f87171", "Tibio": "#fbbf24", "Frio": "#60a5fa", "Sin dato": "#475569" };
 
-function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData }) {
+function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
   const [agenciaSel, setAgenciaSel] = useState(AGENCIAS[0]);
   const [fuentesSel, setFuentesSel] = useState(FUENTES_LEAD.map(f => f.key)); // todas activas por defecto
   const [datosPorAgencia, setDatosPorAgencia] = useState({});
@@ -2229,11 +1941,8 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
       const agregado = agregarFuentesLeads(registros);
       await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, agregado);
       setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: agregado }));
-
-      // Ofrece sincronizar automáticamente los leads por fuente hacia Conversión de Asesores.
-      if (onSincronizarConversion) {
-        onSincronizarConversion(agenciaSel, agregado.porAsesor);
-      }
+      // El total de leads del reporte alimenta automáticamente la primera etapa del Funnel.
+      if (onFunnelFieldChange) onFunnelFieldChange(agenciaSel, "leads", agregado.total);
     } catch (err) {
       setErrorCarga("No se pudo leer el archivo. Verifica que sea un Excel válido del reporte de Fuentes.");
     } finally {
@@ -2242,8 +1951,6 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
     }
   };
 
-  // Todos los registros individuales de la agencia (o las 5, si se eligió TODAS),
-  // ya con la clave de fuente normalizada, para poder filtrar con precisión.
   const todosLosRegistros = (() => {
     if (agenciaSel !== "TODAS") return datosPorAgencia[agenciaSel]?.registros ?? [];
     const agenciasConDatos = AGENCIAS.filter(ag => datosPorAgencia[ag]);
@@ -2255,23 +1962,11 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
     ? todosLosRegistros
     : todosLosRegistros.filter(r => fuentesSel.includes(r.fuente));
 
-  // Reagrega todo (KPIs y gráficas) a partir de los registros ya filtrados por fuente.
   const datos = (() => {
     if (registrosFiltrados.length === 0 && (agenciaSel === "TODAS" ? todosLosRegistros.length === 0 : !datosPorAgencia[agenciaSel])) {
       return null;
     }
-    const agregado = agregarFuentesLeads(registrosFiltrados);
-    // Para "porAsesor" en vista TODAS, distinguimos por agencia en la etiqueta.
-    if (agenciaSel === "TODAS") {
-      const porAsesorConAgencia = {};
-      registrosFiltrados.forEach(r => {
-        const key = `${r._agencia} — ${r.asesor}`;
-        if (!porAsesorConAgencia[key]) porAsesorConAgencia[key] = {};
-        porAsesorConAgencia[key][r.fuente] = (porAsesorConAgencia[key][r.fuente] ?? 0) + 1;
-      });
-      agregado.porAsesor = porAsesorConAgencia;
-    }
-    return agregado;
+    return agregarFuentesLeads(registrosFiltrados);
   })();
 
   const datosFuentePie = datos ? FUENTES_LEAD.map(f => ({ label: f.label, value: datos.porFuente[f.key] ?? 0 })) : [];
@@ -2288,14 +1983,27 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
     : [];
   const coloresProducto = ["#3b9eea", "#D4AF37", "#4ade80", "#c084fc", "#fb923c", "#f472b6", "#60a5fa", "#fbbf24"];
 
-  // Tasa de cierre estimada: ventas / total de leads.
   const ventasTotal = datos ? ((datos.porEstatus["1 Ventas"] ?? 0) + (datos.porEstatus["2 Ventas"] ?? 0)) : 0;
   const tasaCierre = datos && datos.total > 0 ? (ventasTotal / datos.total * 100) : null;
+
+  // ── Funnel manual por agencia ────────────────────────────────────────────
+  const agenciasFunnel = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+  const funnelConsolidado = funnelAgenciaBlank();
+  agenciasFunnel.forEach(ag => {
+    const row = funnelData[ag] ?? funnelAgenciaBlank();
+    ETAPAS_FUNNEL.forEach(et => { funnelConsolidado[et.key] += row[et.key] ?? 0; });
+  });
+  const etapasData = ETAPAS_FUNNEL.map(et => ({
+    label: et.label,
+    valor: funnelConsolidado[et.key],
+    objetivoPct: et.objetivo !== null ? Math.round(et.objetivo * 100) : null,
+  }));
+  const tasaCierreFunnel = funnelConsolidado.leads > 0 ? (funnelConsolidado.ventas / funnelConsolidado.leads * 100) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <Card>
-        <SectionHeader title={`FUENTES Y LEADS — ${getMonthLabel(monthKey).toUpperCase()}`} icon="📡" />
+        <SectionHeader title={`FUNNEL — ${getMonthLabel(monthKey).toUpperCase()}`} icon="🪜" />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           <button onClick={() => setAgenciaSel("TODAS")} style={{
             background: agenciaSel === "TODAS" ? "#D4AF37" : "#0f2239",
@@ -2328,18 +2036,18 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
               {cargando ? "Procesando…" : `📤 Subir reporte de ${agenciaSel} (.xlsx)`}
             </label>
             <span style={{ color: "#64748b", fontSize: 11.5 }}>
-              Reporte de Fuentes de la plataforma, correspondiente a {getMonthLabel(monthKey)}. Se procesa en tu navegador.
+              Reporte de Fuentes de la plataforma — alimenta automáticamente el total de Leads del Funnel.
             </span>
           </div>
         )}
         {agenciaSel === "TODAS" && (
           <div style={{ color: "#3b9eea", fontSize: 11.5, marginBottom: 16, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "6px 10px" }}>
-            Vista global — suma de las agencias que ya tengan su reporte cargado este mes. Para cargar un archivo, selecciona la agencia específica.
+            Vista global — suma de las 5 agencias. Para cargar un archivo o capturar el Funnel, selecciona la agencia específica.
           </div>
         )}
 
         <div style={{ marginBottom: 16 }}>
-          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>FUENTES (selecciona una o varias — filtra todo lo de abajo)</p>
+          <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>FUENTES (selecciona una o varias — filtra las gráficas de abajo)</p>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
             {FUENTES_LEAD.map(f => (
               <label key={f.key} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: fuentesSel.includes(f.key) ? "#f1f5f9" : "#64748b", fontSize: 12.5 }}>
@@ -2373,11 +2081,11 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
               <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.total}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
-              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>VENTAS CERRADAS</div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>VENTAS CERRADAS (REPORTE)</div>
               <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{ventasTotal}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #60a5fa", borderRadius: 8, padding: "12px 14px" }}>
-              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TASA DE CIERRE</div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TASA DE CIERRE (REPORTE)</div>
               <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{tasaCierre !== null ? `${tasaCierre.toFixed(1)}%` : "—"}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #f87171", borderRadius: 8, padding: "12px 14px" }}>
@@ -2398,7 +2106,7 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 320 }}>
               <Card>
-                <SectionHeader title="EMBUDO POR ESTATUS" icon="🥧" />
+                <SectionHeader title="EMBUDO POR ESTATUS (REPORTE)" icon="🥧" />
                 <PieChartLeyenda datos={datosEstatusPie} colores={coloresEstatus} size={150} />
               </Card>
             </div>
@@ -2414,280 +2122,49 @@ function FuentesLeadsSection({ monthKey, onSincronizarConversion, conversionData
             <SectionHeader title="TOP PRODUCTOS DE INTERÉS" icon="🥧" />
             <PieChartLeyenda datos={datosProductoPie} colores={coloresProducto} />
           </Card>
-
-          <Card>
-            <SectionHeader title="LEADS POR ASESOR Y FUENTE" icon="🧑‍💼" />
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                <thead>
-                  <tr style={{ color: "#64748b", fontSize: 10.5 }}>
-                    <th style={{ textAlign: "left", paddingBottom: 6 }}>ASESOR</th>
-                    {FUENTES_LEAD.map(f => <th key={f.key} style={{ textAlign: "center" }}>{f.label}</th>)}
-                    <th style={{ textAlign: "center" }}>TOTAL</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(datos.porAsesor).sort((a, b) => {
-                    const totalA = Object.values(a[1]).reduce((s, v) => s + v, 0);
-                    const totalB = Object.values(b[1]).reduce((s, v) => s + v, 0);
-                    return totalB - totalA;
-                  }).map(([asesor, fuentes]) => {
-                    const total = Object.values(fuentes).reduce((s, v) => s + v, 0);
-                    return (
-                      <tr key={asesor} style={{ borderTop: "1px solid #1e3a5f" }}>
-                        <td style={{ padding: "5px 0", color: "#cbd5e1" }}>{asesor}</td>
-                        {FUENTES_LEAD.map(f => (
-                          <td key={f.key} style={{ textAlign: "center", color: "#94a3b8" }}>{fuentes[f.key] ?? 0}</td>
-                        ))}
-                        <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{total}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <div style={{ color: "#475569", fontSize: 10.5, marginTop: 10 }}>
-              Esta información se sincroniza automáticamente con los campos de fuente en Conversión de Asesores al subir el reporte.
-            </div>
-          </Card>
         </>
       )}
 
-      {conversionData && (
-        agenciaSel === "TODAS"
-          ? AGENCIAS.map(ag => <FunnelAgencia key={ag} agencia={ag} conversionData={conversionData} fuentesSel={fuentesSel} />)
-          : <FunnelAgencia agencia={agenciaSel === "TODAS" ? AGENCIAS[0] : agenciaSel} conversionData={conversionData} fuentesSel={fuentesSel} />
-      )}
-    </div>
-  );
-}
-
-// Mapea el nombre de agencia tal como viene en el reporte de Estadísticas Vendedor
-// (formato "Agencia: Changan X") a nuestras claves internas.
-function mapearAgenciaReporte(nombreRaw) {
-  const n = (nombreRaw || "").toLowerCase();
-  if (n.includes("tapachula")) return "TAPACHULA";
-  if (n.includes("cristobal") || n.includes("cristóbal")) return "SAN CRISTÓBAL";
-  if (n.includes("ocosingo")) return "OCOSINGO";
-  if (n.includes("comitan") || n.includes("comitán")) return "COMITÁN";
-  if (n.includes("tuxtla")) return "TUXTLA";
-  return null;
-}
-
-// Parsea el reporte "Estadísticas Vendedor" (Usuario, Leads, Contactados, Citas, Demos, Créditos, Ventas, Tiempo de respuesta).
-function parseEmbudoAsesoresWorkbook(workbook) {
-  const ws = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: true });
-
-  const resultado = {}; // { AGENCIA: { nombreAsesor: {contactados, citasAgendadas, ...} } }
-  let agenciaActual = null;
-  let enBloqueDatos = false;
-
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row) continue;
-
-    // Buscar "Agencia:" en cualquier celda de la fila (no solo row[1])
-    const agenciaCell = row.find(cell =>
-      typeof cell === "string" && cell.trim().startsWith("Agencia:")
-    );
-    if (agenciaCell) {
-      agenciaActual = mapearAgenciaReporte(agenciaCell.replace("Agencia:", "").trim());
-      if (agenciaActual && !resultado[agenciaActual]) resultado[agenciaActual] = {};
-      enBloqueDatos = false;
-      continue;
-    }
-
-    // Buscar "Usuario" en cualquier celda de la fila
-    const usuarioCell = row.find(cell =>
-      typeof cell === "string" && cell.trim() === "Usuario"
-    );
-    if (usuarioCell) {
-      enBloqueDatos = true;
-      continue;
-    }
-
-    // Leer fila de asesor
-    if (agenciaActual && enBloqueDatos) {
-      // Primera celda string no vacía = nombre del asesor
-      const nombre = row.find(cell => typeof cell === "string" && cell.trim().length > 0);
-      if (!nombre || nombre.trim() === "") continue;
-
-      // Convierte null/undefined/""/strings numéricas → número
-      const n = (idx) => {
-        const v = row[idx];
-        if (v === null || v === undefined || v === "") return 0;
-        const num = Number(v);
-        return isNaN(num) ? 0 : num;
-      };
-
-      resultado[agenciaActual][nombre.trim()] = {
-        leads:               n(2),
-        contactados:         n(3),
-        citasAgendadas:      n(4),
-        citasAsistidas:      n(5),
-        demosAgendadas:      n(6),
-        demosAsistidas:      n(7),
-        creditos:            n(8),
-        creditosOk:          n(9),
-        creditosRechazados:  n(10),
-        ventas:              n(11),
-        tiempoRespuesta:     row[12] != null ? String(row[12]) : "",
-      };
-    }
-  }
-  return resultado;
-}
-
-function ConversionSection({ conversionData, onFieldChange, onAdd, onRemove, onSincronizarEmbudo }) {
-  const [agenciaSel, setAgenciaSel] = useState("TUXTLA"); // o "TODAS"
-  const [fuentesSel, setFuentesSel] = useState(FUENTES_LEAD.map(f => f.key)); // todas activas por defecto
-  const asesoresAgenciaUnica = conversionData[agenciaSel] ?? {};
-
-  const toggleFuente = (key) => {
-    setFuentesSel(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
-  };
-
-  // Cuando se elige "TODAS", combinamos los asesores de las 5 agencias en un solo objeto,
-  // prefijando el id para evitar colisiones, y guardamos a qué agencia pertenece cada uno
-  // para poder seguir editando con onFieldChange (que requiere agencia real, no "TODAS").
-  const asesoresCombinados = (() => {
-    if (agenciaSel !== "TODAS") return asesoresAgenciaUnica;
-    const combinado = {};
-    AGENCIAS.forEach(ag => {
-      Object.entries(conversionData[ag] ?? {}).forEach(([id, a]) => {
-        combinado[`${ag}__${id}`] = { ...a, _agenciaReal: ag, _idReal: id };
-      });
-    });
-    return combinado;
-  })();
-
-  // onFieldChange/onRemove necesitan la agencia real del asesor cuando estamos en "TODAS".
-  const onFieldChangeCombinado = (agenciaParam, idParam, campo, val) => {
-    if (agenciaSel !== "TODAS") return onFieldChange(agenciaParam, idParam, campo, val);
-    const asesor = asesoresCombinados[idParam];
-    onFieldChange(asesor._agenciaReal, asesor._idReal, campo, val);
-  };
-  const onRemoveCombinado = (agenciaParam, idParam) => {
-    if (agenciaSel !== "TODAS") return onRemove(agenciaParam, idParam);
-    const asesor = asesoresCombinados[idParam];
-    onRemove(asesor._agenciaReal, asesor._idReal);
-  };
-
-  const totalAsesoresGlobal = AGENCIAS.reduce((s, ag) => s + Object.keys(conversionData[ag] ?? {}).length, 0);
-
-  const estandarizarTodos = () => {
-    AGENCIAS.forEach(ag => {
-      Object.entries(conversionData[ag] ?? {}).forEach(([id, a]) => {
-        const limpio = estandarizarNombre(a.nombre);
-        if (limpio !== a.nombre) onFieldChange(ag, id, "nombre", limpio);
-      });
-    });
-  };
-
-  const [cargandoEmbudo, setCargandoEmbudo] = useState(false);
-  const [errorEmbudo, setErrorEmbudo] = useState("");
-  const fileInputEmbudoRef = useRef(null);
-
-  const handleFileEmbudo = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setCargandoEmbudo(true);
-    setErrorEmbudo("");
-    try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      const porAgencia = parseEmbudoAsesoresWorkbook(wb);
-      const totalAgencias = Object.keys(porAgencia).length;
-      if (totalAgencias === 0) {
-        setErrorEmbudo("No se encontraron agencias reconocidas en este archivo. Verifica que sea el reporte de Estadísticas Vendedor.");
-        setCargandoEmbudo(false);
-        return;
-      }
-      if (onSincronizarEmbudo) onSincronizarEmbudo(porAgencia);
-    } catch (err) {
-      setErrorEmbudo("No se pudo leer el archivo. Verifica que sea un Excel válido del reporte de Estadísticas Vendedor.");
-    } finally {
-      setCargandoEmbudo(false);
-      if (fileInputEmbudoRef.current) fileInputEmbudoRef.current.value = "";
-    }
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button onClick={() => setAgenciaSel("TODAS")} style={{
-          background: agenciaSel === "TODAS" ? "#3b9eea" : "#0f2239",
-          color: agenciaSel === "TODAS" ? "#0a1628" : "#94a3b8",
-          border: `1px solid ${agenciaSel === "TODAS" ? "#3b9eea" : "#1e3a5f"}`,
-          borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-        }}>
-          🌐 TODAS LAS AGENCIAS <span style={{ opacity: .7, fontWeight: 400 }}>({totalAsesoresGlobal})</span>
-        </button>
-        {AGENCIAS.map(ag => (
-          <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
-            background: agenciaSel === ag ? "#D4AF37" : "#0f2239",
-            color: agenciaSel === ag ? "#0a1628" : "#94a3b8",
-            border: `1px solid ${agenciaSel === ag ? "#D4AF37" : "#1e3a5f"}`,
-            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-          }}>
-            {ag} <span style={{ opacity: .7, fontWeight: 400 }}>({Object.keys(conversionData[ag] ?? {}).length})</span>
-          </button>
-        ))}
-        <button onClick={estandarizarTodos} style={{
-          background: "transparent", color: "#94a3b8", border: "1px solid #2a3f5f",
-          borderRadius: 6, padding: "6px 14px", fontSize: 11.5, fontWeight: 700, cursor: "pointer", marginLeft: "auto"
-        }}>
-          ✨ Estandarizar nombres
-        </button>
-        <input ref={fileInputEmbudoRef} type="file" accept=".xlsx,.xls" onChange={handleFileEmbudo} style={{ display: "none" }} id="file-embudo-asesores" />
-        <label htmlFor="file-embudo-asesores" style={{
-          background: cargandoEmbudo ? "#1e3a5f" : "#D4AF37", color: cargandoEmbudo ? "#64748b" : "#0a1628",
-          border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 11.5, fontWeight: 700,
-          cursor: cargandoEmbudo ? "default" : "pointer", display: "inline-block"
-        }}>
-          {cargandoEmbudo ? "Procesando…" : "📤 Subir Contactados/Citas/Demos (.xlsx)"}
-        </label>
-      </div>
-      {errorEmbudo && (
-        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "8px 12px", color: "#f87171", fontSize: 12.5 }}>
-          {errorEmbudo}
-        </div>
-      )}
-      <div>
-        <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>FUENTES DE LEADS (selecciona una o varias)</p>
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-          {FUENTES_LEAD.map(f => (
-            <label key={f.key} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: fuentesSel.includes(f.key) ? "#f1f5f9" : "#64748b", fontSize: 12.5 }}>
-              <input type="checkbox" checked={fuentesSel.includes(f.key)} onChange={() => toggleFuente(f.key)} />
-              {f.label}
-            </label>
-          ))}
-        </div>
-        {fuentesSel.length === 0 && (
-          <div style={{ color: "#f87171", fontSize: 11.5, marginTop: 6 }}>Selecciona al menos una fuente para ver resultados.</div>
+      {/* ── Captura manual del Funnel de Ventas ──────────────────────────────── */}
+      <Card>
+        <SectionHeader title={`CAPTURA DEL FUNNEL — ${agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}`} icon="✍️" />
+        {agenciaSel === "TODAS" ? (
+          <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "10px 0 18px" }}>
+            Selecciona una agencia específica arriba para capturar sus valores del Funnel.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            {ETAPAS_FUNNEL.map(et => (
+              <div key={et.key} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .6, marginBottom: 6 }}>
+                  {et.label.toUpperCase()}{et.key === "leads" ? " (auto)" : ""}
+                </div>
+                <NumInput
+                  value={(funnelData[agenciaSel] ?? funnelAgenciaBlank())[et.key]}
+                  onChange={v => onFunnelFieldChange(agenciaSel, et.key, v)}
+                  width={70}
+                  disabled={et.key === "leads"}
+                />
+              </div>
+            ))}
+          </div>
         )}
-      </div>
-      <ConversionKpiBar asesores={asesoresCombinados} fuentesSel={fuentesSel} />
-      <ConversionTable
-        agencia={agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}
-        asesores={asesoresCombinados}
-        fuentesSel={fuentesSel}
-        onFieldChange={onFieldChangeCombinado}
-        onAdd={agenciaSel === "TODAS" ? undefined : onAdd}
-        onRemove={onRemoveCombinado}
-        soloLectura={agenciaSel === "TODAS"}
-      />
-      <div style={{ color: "#475569", fontSize: 11, textAlign: "center" }}>
-        % Contactados = Contactados/Leads (obj. 60%) · % Citas Agendadas = Citas Agendadas/Contactados (obj. 60%) ·
-        % Citas Asistidas = Citas Asistidas/Citas Agendadas (obj. 60%) · % Demos Agendadas = Demos Agendadas/Citas Asistidas (obj. 60%) ·
-        % Demos Asistidas = Demos Asistidas/Demos Agendadas (obj. 50%) · % Ventas = Ventas/Demos Asistidas (obj. 80%)
-      </div>
+      </Card>
+
+      {/* ── Embudo visual ─────────────────────────────────────────────────────── */}
+      <Card>
+        <SectionHeader title={`EMBUDO DE VENTAS — ${agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}`} icon="🪜" />
+        <FunnelEtapas etapasData={etapasData} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: "1px solid #1e3a5f" }}>
+          <span style={{ color: "#94a3b8", fontSize: 11.5 }}>Tasa de cierre global (Ventas ÷ Leads)</span>
+          <span style={{ color: "#D4AF37", fontSize: 16, fontWeight: 800 }}>{tasaCierreFunnel !== null ? `${tasaCierreFunnel.toFixed(1)}%` : "—"}</span>
+        </div>
+      </Card>
     </div>
   );
 }
 
-// ── SECCIÓN: Análisis con IA ──────────────────────────────────────────────────
+
 function buildResumenParaIA(data, monthKey) {
   const mesLabel = getMonthLabel(monthKey);
   const lineas = [];
@@ -2769,30 +2246,15 @@ function buildResumenParaIA(data, monthKey) {
   return lineas.join("\n");
 }
 
-function buildResumenConversionParaIA(conversionData) {
+function buildResumenFunnelParaIA(funnelData) {
   const lineas = [];
-  lineas.push("\n--- CONVERSIÓN DE ASESORES (embudo de ventas por asesor, acumulado) ---");
+  lineas.push("\n--- FUNNEL DE VENTAS (por agencia, acumulado del mes) ---");
   AGENCIAS.forEach(ag => {
-    const asesores = conversionData[ag] ?? {};
-    const ids = Object.keys(asesores);
-    if (ids.length === 0) {
-      lineas.push(`${ag}: sin asesores registrados.`);
-      return;
-    }
-    lineas.push(`${ag} (${ids.length} asesores):`);
-    ids.forEach(id => {
-      const a = asesores[id];
-      const leads = leadsDeFuentes(a);
-      const pctContactados = leads > 0 ? ((a.contactados / leads) * 100).toFixed(0) : "N/D";
-      const pctCitasAg = a.contactados > 0 ? ((a.citasAgendadas / a.contactados) * 100).toFixed(0) : "N/D";
-      const pctCitasAs = a.citasAgendadas > 0 ? ((a.citasAsistidas / a.citasAgendadas) * 100).toFixed(0) : "N/D";
-      const pctDemosAg = a.citasAsistidas > 0 ? ((a.demosAgendadas / a.citasAsistidas) * 100).toFixed(0) : "N/D";
-      const pctDemos = a.demosAgendadas > 0 ? ((a.demosAsistidas / a.demosAgendadas) * 100).toFixed(0) : "N/D";
-      const pctVentas = a.demosAsistidas > 0 ? ((a.ventas / a.demosAsistidas) * 100).toFixed(0) : "N/D";
-      lineas.push(`  - ${a.nombre}: leads ${leads} (META/Integraciones ${a.metaIntegraciones ?? 0}, Marca ${a.marca ?? 0}, PISO ${a.piso ?? 0}, Form Online ${a.formOnline ?? 0}, Calle ${a.calle ?? 0}, FB Chat ${a.fbChat ?? 0}), contactados ${a.contactados} (${pctContactados}%), citas agendadas ${a.citasAgendadas} (${pctCitasAg}%), citas asistidas ${a.citasAsistidas} (${pctCitasAs}%), demos agendadas ${a.demosAgendadas ?? 0} (${pctDemosAg}%), demos asistidas ${a.demosAsistidas} (${pctDemos}%), créditos ${a.creditos ?? 0} (OK ${a.creditosOk ?? 0}, rechazados ${a.creditosRechazados ?? 0}), ventas ${a.ventas} (${pctVentas}%), tiempo de respuesta ${a.tiempoRespuesta || "N/D"}`);
-    });
+    const f = funnelData[ag] ?? funnelAgenciaBlank();
+    const pct = (num, den) => den > 0 ? ((num / den) * 100).toFixed(0) : "N/D";
+    lineas.push(`${ag}: leads ${f.leads}, asignados ${f.asignados} (${pct(f.asignados, f.leads)}%), contactados ${f.contactados} (${pct(f.contactados, f.asignados)}%), citas agendadas ${f.citasAgendadas} (${pct(f.citasAgendadas, f.contactados)}%), citas asistidas ${f.citasAsistidas} (${pct(f.citasAsistidas, f.citasAgendadas)}%), demos agendadas ${f.demosAgendadas} (${pct(f.demosAgendadas, f.citasAsistidas)}%), demos asistidas ${f.demosAsistidas} (${pct(f.demosAsistidas, f.demosAgendadas)}%), ventas ${f.ventas} (${pct(f.ventas, f.demosAsistidas)}%)`);
   });
-  lineas.push("\nObjetivos del embudo: % Contactados ≥60%, % Citas Agendadas ≥60%, % Citas Asistidas ≥60%, % Demos Agendadas ≥60%, % Demos Asistidas ≥50%, % Ventas ≥80%.");
+  lineas.push("\nObjetivos del funnel: % Asignados ≥90%, % Contactados ≥60%, % Citas Agendadas ≥60%, % Citas Asistidas ≥60%, % Demos Agendadas ≥60%, % Demos Asistidas ≥50%, % Ventas ≥80%.");
   return lineas.join("\n");
 }
 
@@ -2834,7 +2296,7 @@ function LineChart({ series, width = 760, height = 220, suffix = "" }) {
   const allY = series.flatMap(s => s.points.map(p => p.y));
   const maxY = Math.max(1, ...allY);
   const minY = Math.min(0, ...allY);
-  const padding = { top: 16, right: 16, bottom: 28, left: 40 };
+  const padding = { top: 24, right: 16, bottom: 28, left: 40 };
   const w = width - padding.left - padding.right;
   const h = height - padding.top - padding.bottom;
   const n = series[0]?.points.length ?? 0;
@@ -2861,16 +2323,30 @@ function LineChart({ series, width = 760, height = 220, suffix = "" }) {
           <text key={i} x={xScale(i)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">{p.x}</text>
         )
       ))}
-      {/* Líneas de cada serie */}
+      {/* Líneas de cada serie, con el valor numérico visible sobre cada punto */}
       {series.map((s, si) => {
         const pathD = s.points.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(p.y)}`).join(" ");
+        // Si hay más de una serie, alternamos el offset vertical de las etiquetas para que no se encimen.
+        const labelOffsetY = series.length > 1 ? (si === 0 ? -10 : 16) : -10;
         return (
           <g key={si}>
             <path d={pathD} fill="none" stroke={s.color} strokeWidth="2.5" />
             {s.points.map((p, i) => (
-              <circle key={i} cx={xScale(i)} cy={yScale(p.y)} r="3" fill={s.color}>
-                <title>{`${s.label} — ${p.x}: ${p.y.toFixed(1)}${suffix}`}</title>
-              </circle>
+              <g key={i}>
+                <circle cx={xScale(i)} cy={yScale(p.y)} r="3" fill={s.color}>
+                  <title>{`${s.label} — ${p.x}: ${p.y.toFixed(1)}${suffix}`}</title>
+                </circle>
+                <text
+                  x={xScale(i)}
+                  y={yScale(p.y) + labelOffsetY}
+                  textAnchor="middle"
+                  fontSize="10"
+                  fontWeight="700"
+                  fill={s.color}
+                >
+                  {p.y.toFixed(suffix === "%" ? 1 : 0)}{suffix}
+                </text>
+              </g>
             ))}
           </g>
         );
@@ -3565,53 +3041,61 @@ ${lineas}`;
 }
 
 // ── SECCIÓN: Demos (encuesta pública de pruebas de manejo) ───────────────────
-// Palabras de conexión muy comunes en español, que no aportan significado al analizar
-// comentarios cortos de satisfacción — se excluyen del conteo de conceptos.
-const STOPWORDS_ES = new Set([
-  "el","la","los","las","un","una","unos","unas","de","del","al","a","en","que","y","o",
-  "es","fue","ser","muy","mas","más","pero","con","por","para","su","sus","me","mi","lo",
-  "le","les","se","no","si","sí","como","esta","está","esto","eso","todo","todos","nada",
-  "bien","buen","buena","buenos","buenas","gusta","gustó","gustaron","car","carro","auto",
-  "vehiculo","vehículo","fue","tan","ya","solo","sólo","poco","mucho","muy","cosa","cosas",
-]);
+function GestionAsesoresDemo({ catalogoAsesores, onAddAsesor, onRemoveAsesor }) {
+  const [agenciaSel, setAgenciaSel] = useState(AGENCIAS[0]);
+  const [nombreNuevo, setNombreNuevo] = useState("");
 
-function extraerConceptos(textos) {
-  const conteo = {};
-  textos.forEach(t => {
-    if (!t) return;
-    const palabras = t
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quita acentos para agrupar mejor
-      .replace(/[^a-záéíóúñ\s]/gi, " ")
-      .split(/\s+/)
-      .filter(p => p.length > 3 && !STOPWORDS_ES.has(p));
-    palabras.forEach(p => { conteo[p] = (conteo[p] ?? 0) + 1; });
-  });
-  return Object.entries(conteo)
-    .map(([concepto, count]) => ({ concepto, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
-}
+  const asesoresAgencia = catalogoAsesores[agenciaSel] ?? {};
+  const ids = Object.keys(asesoresAgencia);
 
-function BarrasConceptos({ datos, color }) {
-  if (datos.length === 0) {
-    return <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: "16px 0" }}>Sin suficientes comentarios para identificar patrones.</div>;
-  }
-  const maxCount = Math.max(...datos.map(d => d.count));
+  const agregar = () => {
+    const nombre = nombreNuevo.trim();
+    if (!nombre) return;
+    onAddAsesor(agenciaSel, nombre);
+    setNombreNuevo("");
+  };
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {datos.map(d => (
-        <div key={d.concepto}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 2 }}>
-            <span style={{ color: "#cbd5e1", textTransform: "capitalize" }}>{d.concepto}</span>
-            <span style={{ color: "#94a3b8", fontWeight: 700 }}>{d.count}</span>
-          </div>
-          <div style={{ background: "#0a1830", borderRadius: 4, height: 10, overflow: "hidden" }}>
-            <div style={{ width: `${(d.count / maxCount) * 100}%`, height: "100%", background: color, borderRadius: 4 }} />
-          </div>
+    <Card>
+      <SectionHeader title="ASESORES PARA LA ENCUESTA DE DEMO" icon="🧑‍💼" />
+      <div style={{ color: "#64748b", fontSize: 11.5, marginBottom: 14 }}>
+        Esta lista alimenta el selector de asesor en la encuesta pública que responde el cliente tras la prueba de manejo. Agrega o da de baja asesores según vayan cambiando.
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        {AGENCIAS.map(ag => (
+          <button key={ag} onClick={() => setAgenciaSel(ag)} style={{
+            background: agenciaSel === ag ? "#3b9eea" : "#0f2239",
+            color: agenciaSel === ag ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${agenciaSel === ag ? "#3b9eea" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>{ag} ({Object.keys(catalogoAsesores[ag] ?? {}).length})</button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <input
+          value={nombreNuevo}
+          onChange={e => setNombreNuevo(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") agregar(); }}
+          placeholder={`Nombre del nuevo asesor en ${agenciaSel}…`}
+          style={{ flex: 1, minWidth: 220, background: "#0d1b2e", border: "1px solid #2a3f5f", color: "#f1f5f9", borderRadius: 8, padding: "9px 12px", fontSize: 13, outline: "none" }}
+        />
+        <button onClick={agregar} style={{ background: "#D4AF37", color: "#0a1628", border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+          + Agregar
+        </button>
+      </div>
+      {ids.length === 0 ? (
+        <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "14px 0" }}>Sin asesores registrados en {agenciaSel} todavía.</div>
+      ) : (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {ids.map(id => (
+            <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 20, padding: "5px 8px 5px 14px" }}>
+              <span style={{ color: "#cbd5e1", fontSize: 12.5 }}>{asesoresAgencia[id]}</span>
+              <button onClick={() => onRemoveAsesor(agenciaSel, id)} title="Dar de baja" style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 13, fontWeight: 700, padding: "2px 4px" }}>✕</button>
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
+      )}
+    </Card>
   );
 }
 
@@ -3622,6 +3106,7 @@ function DemosSection({ monthKey }) {
   const [analisisIA, setAnalisisIA] = useState("");
   const [loadingIA, setLoadingIA] = useState(false);
   const [errorIA, setErrorIA] = useState("");
+  const [catalogoAsesores, setCatalogoAsesores] = useState({});
 
   useEffect(() => {
     (async () => {
@@ -3633,6 +3118,34 @@ function DemosSection({ monthKey }) {
       setLoading(false);
     })();
   }, [monthKey]);
+
+  useEffect(() => {
+    (async () => {
+      const raw = await fbGet(ASESORES_CATALOGO_PATH);
+      const merged = {};
+      AGENCIAS.forEach(ag => { merged[ag] = raw?.[ag] ?? {}; });
+      setCatalogoAsesores(merged);
+    })();
+  }, []);
+
+  const onAddAsesorCatalogo = (agencia, nombre) => {
+    setCatalogoAsesores(prev => {
+      const id = genAsesorId();
+      const next = { ...prev, [agencia]: { ...(prev[agencia] ?? {}), [id]: nombre } };
+      fbSet(`${ASESORES_CATALOGO_PATH}/${agencia}/${id}`, nombre);
+      return next;
+    });
+  };
+
+  const onRemoveAsesorCatalogo = (agencia, id) => {
+    setCatalogoAsesores(prev => {
+      const agObj = { ...(prev[agencia] ?? {}) };
+      delete agObj[id];
+      const next = { ...prev, [agencia]: agObj };
+      fetch(`${FIREBASE_URL}/${ASESORES_CATALOGO_PATH}/${agencia}/${id}.json`, { method: "DELETE" }).catch(() => {});
+      return next;
+    });
+  };
 
   const linkEncuesta = typeof window !== "undefined" ? `${window.location.origin}/encuesta-demo` : "/encuesta-demo";
   const [copiado, setCopiado] = useState(false);
@@ -3664,8 +3177,17 @@ function DemosSection({ monthKey }) {
     return Object.entries(map).map(([municipio, count]) => ({ municipio, count })).sort((a, b) => b.count - a.count);
   })();
 
-  const conceptosLeGusto = extraerConceptos(datosFiltrados.map(r => r.legusto));
-  const conceptosNoLeGusto = extraerConceptos(datosFiltrados.map(r => r.nolegusto));
+  // % por línea de vehículo probada (pie chart)
+  const porLineaPie = (() => {
+    const map = {};
+    datosFiltrados.forEach(r => {
+      const key = (r.version || "Sin especificar").trim();
+      map[key] = (map[key] || 0) + 1;
+    });
+    return Object.entries(map).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  })();
+  const coloresLinea = LINEAS_PRODUCTO.reduce((acc, l) => { acc[l.key] = l.color; return acc; }, {});
+  const coloresPorLinea = porLineaPie.map(d => coloresLinea[d.label] || "#64748b");
 
   const porAsesor = (() => {
     const map = {};
@@ -3769,17 +3291,6 @@ ${lineas}`;
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 24 }}>
-              <div style={{ flex: 1, minWidth: 280 }}>
-                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 10, letterSpacing: .8 }}>👍 LO QUE MÁS LES GUSTÓ</p>
-                <BarrasConceptos datos={conceptosLeGusto} color="#4ade80" />
-              </div>
-              <div style={{ flex: 1, minWidth: 280 }}>
-                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 10, letterSpacing: .8 }}>👎 LO QUE MENOS LES GUSTÓ</p>
-                <BarrasConceptos datos={conceptosNoLeGusto} color="#f87171" />
-              </div>
-            </div>
-
             <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
               <div style={{ flex: 1, minWidth: 280 }}>
                 <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>RANKING DE MUNICIPIOS / ZONAS</p>
@@ -3825,41 +3336,48 @@ ${lineas}`;
                 </table>
               </div>
             </div>
-
-            <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8, marginTop: 18 }}>DETALLE DE RESPUESTAS</p>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                <thead>
-                  <tr style={{ color: "#64748b", fontSize: 10.5 }}>
-                    <th style={{ textAlign: "left", paddingBottom: 6 }}>FECHA</th>
-                    <th style={{ textAlign: "left" }}>AGENCIA</th>
-                    <th style={{ textAlign: "left" }}>ASESOR</th>
-                    <th style={{ textAlign: "left" }}>VERSIÓN</th>
-                    <th style={{ textAlign: "center" }}>CALIF.</th>
-                    <th style={{ textAlign: "left" }}>MUNICIPIO</th>
-                    <th style={{ textAlign: "left" }}>COLONIA</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {[...datosFiltrados].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).map((r, i) => (
-                    <tr key={i} style={{ borderTop: "1px solid #1e3a5f" }}>
-                      <td style={{ padding: "5px 0", color: "#64748b", fontSize: 11 }}>
-                        {r.fecha ? new Date(r.fecha).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
-                      </td>
-                      <td style={{ color: "#cbd5e1" }}>{r.agencia}</td>
-                      <td style={{ color: "#cbd5e1" }}>{r.asesorNombre}</td>
-                      <td style={{ color: "#94a3b8" }}>{r.version || "—"}</td>
-                      <td style={{ textAlign: "center", fontWeight: 700, color: r.calificacion >= 9 ? "#4ade80" : r.calificacion >= 7 ? "#D4AF37" : "#f87171" }}>{r.calificacion}</td>
-                      <td style={{ color: "#cbd5e1" }}>{r.municipio}</td>
-                      <td style={{ color: "#64748b" }}>{r.colonia || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           </>
         )}
       </Card>
+
+      {datosFiltrados.length > 0 && (
+        <Card>
+          <SectionHeader title="% DE PRUEBAS POR LÍNEA DE VEHÍCULO" icon="🥧" />
+          <PieChartLeyenda datos={porLineaPie} colores={coloresPorLinea} />
+        </Card>
+      )}
+
+      {datosFiltrados.length > 0 && (
+        <Card>
+          <SectionHeader title="COMENTARIOS DE LAS ENCUESTAS" icon="💬" />
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, maxHeight: "60vh", overflowY: "auto" }}>
+            {[...datosFiltrados].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).map((r, i) => (
+              <div key={i} style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "baseline" }}>
+                    <span style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 700 }}>{r.asesorNombre || "Sin asesor"}</span>
+                    <span style={{ color: "#64748b", fontSize: 11.5 }}>{r.agencia}</span>
+                    <span style={{ color: "#64748b", fontSize: 11.5 }}>{r.version || "—"}</span>
+                    <span style={{ color: "#64748b", fontSize: 11 }}>
+                      {r.fecha ? new Date(r.fecha).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
+                    </span>
+                  </div>
+                  <span style={{ fontWeight: 800, fontSize: 14, color: r.calificacion >= 9 ? "#4ade80" : r.calificacion >= 7 ? "#D4AF37" : "#f87171" }}>
+                    {r.calificacion}/10
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5 }}>
+                  <div><span style={{ color: "#64748b" }}>📍 {r.municipio}{r.colonia ? `, ${r.colonia}` : ""}</span></div>
+                  {r.legusto && <div><span style={{ color: "#4ade80", fontWeight: 700 }}>👍 </span><span style={{ color: "#cbd5e1" }}>{r.legusto}</span></div>}
+                  {r.nolegusto && <div><span style={{ color: "#f87171", fontWeight: 700 }}>👎 </span><span style={{ color: "#cbd5e1" }}>{r.nolegusto}</span></div>}
+                  {r.comentario && <div><span style={{ color: "#3b9eea", fontWeight: 700 }}>💬 </span><span style={{ color: "#cbd5e1" }}>{r.comentario}</span></div>}
+                  {!r.legusto && !r.nolegusto && !r.comentario && <div style={{ color: "#475569" }}>Sin comentarios adicionales.</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {datosFiltrados.length > 0 && (
         <Card>
@@ -3904,11 +3422,13 @@ ${lineas}`;
           )}
         </Card>
       )}
+
+      <GestionAsesoresDemo catalogoAsesores={catalogoAsesores} onAddAsesor={onAddAsesorCatalogo} onRemoveAsesor={onRemoveAsesorCatalogo} />
     </div>
   );
 }
 
-function AnalisisSection({ data, monthKey, conversionData }) {
+function AnalisisSection({ data, monthKey, funnelData }) {
   const [loading, setLoading] = useState(false);
   const [resultado, setResultado] = useState("");
   const [error, setError] = useState("");
@@ -3918,13 +3438,13 @@ function AnalisisSection({ data, monthKey, conversionData }) {
     setError("");
     setResultado("");
     try {
-      const resumen = buildResumenParaIA(data, monthKey) + "\n" + buildResumenConversionParaIA(conversionData);
+      const resumen = buildResumenParaIA(data, monthKey) + "\n" + buildResumenFunnelParaIA(funnelData);
       const prompt = `Eres un consultor experto en gestión de dealerships automotrices (marca Changan, grupo CHESA, 5 agencias en Chiapas: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo).
 
-Te comparto el corte de indicadores operativos del mes de ${getMonthLabel(monthKey)}, incluyendo el embudo de conversión de asesores de ventas. Analiza la información y entrega:
+Te comparto el corte de indicadores operativos del mes de ${getMonthLabel(monthKey)}, incluyendo el funnel de ventas por agencia. Analiza la información y entrega:
 
-1. **Diagnóstico general** (3-5 puntos clave, identificando qué agencias y qué indicadores están en mayor riesgo o destacan positivamente, incluyendo el desempeño del embudo de conversión de asesores)
-2. **Plan de acción inmediato** (acciones concretas, accionables esta semana, priorizadas, indicando responsable sugerido por área: ventas, servicio/satisfacción, inventario/personal, y desempeño individual de asesores si aplica)
+1. **Diagnóstico general** (3-5 puntos clave, identificando qué agencias y qué indicadores están en mayor riesgo o destacan positivamente, incluyendo el desempeño del funnel de ventas)
+2. **Plan de acción inmediato** (acciones concretas, accionables esta semana, priorizadas, indicando responsable sugerido por área: ventas, servicio/satisfacción, inventario/personal)
 3. **Alertas críticas** (cualquier indicador muy por debajo del objetivo que requiera atención urgente del Director de Marca)
 
 Sé directo, concreto y orientado a la acción — evita generalidades. Usa los nombres reales de las agencias. Formato en markdown con encabezados.
@@ -4097,7 +3617,7 @@ ${historico}`;
 }
 
 // ── SECCIÓN: Chat libre (reactivo, con contexto del negocio) ──────────────────
-function ChatSection({ data, monthKey, conversionData }) {
+function ChatSection({ data, monthKey, funnelData }) {
   const [mensajes, setMensajes] = useState([]); // [{role, content}]
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -4113,7 +3633,7 @@ function ChatSection({ data, monthKey, conversionData }) {
   const prepararContexto = async () => {
     if (contextoRef.current) return contextoRef.current;
     const historico = await buildResumenHistorico(monthKey);
-    const detalleMesActual = buildResumenParaIA(data, monthKey) + "\n" + buildResumenConversionParaIA(conversionData);
+    const detalleMesActual = buildResumenParaIA(data, monthKey) + "\n" + buildResumenFunnelParaIA(funnelData);
     const contexto = `Eres el director comercial con 20 años de experiencia en grupos automotrices, asesorando a CHESA (distribuidor Changan en Chiapas, México, 5 agencias: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo). El usuario es el Director de Marca y te va a hacer preguntas libres sobre el negocio.
 
 Responde con criterio de experto: directo, concreto, usando los nombres reales de las agencias y los números reales que te comparto. Si la pregunta requiere un cálculo o comparación, hazlo explícito. Si no tienes el dato para responder algo, dilo claramente en vez de inventar.
@@ -4235,15 +3755,15 @@ ${detalleMesActual}`;
 
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 function Dashboard({ userRole, userAgencia, userEmail }) {
-  const [tab, setTab] = useState("operativo"); // operativo | conversion
+  const [tab, setTab] = useState("operativo"); // operativo | funnel
   const [data, setData] = useState(initialData);
-  const [conversionData, setConversionData] = useState(initialConversion);
+  const [funnelData, setFunnelData] = useState(initialFunnel);
   const [status, setStatus] = useState("conectando"); // conectando | ok | error
   const [lastSaved, setLastSaved] = useState(null);
   const saveTimer = useRef(null);
   const isSavingRef = useRef(false);
-  const convSaveTimer = useRef(null);
-  const isSavingConversionRef = useRef(false);
+  const funnelSaveTimer = useRef(null);
+  const isSavingFunnelRef = useRef(false);
 
   const currentMonthKey = getOperativeMonthKey();
   const [viewMonth, setViewMonth] = useState(currentMonthKey); // mes que se está viendo
@@ -4254,137 +3774,42 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
   const viewMonthRef = useRef(viewMonth);
   useEffect(() => { viewMonthRef.current = viewMonth; }, [viewMonth]);
 
-  // ── Cargar conversión de Firebase al montar + polling ───────────────────────
+  // ── Cargar el Funnel del mes en vista desde Firebase + polling ──────────────
   useEffect(() => {
-    const loadConversion = async () => {
-      if (isSavingConversionRef.current) return; // evita pisar cambios locales no guardados aún
-      const raw = await fbGet(CONVERSION_PATH);
+    const loadFunnel = async () => {
+      if (isSavingFunnelRef.current) return; // evita pisar cambios locales no guardados aún
+      const raw = await fbGet(`${FUNNEL_PATH}/${viewMonthRef.current}`);
       if (raw && typeof raw === "object") {
         const merged = {};
-        AGENCIAS.forEach(ag => { merged[ag] = raw[ag] && typeof raw[ag] === "object" ? raw[ag] : (initialConversion[ag] ?? {}); });
-        setConversionData(merged);
+        AGENCIAS.forEach(ag => { merged[ag] = raw[ag] && typeof raw[ag] === "object" ? { ...funnelAgenciaBlank(), ...raw[ag] } : funnelAgenciaBlank(); });
+        setFunnelData(merged);
       } else {
-        await fbSet(CONVERSION_PATH, initialConversion);
+        setFunnelData(JSON.parse(JSON.stringify(initialFunnel)));
       }
     };
-    loadConversion();
-    const poll = setInterval(loadConversion, 15000);
+    loadFunnel();
+    const poll = setInterval(loadFunnel, 15000);
     return () => clearInterval(poll);
-  }, []);
+  }, [viewMonth]);
 
-  const scheduleSaveConversion = (next) => {
-    if (convSaveTimer.current) clearTimeout(convSaveTimer.current);
-    isSavingConversionRef.current = true;
-    convSaveTimer.current = setTimeout(async () => {
+  const scheduleSaveFunnel = (next, targetMonth) => {
+    if (funnelSaveTimer.current) clearTimeout(funnelSaveTimer.current);
+    const mesDestino = targetMonth || viewMonth;
+    isSavingFunnelRef.current = true;
+    funnelSaveTimer.current = setTimeout(async () => {
       try {
-        await fbSet(CONVERSION_PATH, next);
+        await fbSet(`${FUNNEL_PATH}/${mesDestino}`, next);
       } finally {
-        isSavingConversionRef.current = false;
+        isSavingFunnelRef.current = false;
       }
     }, 800);
   };
 
-  const onAsesorFieldChange = (agencia, id, field, val) => {
-    setConversionData(prev => {
-      const next = {
-        ...prev,
-        [agencia]: { ...prev[agencia], [id]: { ...prev[agencia][id], [field]: val } }
-      };
-      scheduleSaveConversion(next);
-      return next;
-    });
-  };
-
-  const onAddAsesor = (agencia) => {
-    setConversionData(prev => {
-      const next = { ...prev, [agencia]: { ...prev[agencia], [genAsesorId()]: asesorBlank() } };
-      scheduleSaveConversion(next);
-      return next;
-    });
-  };
-
-  const onRemoveAsesor = (agencia, id) => {
-    setConversionData(prev => {
-      const agObj = { ...prev[agencia] };
-      delete agObj[id];
-      const next = { ...prev, [agencia]: agObj };
-      scheduleSaveConversion(next);
-      return next;
-    });
-  };
-
-  // Sincroniza Contactados/Citas/Demos/Créditos/Ventas/Tiempo de respuesta extraídos del
-  // reporte de Estadísticas Vendedor hacia Conversión de Asesores, SIN tocar los campos
-  // de fuente (que vienen del reporte de Fuentes y Leads). Crea asesores nuevos si no existen.
-  const onSincronizarEmbudo = (porAgencia) => {
-    setConversionData(prev => {
-      const next = { ...prev };
-      Object.entries(porAgencia).forEach(([agencia, porAsesorEmbudo]) => {
-        const asesoresAgencia = { ...(next[agencia] || {}) };
-        const nombreToId = {};
-        Object.entries(asesoresAgencia).forEach(([id, a]) => {
-          nombreToId[estandarizarNombre(a.nombre).toUpperCase()] = id;
-        });
-
-        Object.entries(porAsesorEmbudo).forEach(([nombreRaw, embudo]) => {
-          if (!nombreRaw || nombreRaw.trim().toLowerCase() === "sin asignar") return;
-          const nombreEstandar = estandarizarNombre(nombreRaw);
-          const key = nombreEstandar.toUpperCase();
-          let id = nombreToId[key];
-          if (!id) {
-            id = genAsesorId();
-            asesoresAgencia[id] = asesorBlank();
-            asesoresAgencia[id].nombre = nombreEstandar;
-            nombreToId[key] = id;
-          }
-          asesoresAgencia[id].contactados = embudo.contactados;
-          asesoresAgencia[id].citasAgendadas = embudo.citasAgendadas;
-          asesoresAgencia[id].citasAsistidas = embudo.citasAsistidas;
-          asesoresAgencia[id].demosAgendadas = embudo.demosAgendadas;
-          asesoresAgencia[id].demosAsistidas = embudo.demosAsistidas;
-          asesoresAgencia[id].creditos = embudo.creditos;
-          asesoresAgencia[id].creditosOk = embudo.creditosOk;
-          asesoresAgencia[id].creditosRechazados = embudo.creditosRechazados;
-          asesoresAgencia[id].ventas = embudo.ventas;
-          asesoresAgencia[id].tiempoRespuesta = embudo.tiempoRespuesta;
-        });
-
-        next[agencia] = asesoresAgencia;
-      });
-      scheduleSaveConversion(next);
-      return next;
-    });
-  };
-
-  // Sincroniza los leads por fuente extraídos del reporte de Fuentes y Leads hacia
-  // Conversión de Asesores. Busca por coincidencia de nombre (normalizado); si no
-  // existe el asesor en esa agencia, lo crea automáticamente con el nombre estandarizado.
-  const onSincronizarConversion = (agencia, porAsesorFuentes) => {
-    setConversionData(prev => {
-      const asesoresAgencia = { ...(prev[agencia] || {}) };
-      const nombreToId = {};
-      Object.entries(asesoresAgencia).forEach(([id, a]) => {
-        nombreToId[estandarizarNombre(a.nombre).toUpperCase()] = id;
-      });
-
-      Object.entries(porAsesorFuentes).forEach(([nombreRaw, fuentes]) => {
-        if (!nombreRaw || nombreRaw.trim().toLowerCase() === "sin asignar") return; // no se contabiliza como asesor real
-        const nombreEstandar = estandarizarNombre(nombreRaw);
-        const key = nombreEstandar.toUpperCase();
-        let id = nombreToId[key];
-        if (!id) {
-          id = genAsesorId();
-          asesoresAgencia[id] = asesorBlank();
-          asesoresAgencia[id].nombre = nombreEstandar;
-          nombreToId[key] = id;
-        }
-        FUENTES_LEAD.forEach(f => {
-          asesoresAgencia[id][f.key] = fuentes[f.key] ?? 0;
-        });
-      });
-
-      const next = { ...prev, [agencia]: asesoresAgencia };
-      scheduleSaveConversion(next);
+  const onFunnelFieldChange = (agencia, campo, val) => {
+    const mesAlEditar = viewMonth;
+    setFunnelData(prev => {
+      const next = { ...prev, [agencia]: { ...prev[agencia], [campo]: val } };
+      scheduleSaveFunnel(next, mesAlEditar);
       return next;
     });
   };
@@ -4652,18 +4077,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>📊 Operativo</button>
-            <button onClick={() => setTab("conversion")} style={{
-              background: tab === "conversion" ? "#5eead4" : "transparent",
-              color: tab === "conversion" ? "#0a1628" : "#94a3b8",
+            <button onClick={() => setTab("funnel")} style={{
+              background: tab === "funnel" ? "#5eead4" : "transparent",
+              color: tab === "funnel" ? "#0a1628" : "#94a3b8",
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
-            }}>🧑‍💼 Conversión Asesores</button>
-            <button onClick={() => setTab("fuentesLeads")} style={{
-              background: tab === "fuentesLeads" ? "#5eead4" : "transparent",
-              color: tab === "fuentesLeads" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
-              fontSize: 12, fontWeight: 700, cursor: "pointer"
-            }}>📡 Fuentes y Leads</button>
+            }}>🪜 Funnel</button>
             <button onClick={() => setTab("satisfaccionCliente")} style={{
               background: tab === "satisfaccionCliente" ? "#5eead4" : "transparent",
               color: tab === "satisfaccionCliente" ? "#0a1628" : "#94a3b8",
@@ -4763,24 +4182,16 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               )}
             </div>
           </>
-        ) : tab === "conversion" ? (
-          <ConversionSection
-            conversionData={conversionData}
-            onFieldChange={onAsesorFieldChange}
-            onAdd={onAddAsesor}
-            onRemove={onRemoveAsesor}
-            onSincronizarEmbudo={onSincronizarEmbudo}
-          />
-        ) : tab === "fuentesLeads" ? (
-          <FuentesLeadsSection monthKey={viewMonth} onSincronizarConversion={onSincronizarConversion} conversionData={conversionData} />
+        ) : tab === "funnel" ? (
+          <FunnelSection monthKey={viewMonth} funnelData={funnelData} onFunnelFieldChange={onFunnelFieldChange} />
         ) : tab === "tendencias" ? (
           <TendenciasSection currentMonthKey={currentMonthKey} />
         ) : tab === "analisis" ? (
-          <AnalisisSection data={data} monthKey={viewMonth} conversionData={conversionData} />
+          <AnalisisSection data={data} monthKey={viewMonth} funnelData={funnelData} />
         ) : tab === "alertas" ? (
           <AlertasSection monthKey={currentMonthKey} />
         ) : tab === "chat" ? (
-          <ChatSection data={data} monthKey={viewMonth} conversionData={conversionData} />
+          <ChatSection data={data} monthKey={viewMonth} funnelData={funnelData} />
         ) : tab === "satisfaccionCliente" ? (
           <SatisfaccionClienteSection monthKey={viewMonth} />
         ) : (
