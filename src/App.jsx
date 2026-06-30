@@ -126,7 +126,6 @@ const FUENTES_LEAD = [
 // el resto se captura a mano. Cada etapa muestra el % de paso respecto a la etapa anterior.
 const ETAPAS_FUNNEL = [
   { key: "leads",           label: "Leads",            objetivo: null },
-  { key: "asignados",       label: "Asignados",        objetivo: 0.90 },
   { key: "contactados",     label: "Contactados",      objetivo: 0.60 },
   { key: "citasAgendadas",  label: "Citas Agendadas",  objetivo: 0.60 },
   { key: "citasAsistidas",  label: "Citas Asistidas",  objetivo: 0.60 },
@@ -1818,6 +1817,9 @@ function agregarFuentesLeads(registros) {
 // Funnel visual: barras horizontales decrecientes mostrando el resultado real de cada etapa,
 // el objetivo esperado (línea de referencia), y el % de paso entre etapas consecutivas.
 // Embudo visual real: trapecios apilados que se van angostando según el valor de cada etapa.
+// Misma paleta usada en las gráficas de pastel (Distribución por Fuente, Top Productos, etc.)
+const PALETA_FUNNEL = ["#3b9eea", "#D4AF37", "#4ade80", "#c084fc", "#fb923c", "#f472b6", "#60a5fa", "#fbbf24"];
+
 function FunnelEtapas({ etapasData }) {
   // etapasData: [{ label, valor, objetivoPct }]
   const maxValor = Math.max(1, ...etapasData.map(e => e.valor));
@@ -1847,24 +1849,23 @@ function FunnelEtapas({ etapasData }) {
           const xBottomLeft = (widthSvg - bottomWidth) / 2;
           const xBottomRight = xBottomLeft + bottomWidth;
           const pasoPct = i > 0 && etapasData[i - 1].valor > 0 ? (e.valor / etapasData[i - 1].valor * 100) : null;
-          const cumpleObjetivo = pasoPct !== null && e.objetivoPct !== null ? pasoPct >= e.objetivoPct : null;
-          const fill = i === etapasData.length - 1 ? "#16a34a" : (cumpleObjetivo === false ? "#7f1d1d" : "#1d4f8f");
-          const stroke = i === etapasData.length - 1 ? "#4ade80" : (cumpleObjetivo === false ? "#f87171" : "#3b9eea");
+          const color = PALETA_FUNNEL[i % PALETA_FUNNEL.length];
           return (
             <g key={e.label}>
               <polygon
                 points={`${xTopLeft},${yTop} ${xTopRight},${yTop} ${xBottomRight},${yBottom} ${xBottomLeft},${yBottom}`}
-                fill={fill}
-                stroke={stroke}
+                fill={color}
+                fillOpacity="0.85"
+                stroke={color}
                 strokeWidth="1.5"
               />
-              <text x={widthSvg / 2} y={yTop + stepHeight / 2 - 6} textAnchor="middle" fontSize="13" fontWeight="700" fill="#f1f5f9">
+              <text x={widthSvg / 2} y={yTop + stepHeight / 2 - 6} textAnchor="middle" fontSize="13" fontWeight="700" fill="#0a1628">
                 {e.label}
               </text>
-              <text x={widthSvg / 2} y={yTop + stepHeight / 2 + 14} textAnchor="middle" fontSize="15" fontWeight="800" fill="#f1f5f9">
+              <text x={widthSvg / 2} y={yTop + stepHeight / 2 + 14} textAnchor="middle" fontSize="15" fontWeight="800" fill="#0a1628">
                 {e.valor}
                 {pasoPct !== null && (
-                  <tspan fontSize="11" fontWeight="700" fill={cumpleObjetivo ? "#86efac" : "#fca5a5"}> · {pasoPct.toFixed(0)}% paso{e.objetivoPct !== null ? ` (obj. ${e.objetivoPct}%)` : ""}</tspan>
+                  <tspan fontSize="11" fontWeight="700"> · {pasoPct.toFixed(0)}% paso{e.objetivoPct !== null ? ` (obj. ${e.objetivoPct}%)` : ""}</tspan>
                 )}
               </text>
             </g>
@@ -2151,15 +2152,61 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
         )}
       </Card>
 
-      {/* ── Embudo visual ─────────────────────────────────────────────────────── */}
-      <Card>
-        <SectionHeader title={`EMBUDO DE VENTAS — ${agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}`} icon="🪜" />
-        <FunnelEtapas etapasData={etapasData} />
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: "1px solid #1e3a5f" }}>
-          <span style={{ color: "#94a3b8", fontSize: 11.5 }}>Tasa de cierre global (Ventas ÷ Leads)</span>
-          <span style={{ color: "#D4AF37", fontSize: 16, fontWeight: 800 }}>{tasaCierreFunnel !== null ? `${tasaCierreFunnel.toFixed(1)}%` : "—"}</span>
+      {/* ── Embudo visual + cuadro de Asignados ──────────────────────────────── */}
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 300 }}>
+          <Card>
+            <SectionHeader title={`EMBUDO DE VENTAS — ${agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}`} icon="🪜" />
+            <FunnelEtapas etapasData={etapasData} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: "1px solid #1e3a5f" }}>
+              <span style={{ color: "#94a3b8", fontSize: 11.5 }}>Tasa de cierre global (Ventas ÷ Leads)</span>
+              <span style={{ color: "#D4AF37", fontSize: 16, fontWeight: 800 }}>{tasaCierreFunnel !== null ? `${tasaCierreFunnel.toFixed(1)}%` : "—"}</span>
+            </div>
+          </Card>
         </div>
-      </Card>
+
+        <div style={{ width: 220, flexShrink: 0 }}>
+          <Card>
+            <SectionHeader title="ASIGNADOS" icon="📋" />
+            <div style={{ color: "#64748b", fontSize: 11.5, marginBottom: 14, lineHeight: 1.5 }}>
+              Leads formalmente asignados a un asesor. Captura manual por agencia.
+            </div>
+            {agenciaSel === "TODAS" ? (
+              <>
+                {AGENCIAS.map(ag => (
+                  <div key={ag} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span style={{ color: "#94a3b8", fontSize: 12 }}>{ag}</span>
+                    <NumInput
+                      value={(funnelData[ag] ?? funnelAgenciaBlank()).asignados}
+                      onChange={v => onFunnelFieldChange(ag, "asignados", v)}
+                      width={65}
+                    />
+                  </div>
+                ))}
+                <div style={{ borderTop: "1px solid #1e3a5f", paddingTop: 8, marginTop: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "#D4AF37", fontSize: 12, fontWeight: 700 }}>TOTAL</span>
+                  <span style={{ color: "#D4AF37", fontSize: 16, fontWeight: 800 }}>
+                    {AGENCIAS.reduce((s, ag) => s + ((funnelData[ag] ?? funnelAgenciaBlank()).asignados), 0)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, paddingTop: 8 }}>
+                <NumInput
+                  value={(funnelData[agenciaSel] ?? funnelAgenciaBlank()).asignados}
+                  onChange={v => onFunnelFieldChange(agenciaSel, "asignados", v)}
+                  width={80}
+                />
+                <div style={{ color: "#64748b", fontSize: 11 }}>
+                  {funnelConsolidado.leads > 0
+                    ? `${((((funnelData[agenciaSel] ?? funnelAgenciaBlank()).asignados) / funnelConsolidado.leads) * 100).toFixed(0)}% de leads asignados`
+                    : "—"}
+                </div>
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2252,9 +2299,9 @@ function buildResumenFunnelParaIA(funnelData) {
   AGENCIAS.forEach(ag => {
     const f = funnelData[ag] ?? funnelAgenciaBlank();
     const pct = (num, den) => den > 0 ? ((num / den) * 100).toFixed(0) : "N/D";
-    lineas.push(`${ag}: leads ${f.leads}, asignados ${f.asignados} (${pct(f.asignados, f.leads)}%), contactados ${f.contactados} (${pct(f.contactados, f.asignados)}%), citas agendadas ${f.citasAgendadas} (${pct(f.citasAgendadas, f.contactados)}%), citas asistidas ${f.citasAsistidas} (${pct(f.citasAsistidas, f.citasAgendadas)}%), demos agendadas ${f.demosAgendadas} (${pct(f.demosAgendadas, f.citasAsistidas)}%), demos asistidas ${f.demosAsistidas} (${pct(f.demosAsistidas, f.demosAgendadas)}%), ventas ${f.ventas} (${pct(f.ventas, f.demosAsistidas)}%)`);
+    lineas.push(`${ag}: leads ${f.leads}, contactados ${f.contactados} (${pct(f.contactados, f.leads)}%), citas agendadas ${f.citasAgendadas} (${pct(f.citasAgendadas, f.contactados)}%), citas asistidas ${f.citasAsistidas} (${pct(f.citasAsistidas, f.citasAgendadas)}%), demos agendadas ${f.demosAgendadas} (${pct(f.demosAgendadas, f.citasAsistidas)}%), demos asistidas ${f.demosAsistidas} (${pct(f.demosAsistidas, f.demosAgendadas)}%), ventas ${f.ventas} (${pct(f.ventas, f.demosAsistidas)}%)`);
   });
-  lineas.push("\nObjetivos del funnel: % Asignados ≥90%, % Contactados ≥60%, % Citas Agendadas ≥60%, % Citas Asistidas ≥60%, % Demos Agendadas ≥60%, % Demos Asistidas ≥50%, % Ventas ≥80%.");
+  lineas.push("\nObjetivos del funnel: % Contactados ≥60%, % Citas Agendadas ≥60%, % Citas Asistidas ≥60%, % Demos Agendadas ≥60%, % Demos Asistidas ≥50%, % Ventas ≥80%.");
   return lineas.join("\n");
 }
 
