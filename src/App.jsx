@@ -1681,18 +1681,33 @@ function KpiBar({ data, monthKey }) {
   const totalObjMx  = AGENCIAS.reduce((s, a) => s + (data.ventasJunioMexico[a]?.objetivo  ?? 0), 0);
   const avanceV  = pct(totalFact, totalObj);
   const avanceMx = pct(totalFactMx, totalObjMx);
-  const isiOk = AGENCIAS.filter(a => (data.isi[a]?.real ?? 0) >= (data.isi[a]?.objetivo ?? 0.85)).length;
+
+  // SSI promedio (agencias con datos)
+  const ssiAgencias = Object.keys(data.ssi ?? {});
+  const ssiVals = ssiAgencias.map(a => data.ssi[a]?.ssi ?? 0).filter(v => v > 0);
+  const ssiPromedio = ssiVals.length > 0 ? (ssiVals.reduce((s, v) => s + v, 0) / ssiVals.length) : null;
+  const ssiObj = ssiAgencias.length > 0 ? ((data.ssi[ssiAgencias[0]]?.objetivo ?? 0.87) * 100) : 87;
+
+  // CSI promedio (agencias con datos)
+  const csiAgencias = Object.keys(data.csi ?? {});
+  const csiVals = csiAgencias.map(a => data.csi[a]?.csi ?? 0).filter(v => v > 0);
+  const csiPromedio = csiVals.length > 0 ? (csiVals.reduce((s, v) => s + v, 0) / csiVals.length) : null;
+  const csiObj = csiAgencias.length > 0 ? ((data.csi[csiAgencias[0]]?.objetivo ?? 0.87) * 100) : 87;
+
   const vauOk = AGENCIAS.filter(a => data.vau[a]).length;
   const wsReal = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.real ?? 0), 0);
   const wsObj  = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.objetivo ?? 0), 0);
+  const vanReal = AGENCIAS.reduce((s, a) => s + (data.van[a]?.real ?? 0), 0);
+  const vanObj  = AGENCIAS.reduce((s, a) => s + (data.van[a]?.objetivo ?? 0), 0);
 
   const kpis = [
-    { label: `Ventas ${mesAbrevCap} Interno`, value: `${avanceV}%`, sub: `${totalFact}/${totalObj} unid.`, ok: avanceV >= 80 },
-    { label: `Ventas ${mesAbrevCap} MX`,      value: `${avanceMx}%`, sub: `${totalFactMx}/${totalObjMx} unid.`, ok: avanceMx >= 80 },
-    { label: "ISI Cumplimiento",   value: `${isiOk}/${AGENCIAS.length}`, sub: "agencias ≥ objetivo", ok: isiOk === AGENCIAS.length },
-    { label: "VAU Cumplimiento",   value: `${vauOk}/${AGENCIAS.length}`, sub: "agencias cumplen", ok: vauOk === AGENCIAS.length },
-    { label: `WS Total ${mesAbrevCap}`,     value: wsReal, sub: `de ${wsObj} objetivo`, ok: wsReal >= wsObj },
-    { label: `VAN Total ${mesAbrevCap}`,      value: AGENCIAS.reduce((s,a) => s+(data.van[a]?.real??0),0), sub: `de ${AGENCIAS.reduce((s,a)=>s+(data.van[a]?.objetivo??0),0)} objetivo`, ok: false },
+    { label: `Ventas ${mesAbrevCap} Interno`,      value: `${avanceV}%`,   sub: `${totalFact}/${totalObj} unid.`,           ok: avanceV >= 80 },
+    { label: `Ventas ${mesAbrevCap} Changan MX`,   value: `${avanceMx}%`,  sub: `${totalFactMx}/${totalObjMx} unid.`,       ok: avanceMx >= 80 },
+    { label: "SSI Promedio",                        value: ssiPromedio !== null ? `${ssiPromedio.toFixed(1)}%` : "—", sub: `obj. ${ssiObj}%`, ok: ssiPromedio !== null && ssiPromedio >= ssiObj },
+    { label: "CSI Promedio",                        value: csiPromedio !== null ? `${csiPromedio.toFixed(1)}%` : "—", sub: `obj. ${csiObj}%`, ok: csiPromedio !== null && csiPromedio >= csiObj },
+    { label: "VAU Cumplimiento",                    value: `${vauOk}/${AGENCIAS.length}`, sub: "agencias cumplen",           ok: vauOk === AGENCIAS.length },
+    { label: `WS Total ${mesAbrevCap}`,             value: wsReal,          sub: `de ${wsObj} objetivo`,                     ok: wsReal >= wsObj },
+    { label: `VAN Total ${mesAbrevCap}`,            value: vanReal,         sub: `de ${vanObj} objetivo`,                    ok: vanObj > 0 && vanReal >= vanObj },
   ];
 
   return (
@@ -1859,13 +1874,13 @@ function FunnelEtapas({ etapasData }) {
                 stroke={color}
                 strokeWidth="1.5"
               />
-              <text x={widthSvg / 2} y={yTop + stepHeight / 2 - 6} textAnchor="middle" fontSize="13" fontWeight="700" fill="#0a1628">
+              <text x={widthSvg / 2} y={yTop + stepHeight / 2 - 6} textAnchor="middle" fontSize="13" fontWeight="700" fill="#f1f5f9">
                 {e.label}
               </text>
-              <text x={widthSvg / 2} y={yTop + stepHeight / 2 + 14} textAnchor="middle" fontSize="15" fontWeight="800" fill="#0a1628">
+              <text x={widthSvg / 2} y={yTop + stepHeight / 2 + 14} textAnchor="middle" fontSize="15" fontWeight="800" fill="#f1f5f9">
                 {e.valor}
                 {pasoPct !== null && (
-                  <tspan fontSize="11" fontWeight="700"> · {pasoPct.toFixed(0)}% paso{e.objetivoPct !== null ? ` (obj. ${e.objetivoPct}%)` : ""}</tspan>
+                  <tspan fontSize="11" fontWeight="700" fill="#e2e8f0"> · {pasoPct.toFixed(0)}% paso{e.objetivoPct !== null ? ` (obj. ${e.objetivoPct}%)` : ""}</tspan>
                 )}
               </text>
             </g>
@@ -1943,7 +1958,12 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
       await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, agregado);
       setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: agregado }));
       // El total de leads del reporte alimenta automáticamente la primera etapa del Funnel.
-      if (onFunnelFieldChange) onFunnelFieldChange(agenciaSel, "leads", agregado.total);
+      if (onFunnelFieldChange) {
+        onFunnelFieldChange(agenciaSel, "leads", agregado.total);
+        // "Asignado" en el reporte = leads ya asignados formalmente a un asesor
+        const asignadosDelReporte = agregado.porEstatus["Asignado"] ?? 0;
+        if (asignadosDelReporte > 0) onFunnelFieldChange(agenciaSel, "asignados", asignadosDelReporte);
+      }
     } catch (err) {
       setErrorCarga("No se pudo leer el archivo. Verifica que sea un Excel válido del reporte de Fuentes.");
     } finally {
@@ -2082,12 +2102,12 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
               <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.total}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
-              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>VENTAS CERRADAS (REPORTE)</div>
-              <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{ventasTotal}</div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>VENTAS CERRADAS (FUNNEL)</div>
+              <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{funnelConsolidado.ventas}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #60a5fa", borderRadius: 8, padding: "12px 14px" }}>
-              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TASA DE CIERRE (REPORTE)</div>
-              <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{tasaCierre !== null ? `${tasaCierre.toFixed(1)}%` : "—"}</div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TASA DE CIERRE (FUNNEL)</div>
+              <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{funnelConsolidado.leads > 0 ? `${(funnelConsolidado.ventas / funnelConsolidado.leads * 100).toFixed(1)}%` : "—"}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #f87171", borderRadius: 8, padding: "12px 14px" }}>
               <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>SIN ATENDER</div>
