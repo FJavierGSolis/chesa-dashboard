@@ -1851,26 +1851,14 @@ function FunnelEtapas({ etapasData }) {
   const totalHeight = etapasData.length * (stepHeight + gap) - gap;
   const minFrac = 0.10; // ancho mínimo absoluto para que la etapa siempre sea visible
 
-  // Calcular la fracción de ancho acumulada para cada etapa
-  const fracs = etapasData.map((e, i) => {
-    if (i === 0) return 1.0; // Leads = ancho completo
-    const prev = etapasData[i - 1];
-    const pasoPct = prev.valor > 0 ? (e.valor / prev.valor * 100) : 0;
-    const obj = e.objetivoPct ?? 100;
-    // Fracción relativa a la etapa anterior: cap en 1.0 (no ensanchar si supera objetivo)
-    const fracRelativa = obj > 0 ? Math.min(pasoPct / obj, 1.0) : (prev.valor > 0 ? e.valor / prev.valor : 0);
-    // Multiplicamos con la fracción acumulada de la etapa anterior para propagar el efecto
-    return Math.max(fracs[i - 1] * fracRelativa, minFrac);
-  });
-  // Fix: fracs se llena recursivamente pero la closure no tiene acceso al array en construcción.
-  // Recalculamos en un segundo paso lineal:
+  // Fracción de ancho acumulada por etapa, calculada de forma iterativa.
   const fracsCalc = [];
   for (let i = 0; i < etapasData.length; i++) {
     if (i === 0) { fracsCalc.push(1.0); continue; }
     const prev = etapasData[i - 1];
-    const pasoPct = prev.valor > 0 ? (etapasData[i].valor / prev.valor * 100) : 0;
+    const pasoPct = (prev.valor ?? 0) > 0 ? ((etapasData[i].valor ?? 0) / prev.valor * 100) : 0;
     const obj = etapasData[i].objetivoPct ?? 100;
-    const fracRelativa = obj > 0 ? Math.min(pasoPct / obj, 1.0) : (prev.valor > 0 ? etapasData[i].valor / prev.valor : 0);
+    const fracRelativa = obj > 0 ? Math.min(pasoPct / obj, 1.0) : ((prev.valor ?? 0) > 0 ? (etapasData[i].valor ?? 0) / prev.valor : 0);
     fracsCalc.push(Math.max(fracsCalc[i - 1] * fracRelativa, minFrac));
   }
 
