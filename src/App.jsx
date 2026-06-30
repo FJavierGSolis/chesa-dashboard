@@ -1837,50 +1837,90 @@ const PALETA_FUNNEL = ["#3b9eea", "#D4AF37", "#4ade80", "#c084fc", "#fb923c", "#
 
 function FunnelEtapas({ etapasData }) {
   // etapasData: [{ label, valor, objetivoPct }]
-  const maxValor = Math.max(1, ...etapasData.map(e => e.valor));
-  const widthSvg = 640;
-  const stepHeight = 56;
-  const gap = 6;
-  const totalHeight = etapasData.length * (stepHeight + gap) - gap;
-  const minAnchoPct = 0.16; // ancho mínimo del trapecio para que la última etapa siga siendo visible
+  // Lógica de ancho:
+  // - Etapa 0 (Leads): siempre 100% del ancho disponible.
+  // - Etapas siguientes: el ancho es proporcional al % de cumplimiento del objetivo de paso.
+  //   Si pasoPct >= objetivoPct  → ancho al 100% del anterior (embudo recto o cumplido).
+  //   Si pasoPct < objetivoPct   → ancho = (pasoPct / objetivoPct) del anterior.
+  //   Si no hay objetivo definido → proporcional al valor absoluto vs. etapa anterior.
+  // El resultado: a mayor distancia del objetivo, más se angosta el trapecio visualmente.
 
-  const anchoFracPara = (valor) => {
-    const frac = maxValor > 0 ? valor / maxValor : 0;
-    return minAnchoPct + (1 - minAnchoPct) * frac;
-  };
+  const widthSvg = 640;
+  const stepHeight = 60;
+  const gap = 5;
+  const totalHeight = etapasData.length * (stepHeight + gap) - gap;
+  const minFrac = 0.10; // ancho mínimo absoluto para que la etapa siempre sea visible
+
+  // Calcular la fracción de ancho acumulada para cada etapa
+  const fracs = etapasData.map((e, i) => {
+    if (i === 0) return 1.0; // Leads = ancho completo
+    const prev = etapasData[i - 1];
+    const pasoPct = prev.valor > 0 ? (e.valor / prev.valor * 100) : 0;
+    const obj = e.objetivoPct ?? 100;
+    // Fracción relativa a la etapa anterior: cap en 1.0 (no ensanchar si supera objetivo)
+    const fracRelativa = obj > 0 ? Math.min(pasoPct / obj, 1.0) : (prev.valor > 0 ? e.valor / prev.valor : 0);
+    // Multiplicamos con la fracción acumulada de la etapa anterior para propagar el efecto
+    return Math.max(fracs[i - 1] * fracRelativa, minFrac);
+  });
+  // Fix: fracs se llena recursivamente pero la closure no tiene acceso al array en construcción.
+  // Recalculamos en un segundo paso lineal:
+  const fracsCalc = [];
+  for (let i = 0; i < etapasData.length; i++) {
+    if (i === 0) { fracsCalc.push(1.0); continue; }
+    const prev = etapasData[i - 1];
+    const pasoPct = prev.valor > 0 ? (etapasData[i].valor / prev.valor * 100) : 0;
+    const obj = etapasData[i].objetivoPct ?? 100;
+    const fracRelativa = obj > 0 ? Math.min(pasoPct / obj, 1.0) : (prev.valor > 0 ? etapasData[i].valor / prev.valor : 0);
+    fracsCalc.push(Math.max(fracsCalc[i - 1] * fracRelativa, minFrac));
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
       <svg width="100%" viewBox={`0 0 ${widthSvg} ${totalHeight}`} style={{ maxWidth: widthSvg }}>
         {etapasData.map((e, i) => {
-          const fracTop = anchoFracPara(e.valor);
-          const fracBottom = i < etapasData.length - 1 ? anchoFracPara(etapasData[i + 1].valor) : fracTop * 0.92;
-          const yTop = i * (stepHeight + gap);
+          const fracTop    = fracsCalc[i];
+          const fracBottom = i < etapasData.length - 1 ? fracsCalc[i + 1] : fracsCalc[i] * 0.92;
+          const yTop    = i * (stepHeight + gap);
           const yBottom = yTop + stepHeight;
-          const topWidth = widthSvg * fracTop;
+          const topWidth    = widthSvg * fracTop;
           const bottomWidth = widthSvg * fracBottom;
-          const xTopLeft = (widthSvg - topWidth) / 2;
-          const xTopRight = xTopLeft + topWidth;
-          const xBottomLeft = (widthSvg - bottomWidth) / 2;
+          const xTopLeft    = (widthSvg - topWidth) / 2;
+          const xTopRight   = xTopLeft + topWidth;
+          const xBottomLeft  = (widthSvg - bottomWidth) / 2;
           const xBottomRight = xBottomLeft + bottomWidth;
-          const pasoPct = i > 0 && etapasData[i - 1].valor > 0 ? (e.valor / etapasData[i - 1].valor * 100) : null;
+          const pasoPct = i > 0 && etapasData[i - 1].valor > 0
+            ? (e.valor / etapasData[i - 1].valor * 100)
+            : null;
+          const cumple = pasoPct !== null && e.objetivoPct !== null
+            ? pasoPct >= e.objetivoPct
+            : null;
           const color = PALETA_FUNNEL[i % PALETA_FUNNEL.length];
           return (
             <g key={e.label}>
               <polygon
                 points={`${xTopLeft},${yTop} ${xTopRight},${yTop} ${xBottomRight},${yBottom} ${xBottomLeft},${yBottom}`}
                 fill={color}
-                fillOpacity="0.85"
+                fillOpacity="0.88"
                 stroke={color}
-                strokeWidth="1.5"
+                strokeWidth="1"
               />
-              <text x={widthSvg / 2} y={yTop + stepHeight / 2 - 6} textAnchor="middle" fontSize="13" fontWeight="700" fill="#f1f5f9">
+              {/* Etiqueta del nombre */}
+              <text x={widthSvg / 2} y={yTop + stepHeight / 2 - 7}
+                textAnchor="middle" fontSize="12" fontWeight="700" fill="#f1f5f9">
                 {e.label}
               </text>
-              <text x={widthSvg / 2} y={yTop + stepHeight / 2 + 14} textAnchor="middle" fontSize="15" fontWeight="800" fill="#f1f5f9">
+              {/* Valor + % de paso */}
+              <text x={widthSvg / 2} y={yTop + stepHeight / 2 + 13}
+                textAnchor="middle" fontSize="14" fontWeight="800" fill="#f1f5f9">
                 {e.valor}
                 {pasoPct !== null && (
-                  <tspan fontSize="11" fontWeight="700" fill="#e2e8f0"> · {pasoPct.toFixed(0)}% paso{e.objetivoPct !== null ? ` (obj. ${e.objetivoPct}%)` : ""}</tspan>
+                  <tspan
+                    fontSize="11"
+                    fontWeight="600"
+                    fill={cumple ? "#86efac" : "#fca5a5"}
+                  >
+                    {" "}· {pasoPct.toFixed(0)}%{e.objetivoPct !== null ? ` / obj. ${e.objetivoPct}%` : ""}
+                  </tspan>
                 )}
               </text>
             </g>
