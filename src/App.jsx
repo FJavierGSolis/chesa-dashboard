@@ -4243,6 +4243,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
   const saveTimer = useRef(null);
   const isSavingRef = useRef(false);
   const convSaveTimer = useRef(null);
+  const isSavingConversionRef = useRef(false);
 
   const currentMonthKey = getOperativeMonthKey();
   const [viewMonth, setViewMonth] = useState(currentMonthKey); // mes que se está viendo
@@ -4256,6 +4257,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
   // ── Cargar conversión de Firebase al montar + polling ───────────────────────
   useEffect(() => {
     const loadConversion = async () => {
+      if (isSavingConversionRef.current) return; // evita pisar cambios locales no guardados aún
       const raw = await fbGet(CONVERSION_PATH);
       if (raw && typeof raw === "object") {
         const merged = {};
@@ -4272,7 +4274,14 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
 
   const scheduleSaveConversion = (next) => {
     if (convSaveTimer.current) clearTimeout(convSaveTimer.current);
-    convSaveTimer.current = setTimeout(() => { fbSet(CONVERSION_PATH, next); }, 800);
+    isSavingConversionRef.current = true;
+    convSaveTimer.current = setTimeout(async () => {
+      try {
+        await fbSet(CONVERSION_PATH, next);
+      } finally {
+        isSavingConversionRef.current = false;
+      }
+    }, 800);
   };
 
   const onAsesorFieldChange = (agencia, id, field, val) => {
