@@ -1836,38 +1836,28 @@ function agregarFuentesLeads(registros) {
 const PALETA_FUNNEL = ["#3b9eea", "#D4AF37", "#4ade80", "#c084fc", "#fb923c", "#f472b6", "#60a5fa", "#fbbf24"];
 
 function FunnelEtapas({ etapasData }) {
-  // etapasData: [{ label, valor, objetivoPct }]
-  // Lógica de ancho:
-  // - Etapa 0 (Leads): siempre 100% del ancho disponible.
-  // - Etapas siguientes: el ancho es proporcional al % de cumplimiento del objetivo de paso.
-  //   Si pasoPct >= objetivoPct  → ancho al 100% del anterior (embudo recto o cumplido).
-  //   Si pasoPct < objetivoPct   → ancho = (pasoPct / objetivoPct) del anterior.
-  //   Si no hay objetivo definido → proporcional al valor absoluto vs. etapa anterior.
-  // El resultado: a mayor distancia del objetivo, más se angosta el trapecio visualmente.
+  // Ancho de cada trapecio = valor / leads_total (Leads siempre = 100%).
+  // El texto y % de paso se mantienen igual que antes.
 
   const widthSvg = 640;
   const stepHeight = 60;
   const gap = 5;
   const totalHeight = etapasData.length * (stepHeight + gap) - gap;
-  const minFrac = 0.10; // ancho mínimo absoluto para que la etapa siempre sea visible
+  const minFrac = 0.08; // mínimo visible aunque el valor sea 0
 
-  // Fracción de ancho acumulada por etapa, calculada de forma iterativa.
-  const fracsCalc = [];
-  for (let i = 0; i < etapasData.length; i++) {
-    if (i === 0) { fracsCalc.push(1.0); continue; }
-    const prev = etapasData[i - 1];
-    const pasoPct = (prev.valor ?? 0) > 0 ? ((etapasData[i].valor ?? 0) / prev.valor * 100) : 0;
-    const obj = etapasData[i].objetivoPct ?? 100;
-    const fracRelativa = obj > 0 ? Math.min(pasoPct / obj, 1.0) : ((prev.valor ?? 0) > 0 ? (etapasData[i].valor ?? 0) / prev.valor : 0);
-    fracsCalc.push(Math.max(fracsCalc[i - 1] * fracRelativa, minFrac));
-  }
+  const leadsTotal = etapasData[0]?.valor ?? 1;
+
+  const fracPara = (valor) => {
+    if (leadsTotal <= 0) return minFrac;
+    return Math.max((valor ?? 0) / leadsTotal, minFrac);
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
       <svg width="100%" viewBox={`0 0 ${widthSvg} ${totalHeight}`} style={{ maxWidth: widthSvg }}>
         {etapasData.map((e, i) => {
-          const fracTop    = fracsCalc[i];
-          const fracBottom = i < etapasData.length - 1 ? fracsCalc[i + 1] : fracsCalc[i] * 0.92;
+          const fracTop    = fracPara(e.valor);
+          const fracBottom = i < etapasData.length - 1 ? fracPara(etapasData[i + 1].valor) : fracPara(e.valor) * 0.92;
           const yTop    = i * (stepHeight + gap);
           const yBottom = yTop + stepHeight;
           const topWidth    = widthSvg * fracTop;
@@ -1876,8 +1866,8 @@ function FunnelEtapas({ etapasData }) {
           const xTopRight   = xTopLeft + topWidth;
           const xBottomLeft  = (widthSvg - bottomWidth) / 2;
           const xBottomRight = xBottomLeft + bottomWidth;
-          const pasoPct = i > 0 && etapasData[i - 1].valor > 0
-            ? (e.valor / etapasData[i - 1].valor * 100)
+          const pasoPct = i > 0 && (etapasData[i - 1].valor ?? 0) > 0
+            ? ((e.valor ?? 0) / etapasData[i - 1].valor * 100)
             : null;
           const cumple = pasoPct !== null && e.objetivoPct !== null
             ? pasoPct >= e.objetivoPct
@@ -1892,20 +1882,18 @@ function FunnelEtapas({ etapasData }) {
                 stroke={color}
                 strokeWidth="1"
               />
-              {/* Etiqueta del nombre */}
               <text x={widthSvg / 2} y={yTop + stepHeight / 2 - 7}
                 textAnchor="middle" fontSize="12" fontWeight="700" fill="#f1f5f9">
                 {e.label}
               </text>
-              {/* Valor + % de paso */}
               <text x={widthSvg / 2} y={yTop + stepHeight / 2 + 13}
                 textAnchor="middle" fontSize="14" fontWeight="800" fill="#f1f5f9">
                 {e.valor}
                 {pasoPct !== null && (
                   <tspan
                     fontSize="11"
-                    fontWeight="600"
-                    fill={cumple ? "#86efac" : "#fca5a5"}
+                    fontWeight="700"
+                    fill={cumple ? "#86efac" : "#ff4444"}
                   >
                     {" "}· {pasoPct.toFixed(0)}%{e.objetivoPct !== null ? ` / obj. ${e.objetivoPct}%` : ""}
                   </tspan>
