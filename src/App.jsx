@@ -2015,9 +2015,16 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
   const datosTemperaturaPie = datos ? Object.entries(datos.porTemperatura).map(([label, value]) => ({ label, value })) : [];
   const coloresTemperatura = datosTemperaturaPie.map(d => COLORES_TEMPERATURA[d.label] || "#64748b");
 
-  const datosProductoPie = datos
-    ? Object.entries(datos.porProducto).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([label, value]) => ({ label, value }))
-    : [];
+  // Top Productos: mostramos los 7 más frecuentes + "Otros" con el resto,
+  // así el total del pastel siempre cuadra con el total real de leads del reporte.
+  const datosProductoPie = (() => {
+    if (!datos) return [];
+    const sorted = Object.entries(datos.porProducto).sort((a, b) => b[1] - a[1]);
+    const top7 = sorted.slice(0, 7).map(([label, value]) => ({ label, value }));
+    const otrosTotal = sorted.slice(7).reduce((s, [, v]) => s + v, 0);
+    if (otrosTotal > 0) top7.push({ label: "Otros", value: otrosTotal });
+    return top7;
+  })();
   const coloresProducto = ["#3b9eea", "#D4AF37", "#4ade80", "#c084fc", "#fb923c", "#f472b6", "#60a5fa", "#fbbf24"];
 
   const ventasTotal = datos ? ((datos.porEstatus["1 Ventas"] ?? 0) + (datos.porEstatus["2 Ventas"] ?? 0)) : 0;
@@ -2030,12 +2037,21 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
     const row = funnelData[ag] ?? funnelAgenciaBlank();
     ETAPAS_FUNNEL.forEach(et => { funnelConsolidado[et.key] += row[et.key] ?? 0; });
   });
+
+  // Leads: si hay fuentes filtradas usamos el total del reporte filtrado (datos.total),
+  // que ya está calculado solo con los registros de las fuentes seleccionadas.
+  // Si no hay reporte cargado, caemos al total guardado en Firebase.
+  const todasFuentesSeleccionadas = fuentesSel.length === FUENTES_LEAD.length;
+  const leadsParaFunnel = (!todasFuentesSeleccionadas && datos)
+    ? datos.total
+    : funnelConsolidado.leads;
+
   const etapasData = ETAPAS_FUNNEL.map(et => ({
     label: et.label,
-    valor: funnelConsolidado[et.key],
+    valor: et.key === "leads" ? leadsParaFunnel : funnelConsolidado[et.key],
     objetivoPct: et.objetivo !== null ? Math.round(et.objetivo * 100) : null,
   }));
-  const tasaCierreFunnel = funnelConsolidado.leads > 0 ? (funnelConsolidado.ventas / funnelConsolidado.leads * 100) : null;
+  const tasaCierreFunnel = leadsParaFunnel > 0 ? (funnelConsolidado.ventas / leadsParaFunnel * 100) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -2114,7 +2130,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
-              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TOTAL LEADS</div>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TOTAL LEADS{!todasFuentesSeleccionadas ? " (FILTRADO)" : ""}</div>
               <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.total}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
@@ -2174,7 +2190,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
             {ETAPAS_FUNNEL.map(et => (
               <div key={et.key} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 12px" }}>
                 <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .6, marginBottom: 6 }}>
-                  {et.label.toUpperCase()}{et.key === "leads" ? " (auto)" : ""}
+                  {et.label.toUpperCase()}{et.key === "leads" ? (todasFuentesSeleccionadas ? " (auto)" : " (filtrado)") : ""}
                 </div>
                 <NumInput
                   value={(funnelData[agenciaSel] ?? funnelAgenciaBlank())[et.key]}
