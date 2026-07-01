@@ -2041,7 +2041,6 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
   // Leads: si hay fuentes filtradas usamos el total del reporte filtrado (datos.total),
   // que ya está calculado solo con los registros de las fuentes seleccionadas.
   // Si no hay reporte cargado, caemos al total guardado en Firebase.
-  const todasFuentesSeleccionadas = fuentesSel.length === FUENTES_LEAD.length;
   const leadsParaFunnel = (!todasFuentesSeleccionadas && datos)
     ? datos.total
     : funnelConsolidado.leads;
