@@ -2192,7 +2192,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
                   {et.label.toUpperCase()}{et.key === "leads" ? (todasFuentesSeleccionadas ? " (auto)" : " (filtrado)") : ""}
                 </div>
                 <NumInput
-                  value={(funnelData[agenciaSel] ?? funnelAgenciaBlank())[et.key]}
+                  value={et.key === "leads" ? leadsParaFunnel : (funnelData[agenciaSel] ?? funnelAgenciaBlank())[et.key]}
                   onChange={v => onFunnelFieldChange(agenciaSel, et.key, v)}
                   width={70}
                   disabled={et.key === "leads"}
@@ -2250,7 +2250,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
                 />
                 <div style={{ color: "#64748b", fontSize: 11 }}>
                   {funnelConsolidado.leads > 0
-                    ? `${((((funnelData[agenciaSel] ?? funnelAgenciaBlank()).asignados) / funnelConsolidado.leads) * 100).toFixed(0)}% de leads asignados`
+                    ? `${((((funnelData[agenciaSel] ?? funnelAgenciaBlank()).asignados) / leadsParaFunnel) * 100).toFixed(0)}% de leads asignados`
                     : "—"}
                 </div>
               </div>
