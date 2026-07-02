@@ -1,56 +1,50 @@
-// Vercel Serverless Function
-// Recibe el prompt desde el frontend y llama a la API de Anthropic usando
-// la API key guardada como variable de entorno (nunca expuesta al navegador).
+export const config = { maxDuration: 60 };
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Método no permitido" });
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+  const { prompt, pdf } = req.body;
+  if (!prompt) return res.status(400).json({ error: "Missing prompt" });
+
+  // Construir el contenido del mensaje
+  const content = [];
+
+  // Si viene un PDF en base64, agregarlo como documento
+  if (pdf) {
+    content.push({
+      type: "document",
+      source: { type: "base64", media_type: "application/pdf", data: pdf },
+    });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: "Falta configurar ANTHROPIC_API_KEY en Vercel (Settings → Environment Variables)." });
-  }
-
-  const { prompt, messages } = req.body || {};
-
-  let finalMessages;
-  if (Array.isArray(messages) && messages.length > 0) {
-    finalMessages = messages;
-  } else if (prompt && typeof prompt === "string") {
-    finalMessages = [{ role: "user", content: prompt }];
-  } else {
-    return res.status(400).json({ error: "Falta el campo 'prompt' o 'messages' en la solicitud." });
-  }
+  // Siempre agregar el prompt de texto
+  content.push({ type: "text", text: prompt });
 
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": apiKey,
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 3000,
-        messages: finalMessages,
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        messages: [{ role: "user", content }],
       }),
     });
 
     const data = await response.json();
+    if (!response.ok) return res.status(500).json({ error: data.error?.message || "API error" });
 
-    if (!response.ok) {
-      return res.status(response.status).json({ error: data?.error?.message || "Error llamando a la API de Anthropic." });
-    }
-
-    const text = (data.content || [])
-      .map(c => (c.type === "text" ? c.text : ""))
-      .filter(Boolean)
+    const text = data.content
+      .filter(b => b.type === "text")
+      .map(b => b.text)
       .join("\n");
 
     return res.status(200).json({ text });
   } catch (err) {
-    return res.status(500).json({ error: "Error de conexión con la API de Anthropic." });
+    return res.status(500).json({ error: err.message });
   }
 }
