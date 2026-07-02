@@ -6059,23 +6059,17 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
   const generarBriefing = async () => {
     setLoading(true); setError(""); setBriefing(null);
     try {
-      // 1. Datos operativos del mes actual + funnel (síncronos, ya están en memoria)
       const resumenMes = buildResumenParaIA(data, monthKey);
       const resumenFunnel = buildResumenFunnelParaIA(funnelData);
 
-      // 2-8. Todas las lecturas Firebase en paralelo para minimizar tiempo de espera
-      const [historico, rawInv, rawSatV, rawSatS, rawSatP, rawDemos, rawVentasHist, rawAdach] = await Promise.all([
-        buildResumenHistorico(monthKey),
+      // Solo lecturas rápidas — sin buildResumenHistorico que puede tardar mucho
+      const [rawInv, rawSatV, rawSatS, rawSatP] = await Promise.all([
         fbGet("inventario"),
         fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/ventas`),
         fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/servicio`),
         fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/prospeccion`),
-        fbGet(`encuestasDemo/${monthKey}`),
-        fbGet(VENTAS_HIST_PATH),
-        fbGet(ADACH_PATH),
       ]);
 
-      // Inventario
       let resumenInventario = "";
       if (rawInv?.unidades?.length > 0) {
         const criticas = rawInv.unidades.filter(u => u.dias > 120).length;
@@ -6087,19 +6081,15 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
         resumenInventario = `\nINVENTARIO (${rawInv.unidades.length} unidades):
 - Unidades críticas (>120 días): ${criticas}
 - Unidades urgentes (91-120 días): ${urgentes}
-- Costo plan piso acumulado: $${Math.round(totalPP).toLocaleString("es-MX")}
-- Tasa plan piso: TIIE ${rawInv.tiie || 8.5}% + ${rawInv.spread || 2}% = ${((rawInv.tiie||8.5)+(rawInv.spread||2)).toFixed(2)}% anual`;
+- Costo plan piso acumulado: $${Math.round(totalPP).toLocaleString("es-MX")}`;
       }
 
-      // Satisfacción cliente
-      let resumenSatisfaccion = "";
       const procesarEncuestas = (raw, tipo) => {
         const arr = Array.isArray(raw) ? raw : (raw ? Object.values(raw) : []);
         if (!arr.length) return null;
         const califs = arr.map(r => r.calificacion).filter(v => v != null);
         const prom = califs.length ? (califs.reduce((s,v)=>s+v,0)/califs.length).toFixed(1) : "—";
-        const conQueja = arr.filter(r => r.queja && r.queja.trim().length > 3 &&
-          !["sin comentarios","sin comentario",""].includes(r.queja.trim().toLowerCase())).length;
+        const conQueja = arr.filter(r => r.queja && r.queja.trim().length > 3).length;
         return `${tipo}: ${arr.length} encuestas, promedio ${prom}/10, quejas: ${conQueja}`;
       };
       const lineasSat = [
@@ -6107,110 +6097,23 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
         procesarEncuestas(rawSatS, "Servicio"),
         procesarEncuestas(rawSatP, "Prospección"),
       ].filter(Boolean);
-      if (lineasSat.length > 0) {
-        resumenSatisfaccion = `\nSATISFACCIÓN CLIENTE — ${getMonthLabel(monthKey)}:\n` + lineasSat.map(l => `- ${l}`).join("\n");
-      }
+      const resumenSatisfaccion = lineasSat.length > 0
+        ? `\nSATISFACCIÓN CLIENTE:\n` + lineasSat.map(l => `- ${l}`).join("\n") : "";
 
-      // 5. Demos (ya leído en Promise.all)
-      let resumenDemos = "";
-      if (rawDemos) {
-        const demos = Array.isArray(rawDemos) ? rawDemos : Object.values(rawDemos);
-        if (demos.length > 0) {
-          const califs = demos.map(d => d.calificacion).filter(v => v != null);
-          const prom = califs.length ? (califs.reduce((s,v)=>s+v,0)/califs.length).toFixed(1) : "—";
-          const modelos = {};
-          demos.forEach(d => { if (d.modelo) modelos[d.modelo] = (modelos[d.modelo]||0)+1; });
-          const topModelo = Object.entries(modelos).sort((a,b)=>b[1]-a[1])[0];
-          resumenDemos = `\nDEMOS (encuestas prueba de manejo) — ${getMonthLabel(monthKey)}:
-- Total encuestas: ${demos.length}
-- Calificación promedio: ${prom}/10
-- Modelo más demostrado: ${topModelo ? `${topModelo[0]} (${topModelo[1]} demos)` : "—"}`;
-        }
-      }
-
-      // 6. Productividad asesores (ya leído en Promise.all)
-      let resumenProductividad = "";
-      if (rawVentasHist?.registros?.length > 0) {
-        const registros = rawVentasHist.registros;
-        const meses = [...new Set(registros.map(v => v.mes).filter(Boolean))].sort();
-        const ultimoMes = meses[meses.length - 1];
-        if (ultimoMes) {
-          const [y, m] = ultimoMes.split("-").map(Number);
-          const trim = [];
-          for (let i = 2; i >= 0; i--) {
-            let mm = m - i; let yy = y;
-            if (mm <= 0) { mm += 12; yy -= 1; }
-            trim.push(`${yy}-${String(mm).padStart(2,"0")}`);
-          }
-          const ventasTrim = registros.filter(v => trim.includes(v.mes));
-          const porAsesor = {};
-          ventasTrim.forEach(v => {
-            if (!porAsesor[v.nombre]) porAsesor[v.nombre] = { ventas: 0, utilidad: 0 };
-            porAsesor[v.nombre].ventas++;
-            porAsesor[v.nombre].utilidad += v.utilidad || 0;
-          });
-          const ranking = Object.entries(porAsesor)
-            .sort((a,b) => b[1].ventas - a[1].ventas)
-            .slice(0, 5);
-          const totalTrim = ventasTrim.length;
-          const promMensual = (totalTrim / 3).toFixed(1);
-          resumenProductividad = `\nPRODUCTIVIDAD ASESORES — Último trimestre (${trim.join(" → ")}):
-- Total ventas trimestre: ${totalTrim} (${promMensual}/mes promedio)
-- Top 5 asesores: ${ranking.map(([n,d]) => `${n} (${d.ventas})`).join(", ")}
-- Asesor líder: ${ranking[0]?.[0] || "—"} con ${ranking[0]?.[1]?.ventas || 0} ventas`;
-        }
-      }
-
-      // 7. Mercado ADACH (ya leído en Promise.all)
-      let resumenMercado = "";
-      if (rawAdach && typeof rawAdach === "object") {
-        const mesesAdach = Object.keys(rawAdach).sort().reverse();
-        if (mesesAdach.length > 0) {
-          const ultimoAdach = rawAdach[mesesAdach[0]];
-          const d = ultimoAdach?.datos;
-          if (d) {
-            const competidores = d.competidoresChinos?.map(c => `${c.marca}: ${c.unidades}`).join(", ") || "—";
-            resumenMercado = `\nMERCADO AUTOMOTRIZ CHIAPAS — ${getMonthLabel(mesesAdach[0])} (Fuente ADACH):
-- Mercado total Chiapas: ${d.mercadoTotal} unidades (${d.variacionVsAnioAnterior >= 0 ? "+" : ""}${d.variacionVsAnioAnterior}% vs año anterior)
-- CHESA/Changan: ${d.changanUnidades} unidades (${d.changanShare}% del mercado total)
-- Segmento marcas emergentes: ${d.marcasEmergentesTotal} unidades (${d.marcasEmergentesShare}% del mercado)
-- Competidores chinos directos: ${competidores}
-- Proyección mercado cierre 2026: ${d.proyeccionCierreAnio} unidades (tendencia ${d.tendenciaAnio >= 0 ? "+" : ""}${d.tendenciaAnio}%)`;
-          }
-        }
-      }
-
-      // 8. Construir el prompt completo
       const hoy = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
       const prompt = `${CONTEXTO_CHESA}
 
-Hoy es ${hoy}. Javier acaba de abrir su plataforma Foresight Auto Intelligence. Ya leíste toda la información disponible del negocio. Escríbele un briefing ejecutivo CONVERSACIONAL — como si fueras su asesor de confianza que llegó antes que él, ya analizó todo y sabe exactamente cuáles son las prioridades reales del negocio.
+Hoy es ${hoy}. Escríbele a Javier García un briefing ejecutivo conversacional — como su asesor de confianza.
 
-REGLAS DE TONO Y FORMATO:
-- Habla directamente a Javier, en segunda persona ("detecté", "te recomiendo", "tu equipo")
-- Sé específico con números reales — nunca digas "algunos indicadores", di cuáles y cuánto
-- Prioriza acciones sobre diagnósticos — cada problema debe ir acompañado de QUÉ HACER HOY
-- Estima impacto cuando sea posible ("esto representa ~3 ventas adicionales")
-- Máximo 5 situaciones de riesgo, ordenadas según las prioridades reales del negocio
-- Máximo 3 acciones concretas para hoy, con impacto estimado
-- Cierra con una proyección: si se ejecutan las acciones, ¿qué probabilidad hay de cerrar el mes en objetivo?
-- Formato: párrafos cortos, sin tablas, sin bullets excesivos. Que suene a persona, no a reporte.
-- Usa markdown solo para negritas en datos clave y encabezados ## cuando sea necesario
-- Integra los datos de satisfacción, demos, productividad y mercado ADACH cuando sean relevantes para las prioridades
+REGLAS: habla en segunda persona, sé específico con números, prioriza acciones sobre diagnósticos, máximo 5 riesgos y 3 acciones concretas para hoy, cierra con proyección del mes. Párrafos cortos, markdown solo para negritas y encabezados ##.
 
-DATOS OPERATIVOS DEL MES:
+DATOS OPERATIVOS:
 ${resumenMes}
 
-FUNNEL DE VENTAS:
+FUNNEL:
 ${resumenFunnel}
-
-HISTÓRICO COMPLETO:
-${historico}
 ${resumenInventario}
-${resumenSatisfaccion}
-${resumenDemos}
-${resumenProductividad}
-${resumenMercado}`;
+${resumenSatisfaccion}`;
 
       const response = await fetch("/api/analisis", {
         method: "POST",
@@ -6219,7 +6122,6 @@ ${resumenMercado}`;
       });
       const responseData = await response.json();
       if (!response.ok) { setError(responseData.error || "Error generando el briefing."); return; }
-
       setBriefing({
         texto: responseData.text || "No se recibió respuesta.",
         generadoEn: new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }),
