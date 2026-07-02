@@ -5836,15 +5836,23 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
   const generarBriefing = async () => {
     setLoading(true); setError(""); setBriefing(null);
     try {
-      // 1. Datos del mes actual
+      // 1. Datos operativos del mes actual + funnel (síncronos, ya están en memoria)
       const resumenMes = buildResumenParaIA(data, monthKey);
       const resumenFunnel = buildResumenFunnelParaIA(funnelData);
 
-      // 2. Histórico completo
-      const historico = await buildResumenHistorico(monthKey);
+      // 2-8. Todas las lecturas Firebase en paralelo para minimizar tiempo de espera
+      const [historico, rawInv, rawSatV, rawSatS, rawSatP, rawDemos, rawVentasHist, rawAdach] = await Promise.all([
+        buildResumenHistorico(monthKey),
+        fbGet("inventario"),
+        fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/ventas`),
+        fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/servicio`),
+        fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/prospeccion`),
+        fbGet(`encuestasDemo/${monthKey}`),
+        fbGet(VENTAS_HIST_PATH),
+        fbGet(ADACH_PATH),
+      ]);
 
-      // 3. Inventario (si existe en Firebase)
-      const rawInv = await fbGet("inventario");
+      // Inventario
       let resumenInventario = "";
       if (rawInv?.unidades?.length > 0) {
         const criticas = rawInv.unidades.filter(u => u.dias > 120).length;
@@ -5860,29 +5868,98 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
 - Tasa plan piso: TIIE ${rawInv.tiie || 8.5}% + ${rawInv.spread || 2}% = ${((rawInv.tiie||8.5)+(rawInv.spread||2)).toFixed(2)}% anual`;
       }
 
-      // 4. El prompt — diseñado para que la IA hable como consejero, no como generador de reportes
+      // Satisfacción cliente
+      let resumenSatisfaccion = "";
+      const procesarEncuestas = (raw, tipo) => {
+        const arr = Array.isArray(raw) ? raw : (raw ? Object.values(raw) : []);
+        if (!arr.length) return null;
+        const califs = arr.map(r => r.calificacion).filter(v => v != null);
+        const prom = califs.length ? (califs.reduce((s,v)=>s+v,0)/califs.length).toFixed(1) : "—";
+        const conQueja = arr.filter(r => r.queja && r.queja.trim().length > 3 &&
+          !["sin comentarios","sin comentario",""].includes(r.queja.trim().toLowerCase())).length;
+        return `${tipo}: ${arr.length} encuestas, promedio ${prom}/10, quejas: ${conQueja}`;
+      };
+      const lineasSat = [
+        procesarEncuestas(rawSatV, "Ventas"),
+        procesarEncuestas(rawSatS, "Servicio"),
+        procesarEncuestas(rawSatP, "Prospección"),
+      ].filter(Boolean);
+      if (lineasSat.length > 0) {
+        resumenSatisfaccion = `\nSATISFACCIÓN CLIENTE — ${getMonthLabel(monthKey)}:\n` + lineasSat.map(l => `- ${l}`).join("\n");
+      }
+
+      // 5. Demos (ya leído en Promise.all)
+      let resumenDemos = "";
+      if (rawDemos) {
+        const demos = Array.isArray(rawDemos) ? rawDemos : Object.values(rawDemos);
+        if (demos.length > 0) {
+          const califs = demos.map(d => d.calificacion).filter(v => v != null);
+          const prom = califs.length ? (califs.reduce((s,v)=>s+v,0)/califs.length).toFixed(1) : "—";
+          const modelos = {};
+          demos.forEach(d => { if (d.modelo) modelos[d.modelo] = (modelos[d.modelo]||0)+1; });
+          const topModelo = Object.entries(modelos).sort((a,b)=>b[1]-a[1])[0];
+          resumenDemos = `\nDEMOS (encuestas prueba de manejo) — ${getMonthLabel(monthKey)}:
+- Total encuestas: ${demos.length}
+- Calificación promedio: ${prom}/10
+- Modelo más demostrado: ${topModelo ? `${topModelo[0]} (${topModelo[1]} demos)` : "—"}`;
+        }
+      }
+
+      // 6. Productividad asesores (ya leído en Promise.all)
+      let resumenProductividad = "";
+      if (rawVentasHist?.registros?.length > 0) {
+        const registros = rawVentasHist.registros;
+        const meses = [...new Set(registros.map(v => v.mes).filter(Boolean))].sort();
+        const ultimoMes = meses[meses.length - 1];
+        if (ultimoMes) {
+          const [y, m] = ultimoMes.split("-").map(Number);
+          const trim = [];
+          for (let i = 2; i >= 0; i--) {
+            let mm = m - i; let yy = y;
+            if (mm <= 0) { mm += 12; yy -= 1; }
+            trim.push(`${yy}-${String(mm).padStart(2,"0")}`);
+          }
+          const ventasTrim = registros.filter(v => trim.includes(v.mes));
+          const porAsesor = {};
+          ventasTrim.forEach(v => {
+            if (!porAsesor[v.nombre]) porAsesor[v.nombre] = { ventas: 0, utilidad: 0 };
+            porAsesor[v.nombre].ventas++;
+            porAsesor[v.nombre].utilidad += v.utilidad || 0;
+          });
+          const ranking = Object.entries(porAsesor)
+            .sort((a,b) => b[1].ventas - a[1].ventas)
+            .slice(0, 5);
+          const totalTrim = ventasTrim.length;
+          const promMensual = (totalTrim / 3).toFixed(1);
+          resumenProductividad = `\nPRODUCTIVIDAD ASESORES — Último trimestre (${trim.join(" → ")}):
+- Total ventas trimestre: ${totalTrim} (${promMensual}/mes promedio)
+- Top 5 asesores: ${ranking.map(([n,d]) => `${n} (${d.ventas})`).join(", ")}
+- Asesor líder: ${ranking[0]?.[0] || "—"} con ${ranking[0]?.[1]?.ventas || 0} ventas`;
+        }
+      }
+
+      // 7. Mercado ADACH (ya leído en Promise.all)
+      let resumenMercado = "";
+      if (rawAdach && typeof rawAdach === "object") {
+        const mesesAdach = Object.keys(rawAdach).sort().reverse();
+        if (mesesAdach.length > 0) {
+          const ultimoAdach = rawAdach[mesesAdach[0]];
+          const d = ultimoAdach?.datos;
+          if (d) {
+            const competidores = d.competidoresChinos?.map(c => `${c.marca}: ${c.unidades}`).join(", ") || "—";
+            resumenMercado = `\nMERCADO AUTOMOTRIZ CHIAPAS — ${getMonthLabel(mesesAdach[0])} (Fuente ADACH):
+- Mercado total Chiapas: ${d.mercadoTotal} unidades (${d.variacionVsAnioAnterior >= 0 ? "+" : ""}${d.variacionVsAnioAnterior}% vs año anterior)
+- CHESA/Changan: ${d.changanUnidades} unidades (${d.changanShare}% del mercado total)
+- Segmento marcas emergentes: ${d.marcasEmergentesTotal} unidades (${d.marcasEmergentesShare}% del mercado)
+- Competidores chinos directos: ${competidores}
+- Proyección mercado cierre 2026: ${d.proyeccionCierreAnio} unidades (tendencia ${d.tendenciaAnio >= 0 ? "+" : ""}${d.tendenciaAnio}%)`;
+          }
+        }
+      }
+
+      // 8. Construir el prompt completo
       const hoy = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-      const prompt = `Eres el asesor comercial estratégico de Javier García, Director de Marca de CHESA Changan — grupo automotriz con 5 agencias en Chiapas (Tuxtla Gutiérrez, Tapachula, San Cristóbal de las Casas, Comitán y Ocosingo).
-
-CONTEXTO ESTRATÉGICO DE CHESA — LEE ESTO ANTES DE ANALIZAR CUALQUIER DATO:
-
-1. CHANGAN EN CHIAPAS: Es una marca china relativamente nueva en México. El principal obstáculo comercial es la desconfianza del consumidor chiapaneco hacia las marcas chinas. Cada venta requiere un esfuerzo adicional de credibilidad y demostración. Los indicadores de satisfacción (SSI/CSI) y las pruebas de manejo (demos) son críticos porque son la herramienta principal para romper esa barrera.
-
-2. WHOLESALE (WS): NO es prioridad en este momento. CHESA está sobreinventariado. Si el WS está bajo vs objetivo, NO lo señales como problema urgente — al contrario, el objetivo prioritario es regularizar el inventario actual antes de comprar más unidades. Cualquier recomendación de compra debe basarse en el análisis de rotación real, no en el objetivo de WS.
-
-3. PLANES DE FINANCIAMIENTO: El foco principal es BBVA, que debe representar ~50% de participación en ventas financiadas. No interesa crecer en otras financieras. La excepción es CAFI (financiera de casa, para clientes rechazados por banca o no bancarizados) — esta sí es estratégica. Si ves que BBVA está por debajo del 50%, es una señal de alerta real.
-
-4. INVENTARIO: Con el sobreinventario actual, el costo de plan piso (TIIE + spread) es una pérdida financiera diaria. Las unidades con más de 90 días son prioridad de venta agresiva, no de reposición. Cualquier unidad con daño pendiente de resolver es doble riesgo: financiero y de imagen.
-
-5. COMPETIDORES DIRECTOS en Chiapas: Chevrolet, Nissan y Kia en el mismo rango de precio. El market share de Changan en Chiapas es todavía pequeño — cada venta perdida por desconfianza o falta de atención rápida al lead es una venta que se va a la competencia.
-
-PRIORIDADES EN ORDEN REAL (de mayor a menor impacto para Javier hoy):
-① Cierre de ventas del mes vs objetivo interno
-② Velocidad de contactación de leads (tiempo de respuesta)
-③ Rotación de inventario crítico (>90 días)
-④ Participación de BBVA en el mix de financiamiento
-⑤ SSI/CSI como indicador de la barrera de desconfianza
-⑥ WS: solo mencionarlo si hay un excedente por resolver, no como objetivo de compra
+      const prompt = `${CONTEXTO_CHESA}
 
 Hoy es ${hoy}. Javier acaba de abrir su plataforma Foresight Auto Intelligence. Ya leíste toda la información disponible del negocio. Escríbele un briefing ejecutivo CONVERSACIONAL — como si fueras su asesor de confianza que llegó antes que él, ya analizó todo y sabe exactamente cuáles son las prioridades reales del negocio.
 
@@ -5891,22 +5968,26 @@ REGLAS DE TONO Y FORMATO:
 - Sé específico con números reales — nunca digas "algunos indicadores", di cuáles y cuánto
 - Prioriza acciones sobre diagnósticos — cada problema debe ir acompañado de QUÉ HACER HOY
 - Estima impacto cuando sea posible ("esto representa ~3 ventas adicionales")
-- Máximo 5 situaciones de riesgo, ordenadas según las prioridades reales arriba descritas
+- Máximo 5 situaciones de riesgo, ordenadas según las prioridades reales del negocio
 - Máximo 3 acciones concretas para hoy, con impacto estimado
 - Cierra con una proyección: si se ejecutan las acciones, ¿qué probabilidad hay de cerrar el mes en objetivo?
 - Formato: párrafos cortos, sin tablas, sin bullets excesivos. Que suene a persona, no a reporte.
 - Usa markdown solo para negritas en datos clave y encabezados ## cuando sea necesario
-- NO menciones WS como problema urgente a menos que haya un excedente de inventario que resolver
+- Integra los datos de satisfacción, demos, productividad y mercado ADACH cuando sean relevantes para las prioridades
 
-DATOS DISPONIBLES:
-
+DATOS OPERATIVOS DEL MES:
 ${resumenMes}
 
+FUNNEL DE VENTAS:
 ${resumenFunnel}
 
-HISTÓRICO COMPLETO (tendencias y comparativos):
+HISTÓRICO COMPLETO:
 ${historico}
-${resumenInventario}`;
+${resumenInventario}
+${resumenSatisfaccion}
+${resumenDemos}
+${resumenProductividad}
+${resumenMercado}`;
 
       const response = await fetch("/api/analisis", {
         method: "POST",
@@ -5921,6 +6002,7 @@ ${resumenInventario}`;
         generadoEn: new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }),
       });
     } catch (e) {
+      console.error(e);
       setError("Error de conexión. Verifica tu conexión a internet.");
     } finally {
       setLoading(false);
@@ -5962,8 +6044,7 @@ ${resumenInventario}`;
               ⚡ Briefing Ejecutivo con IA
             </div>
             <div style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.6, maxWidth: 480 }}>
-              Analiza el mes actual, el histórico completo, el funnel de ventas y el inventario
-              para decirte qué requiere atención y qué acciones tomar hoy.
+            Analiza el mes actual, histórico completo, funnel, inventario, satisfacción cliente, demos, productividad de asesores y contexto de mercado ADACH para decirte qué requiere atención y qué acciones tomar hoy.
             </div>
           </div>
           <button onClick={generarBriefing} style={{
@@ -5989,8 +6070,8 @@ ${resumenInventario}`;
             Analizando tu negocio…
           </div>
           <div style={{ color: "#64748b", fontSize: 13 }}>
-            Revisando el mes actual, el histórico completo, el funnel y el inventario.
-            Esto puede tardar unos segundos.
+            Consolidando operativo, funnel, inventario, satisfacción, demos, productividad y mercado ADACH.
+            Esto toma ~20-30 segundos.
           </div>
         </div>
       )}
