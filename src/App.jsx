@@ -2356,6 +2356,554 @@ function buildResumenFunnelParaIA(funnelData) {
   return lineas.join("\n");
 }
 
+// ── SECCIÓN: Productividad Asesores ──────────────────────────────────────────
+const VENTAS_HIST_PATH = "ventasHistoricas"; // ventasHistoricas/registros = array
+
+// Catálogo de asesores: clave → { nombre, agencia }
+// GRY y GRYO se unifican como GRYO; RFX y RFXV se unifican como RFXV
+const CATALOGO_ASESORES = {
+  "AAHR":  { nombre: "Abraham Aristeo",       agencia: "TUXTLA" },
+  "ACOA":  { nombre: "Alexander Ocampo",       agencia: "COMITÁN" },
+  "AFMZ":  { nombre: "Angel Fabián",           agencia: "SAN CRISTÓBAL" },
+  "AGH":   { nombre: "Anuar Gutiérrez",        agencia: "TAPACHULA" },
+  "AMDC":  { nombre: "Angélica Marieli",       agencia: "OCOSINGO" },
+  "CGG":   { nombre: "Cristina Gómez",         agencia: "TUXTLA" },
+  "CJCP":  { nombre: "Cristian Jacobo",        agencia: "TAPACHULA" },
+  "CJGV":  { nombre: "Cristian Javier",        agencia: "SAN CRISTÓBAL" },
+  "COTM":  { nombre: "Carlos Omar",            agencia: "SAN CRISTÓBAL" },
+  "DADN":  { nombre: "Daniel Domínguez",       agencia: "SAN CRISTÓBAL" },
+  "EJMR":  { nombre: "Erick Mendiola",         agencia: "TUXTLA" },
+  "GAML":  { nombre: "Guillermo Alejandro",    agencia: "TUXTLA" },
+  "GCHG":  { nombre: "Gabriel del Carmen",     agencia: "SAN CRISTÓBAL" },
+  "GDLV":  { nombre: "Gabriel de León",        agencia: "TAPACHULA" },
+  "GRY":   { nombre: "Gilberto Ruíz",          agencia: "OCOSINGO" }, // unificar con GRYO
+  "GRYO":  { nombre: "Gilberto Ruíz",          agencia: "OCOSINGO" },
+  "HDD":   { nombre: "Henry Díaz",             agencia: "TUXTLA" },
+  "JAJA":  { nombre: "Jorge Águeda",           agencia: "TAPACHULA" },
+  "JCPL":  { nombre: "Juan Carlos Laguna",     agencia: "TAPACHULA" },
+  "JEGR":  { nombre: "Jonatan Elmar",          agencia: "TUXTLA" },
+  "JICC":  { nombre: "José Iván",              agencia: "TUXTLA" },
+  "LGLL":  { nombre: "Luis Liévano",           agencia: "SAN CRISTÓBAL" },
+  "LGTA":  { nombre: "Laura Torres",           agencia: "OCOSINGO" },
+  "LMGA":  { nombre: "Lourdes Gómez",         agencia: "SAN CRISTÓBAL" },
+  "MAMT":  { nombre: "María de los Ángeles",   agencia: "SAN CRISTÓBAL" },
+  "MAVM":  { nombre: "Miguel Ángel",           agencia: "TAPACHULA" },
+  "MEHL":  { nombre: "Manuel Hernández",       agencia: "TAPACHULA" },
+  "MEMA":  { nombre: "Mauricio Enrique",       agencia: "COMITÁN" },
+  "MIRA":  { nombre: "María Isabel",           agencia: "TUXTLA" },
+  "MLC":   { nombre: "Mauricio López",         agencia: "TAPACHULA" },
+  "MLGV":  { nombre: "Maura Gómez",            agencia: "SAN CRISTÓBAL" },
+  "NTZ":   { nombre: "Nehemias Toledo",        agencia: "TUXTLA" },
+  "OAGL":  { nombre: "Oliver Alexander",       agencia: "TAPACHULA" },
+  "PAAR":  { nombre: "Pablo Arturo",           agencia: "COMITÁN" },
+  "PEHA":  { nombre: "Paulina Hirashi",        agencia: "TUXTLA" },
+  "PHR":   { nombre: "Pablo Hernández",        agencia: "TAPACHULA" },
+  "PRAG":  { nombre: "Pablo Raúl",             agencia: "TUXTLA" },
+  "RACL":  { nombre: "Raúl Antonio",           agencia: "TAPACHULA" },
+  "REPM":  { nombre: "Romero Emilio",          agencia: "TUXTLA" },
+  "RFX":   { nombre: "Rafael Frías",           agencia: "TUXTLA" }, // unificar con RFXV
+  "RFXV":  { nombre: "Rafael Frías",           agencia: "TUXTLA" },
+  "RJMR":  { nombre: "Rolando de Jesús",       agencia: "OCOSINGO" },
+  "SIZR":  { nombre: "Sharon Zúñiga",          agencia: "COMITÁN" },
+  "VACH":  { nombre: "Víctor Adrián",          agencia: "TUXTLA" },
+  "VCSC":  { nombre: "Ventas Casa",            agencia: "TUXTLA" },
+  "VMBV":  { nombre: "Víctor Berzunza",        agencia: "TUXTLA" },
+  "VMML":  { nombre: "Vanesa Morales",         agencia: "TUXTLA" },
+  "YYOV":  { nombre: "Yesica Yaneth",          agencia: "COMITÁN" },
+};
+
+// Claves que se unifican con otra (se consolidan sus ventas)
+const UNIFICAR_CLAVE = { "GRY": "GRYO", "RFX": "RFXV" };
+
+function normalizarClave(clave) {
+  const c = clave.trim().toUpperCase();
+  return UNIFICAR_CLAVE[c] || c;
+}
+
+function nombreAsesor(clave) {
+  const c = normalizarClave(clave);
+  return CATALOGO_ASESORES[c]?.nombre || clave;
+}
+
+function agenciaAsesor(clave) {
+  const c = normalizarClave(clave);
+  return CATALOGO_ASESORES[c]?.agencia || "—";
+}
+
+function modeloCortoVentas(nombre) {
+  const n = (nombre || "").toUpperCase();
+  for (const [k, l] of [
+    ["ALSVIN PLUS","Alsvin Plus"],["ALSVIN","Alsvin"],
+    ["CS35 MAX LUXURY","CS35 Max Luxury"],["CS35 MAX","CS35 Max"],
+    ["CS35 PLUS","CS35 Plus"],["CS35","CS35"],
+    ["CS55 PLUS IDD LUXURY","CS55 IDD Luxury"],["CS55 PLUS IDD","CS55 IDD"],
+    ["CS55 PLUS","CS55 Plus"],["CS55","CS55"],
+    ["CS75 PRO LUXURY","CS75 Pro Luxury"],["CS75 PRO","CS75 Pro"],
+    ["CS75 PLUS","CS75 Plus"],["CS75","CS75"],["CS95","CS95"],
+    ["EADO PLUS LUXURY","Eado Plus Luxury"],["EADO PLUS","Eado Plus"],["EADO","Eado"],
+    ["HONOR","Honor S VAN"],["HUNTER E","Hunter E"],
+    ["HUNTER PLUS","Hunter Plus"],["HUNTER WORK","Hunter Work"],
+    ["HUNTER CHASIS","Hunter Chasis"],["HUNTER","Hunter"],
+    ["NEW STAR TRUCK CAJA","Star Truck Caja"],["NEW STAR TRUCK","Star Truck DC"],
+    ["S05","S05 REEV"],["S07","S07 REEV"],["UNI-K","UNI-K"],
+  ]) {
+    if (n.includes(k)) return l;
+  }
+  return nombre?.slice(0, 18) || "—";
+}
+
+function parseVentasWorkbook(workbook) {
+  const ws = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, cellDates: true });
+  const ventas = [];
+  const toFloat = (v) => { try { return v ? parseFloat(v) || 0 : 0; } catch { return 0; } };
+
+  for (const row of rows.slice(7)) {
+    const en = row[1];
+    if (!en || String(en).trim() !== "*") continue;
+    const fechaRaw = row[11];
+    let fecha = null;
+    if (fechaRaw instanceof Date) fecha = fechaRaw.toISOString().slice(0, 10);
+    else if (typeof fechaRaw === "string" && fechaRaw.includes("-")) fecha = fechaRaw.slice(0, 10);
+    const mes = fecha ? fecha.slice(0, 7) : null;
+    const claveRaw = String(row[0] || "").trim();
+    const clave = normalizarClave(claveRaw);
+    ventas.push({
+      clave,
+      nombre: nombreAsesor(claveRaw),
+      agencia: agenciaAsesor(claveRaw),
+      fecha,
+      mes,
+      modelo: modeloCortoVentas(String(row[3] || "")),
+      ventaUnidad: toFloat(row[18]),
+      costo: toFloat(row[25]),
+      utilidad: toFloat(row[30]),
+      utilPct: toFloat(row[31]),
+      condicion: String(row[17] || "").trim(),
+    });
+  }
+  return ventas;
+}
+
+// Calcula el último trimestre completo relativo a la fecha de corte del reporte
+function ultimoTrimestre(ventas) {
+  const meses = ventas.map(v => v.mes).filter(Boolean).sort();
+  if (!meses.length) return [];
+  const ultimoMes = meses[meses.length - 1];
+  const [y, m] = ultimoMes.split("-").map(Number);
+  const meses3 = [];
+  for (let i = 2; i >= 0; i--) {
+    let mm = m - i;
+    let yy = y;
+    if (mm <= 0) { mm += 12; yy -= 1; }
+    meses3.push(`${yy}-${String(mm).padStart(2, "0")}`);
+  }
+  return meses3;
+}
+
+function ProductividadAsesoresSection() {
+  const [ventas, setVentas] = useState([]);
+  const [cargando, setCargando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState("");
+  const [loadingDatos, setLoadingDatos] = useState(true);
+  const [fechaCarga, setFechaCarga] = useState(null);
+  const [filtroAgencia, setFiltroAgencia] = useState("TODAS");
+  const [filtroMes, setFiltroMes] = useState("TRIMESTRE");
+  const [ordenPor, setOrdenPor] = useState("ventas"); // ventas | utilidad | promedio
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingDatos(true);
+      const raw = await fbGet(VENTAS_HIST_PATH);
+      if (raw && Array.isArray(raw.registros)) {
+        setVentas(raw.registros);
+        setFechaCarga(raw.fechaCarga || null);
+      }
+      setLoadingDatos(false);
+    })();
+  }, []);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCargando(true); setErrorCarga("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const registros = parseVentasWorkbook(wb);
+      if (registros.length === 0) {
+        setErrorCarga("No se encontraron ventas. Verifica que sea el reporte 'Hoja de Costos y Utilidad'.");
+        setCargando(false); return;
+      }
+      const payload = { registros, fechaCarga: new Date().toISOString() };
+      await fbSet(VENTAS_HIST_PATH, payload);
+      setVentas(registros);
+      setFechaCarga(payload.fechaCarga);
+    } catch (err) {
+      console.error(err);
+      setErrorCarga("No se pudo leer el archivo.");
+    } finally {
+      setCargando(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const mesesDisponibles = [...new Set(ventas.map(v => v.mes).filter(Boolean))].sort().reverse();
+  const trimestre = ultimoTrimestre(ventas);
+
+  // Filtrar por mes o trimestre
+  const ventasFiltradas = ventas.filter(v => {
+    if (filtroAgencia !== "TODAS" && v.agencia !== filtroAgencia) return false;
+    if (filtroMes === "TRIMESTRE") return trimestre.includes(v.mes);
+    if (filtroMes === "TODO") return true;
+    return v.mes === filtroMes;
+  });
+
+  // Agrupar por asesor
+  const porAsesor = {};
+  ventasFiltradas.forEach(v => {
+    if (!porAsesor[v.clave]) {
+      porAsesor[v.clave] = {
+        clave: v.clave, nombre: v.nombre, agencia: v.agencia,
+        ventas: 0, utilidadTotal: 0, ventaTotal: 0, modelos: {},
+        porMes: {},
+      };
+    }
+    const a = porAsesor[v.clave];
+    a.ventas++;
+    a.utilidadTotal += v.utilidad;
+    a.ventaTotal += v.ventaUnidad;
+    a.modelos[v.modelo] = (a.modelos[v.modelo] || 0) + 1;
+    a.porMes[v.mes] = (a.porMes[v.mes] || 0) + 1;
+  });
+
+  const ranking = Object.values(porAsesor)
+    .filter(a => a.ventas > 0)
+    .sort((a, b) => {
+      if (ordenPor === "ventas") return b.ventas - a.ventas;
+      if (ordenPor === "utilidad") return b.utilidadTotal - a.utilidadTotal;
+      return (b.ventaTotal / b.ventas) - (a.ventaTotal / a.ventas);
+    });
+
+  // Top modelos del período filtrado
+  const topModelos = {};
+  ventasFiltradas.forEach(v => { topModelos[v.modelo] = (topModelos[v.modelo] || 0) + 1; });
+  const topModelosArr = Object.entries(topModelos).sort((a, b) => b[1] - a[1]);
+
+  // Ventas por modelo en el trimestre (para referencia de compra en Inventario)
+  const ventasTrimPorModelo = {};
+  ventas.filter(v => trimestre.includes(v.mes)).forEach(v => {
+    ventasTrimPorModelo[v.modelo] = (ventasTrimPorModelo[v.modelo] || 0) + 1;
+  });
+
+  const fmt$ = (n) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n);
+  const mesesFiltro = filtroMes === "TRIMESTRE" ? trimestre : filtroMes === "TODO" ? [] : [filtroMes];
+
+  if (loadingDatos) return <Card><div style={{ color: "#64748b", textAlign: "center", padding: "40px 0" }}>Cargando historial de ventas…</div></Card>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {/* ── Cabecera ─────────────────────────────────────────────────────────── */}
+      <Card>
+        <SectionHeader title="PRODUCTIVIDAD DE ASESORES — HISTORIAL DE VENTAS" icon="🏆" />
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-ventas-hist" />
+            <label htmlFor="file-ventas-hist" style={{
+              background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
+              border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
+              cursor: cargando ? "default" : "pointer", display: "inline-block"
+            }}>
+              {cargando ? "Procesando…" : "📤 Subir reporte de ventas (.xlsx)"}
+            </label>
+            {fechaCarga && (
+              <div style={{ color: "#475569", fontSize: 11, marginTop: 5 }}>
+                Última carga: {new Date(fechaCarga).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" })} · {ventas.length} ventas
+              </div>
+            )}
+          </div>
+          {trimestre.length > 0 && (
+            <div style={{ background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 8, padding: "8px 14px", fontSize: 12 }}>
+              <span style={{ color: "#64748b" }}>Último trimestre: </span>
+              <span style={{ color: "#3b9eea", fontWeight: 700 }}>{trimestre.join(" · ")}</span>
+              <span style={{ color: "#64748b" }}> · </span>
+              <span style={{ color: "#4ade80", fontWeight: 700 }}>{ventas.filter(v => trimestre.includes(v.mes)).length} ventas</span>
+            </div>
+          )}
+        </div>
+        {errorCarga && (
+          <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginTop: 12 }}>
+            {errorCarga}
+          </div>
+        )}
+      </Card>
+
+      {ventas.length === 0 ? (
+        <Card>
+          <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: "40px 0" }}>
+            Sube el reporte "Hoja de Costos y Utilidad Autos" para ver la productividad de asesores.
+          </div>
+        </Card>
+      ) : (
+        <>
+          {/* ── KPIs globales ────────────────────────────────────────────────── */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            {[
+              { label: "TOTAL VENTAS PERÍODO", value: ventasFiltradas.length, color: "#D4AF37" },
+              { label: "ASESORES ACTIVOS",      value: ranking.length,         color: "#3b9eea" },
+              { label: "PROMEDIO POR ASESOR",   value: ranking.length > 0 ? (ventasFiltradas.length / ranking.length).toFixed(1) : "—", color: "#4ade80" },
+              { label: "UTILIDAD TOTAL",        value: fmt$(ventasFiltradas.reduce((s, v) => s + v.utilidad, 0)), color: "#c084fc" },
+              { label: "VENTA TOTAL",           value: fmt$(ventasFiltradas.reduce((s, v) => s + v.ventaUnidad, 0)), color: "#60a5fa" },
+            ].map(k => (
+              <div key={k.label} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.color}`, borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.label}</div>
+                <div style={{ color: "#f1f5f9", fontSize: typeof k.value === "string" && k.value.length > 8 ? 15 : 22, fontWeight: 800, marginTop: 4 }}>{k.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Filtros ──────────────────────────────────────────────────────── */}
+          <Card>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>PERÍODO</div>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  {[
+                    { key: "TRIMESTRE", label: `Último trimestre (${trimestre.length > 0 ? trimestre[0].slice(5) + "–" + trimestre[2].slice(5) : "—"})` },
+                    { key: "TODO", label: "Todo el histórico" },
+                    ...mesesDisponibles.slice(0, 6).map(m => ({ key: m, label: getMonthLabel(m) })),
+                  ].map(op => (
+                    <button key={op.key} onClick={() => setFiltroMes(op.key)} style={{
+                      background: filtroMes === op.key ? "#D4AF37" : "#0f2239",
+                      color: filtroMes === op.key ? "#0a1628" : "#94a3b8",
+                      border: `1px solid ${filtroMes === op.key ? "#D4AF37" : "#1e3a5f"}`,
+                      borderRadius: 6, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+                    }}>{op.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>AGENCIA</div>
+                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                  {["TODAS", ...AGENCIAS].map(ag => (
+                    <button key={ag} onClick={() => setFiltroAgencia(ag)} style={{
+                      background: filtroAgencia === ag ? "#3b9eea" : "#0f2239",
+                      color: filtroAgencia === ag ? "#0a1628" : "#94a3b8",
+                      border: `1px solid ${filtroAgencia === ag ? "#3b9eea" : "#1e3a5f"}`,
+                      borderRadius: 6, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+                    }}>{ag}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>ORDENAR POR</div>
+                <div style={{ display: "flex", gap: 5 }}>
+                  {[
+                    { key: "ventas", label: "# Ventas" },
+                    { key: "utilidad", label: "Utilidad $" },
+                    { key: "promedio", label: "Venta promedio" },
+                  ].map(op => (
+                    <button key={op.key} onClick={() => setOrdenPor(op.key)} style={{
+                      background: ordenPor === op.key ? "#c084fc" : "#0f2239",
+                      color: ordenPor === op.key ? "#0a1628" : "#94a3b8",
+                      border: `1px solid ${ordenPor === op.key ? "#c084fc" : "#1e3a5f"}`,
+                      borderRadius: 6, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+                    }}>{op.label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* ── Ranking de asesores ──────────────────────────────────────────── */}
+          <Card>
+            <SectionHeader title={`RANKING DE ASESORES — ${filtroMes === "TRIMESTRE" ? `Último trimestre (${trimestre.join(" · ")})` : filtroMes === "TODO" ? "Todo el histórico" : getMonthLabel(filtroMes).toUpperCase()}`} icon="🏅" />
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                    <th style={{ textAlign: "center", padding: "6px 8px" }}>#</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>ASESOR</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>AGENCIA</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>VENTAS</th>
+                    {mesesFiltro.length > 1 && mesesFiltro.map(m => (
+                      <th key={m} style={{ textAlign: "center", padding: "6px 8px", color: "#475569" }}>{m.slice(5)}</th>
+                    ))}
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>VENTA TOTAL</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>VENTA PROM.</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>UTILIDAD</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>MODELO TOP</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ranking.map((a, idx) => {
+                    const medalColores = ["#D4AF37", "#94a3b8", "#c084fc"];
+                    const medal = idx < 3 ? ["🥇","🥈","🥉"][idx] : null;
+                    const modeloTop = Object.entries(a.modelos).sort((x, y) => y[1] - x[1])[0];
+                    return (
+                      <tr key={a.clave} style={{ borderBottom: "1px solid #1e3a5f", background: idx === 0 ? "#D4AF3708" : "transparent" }}>
+                        <td style={{ textAlign: "center", padding: "7px 8px", fontSize: 15 }}>
+                          {medal || <span style={{ color: "#475569", fontSize: 12 }}>{idx + 1}</span>}
+                        </td>
+                        <td style={{ padding: "7px 8px" }}>
+                          <div style={{ color: "#f1f5f9", fontWeight: 700 }}>{a.nombre}</div>
+                          <div style={{ color: "#475569", fontSize: 10.5 }}>{a.clave}</div>
+                        </td>
+                        <td style={{ padding: "7px 8px", color: "#94a3b8", fontSize: 12 }}>{a.agencia}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right" }}>
+                          <span style={{ color: "#D4AF37", fontWeight: 800, fontSize: 16 }}>{a.ventas}</span>
+                        </td>
+                        {mesesFiltro.length > 1 && mesesFiltro.map(m => (
+                          <td key={m} style={{ textAlign: "center", padding: "7px 8px", color: a.porMes[m] ? "#3b9eea" : "#1e3a5f", fontWeight: a.porMes[m] ? 700 : 400 }}>
+                            {a.porMes[m] || "—"}
+                          </td>
+                        ))}
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: "#cbd5e1" }}>{fmt$(a.ventaTotal)}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: "#94a3b8" }}>{fmt$(a.ventaTotal / a.ventas)}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: a.utilidadTotal > 0 ? "#4ade80" : "#f87171", fontWeight: 700 }}>
+                          {fmt$(a.utilidadTotal)}
+                        </td>
+                        <td style={{ padding: "7px 8px", color: "#64748b", fontSize: 11.5 }}>
+                          {modeloTop ? `${modeloTop[0]} (${modeloTop[1]})` : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          {/* ── Evolución mensual (últimos 12 meses) ────────────────────────── */}
+          <Card>
+            <SectionHeader title="EVOLUCIÓN MENSUAL — VENTAS POR ASESOR" icon="📉" />
+            <div style={{ color: "#475569", fontSize: 11.5, marginBottom: 14 }}>
+              Últimos 12 meses con datos. Cada número = ventas en ese mes.
+            </div>
+            {(() => {
+              const ultimos12 = mesesDisponibles.slice(0, 12).reverse();
+              const asesoresActivos = Object.values(porAsesor)
+                .filter(a => filtroAgencia === "TODAS" || a.agencia === filtroAgencia)
+                .sort((a, b) => b.ventas - a.ventas)
+                .slice(0, 15);
+              // Recalcular ventas por mes sin filtro de período (solo agencia)
+              const ventasPorMes = {};
+              ventas.filter(v => filtroAgencia === "TODAS" || v.agencia === filtroAgencia)
+                .forEach(v => {
+                  if (!ventasPorMes[v.clave]) ventasPorMes[v.clave] = {};
+                  ventasPorMes[v.clave][v.mes] = (ventasPorMes[v.clave][v.mes] || 0) + 1;
+                });
+              return (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                    <thead>
+                      <tr style={{ color: "#64748b", fontSize: 10.5, borderBottom: "1px solid #1e3a5f" }}>
+                        <th style={{ textAlign: "left", padding: "5px 8px", minWidth: 160 }}>ASESOR</th>
+                        {ultimos12.map(m => (
+                          <th key={m} style={{ textAlign: "center", padding: "5px 6px", minWidth: 36 }}>
+                            {m.slice(5)}
+                          </th>
+                        ))}
+                        <th style={{ textAlign: "right", padding: "5px 8px" }}>TOTAL</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {asesoresActivos.map(a => {
+                        const mesesAsesor = ventasPorMes[a.clave] || {};
+                        const totalPeriodo = ultimos12.reduce((s, m) => s + (mesesAsesor[m] || 0), 0);
+                        const maxMes = Math.max(1, ...ultimos12.map(m => mesesAsesor[m] || 0));
+                        return (
+                          <tr key={a.clave} style={{ borderBottom: "1px solid #0f2239" }}>
+                            <td style={{ padding: "5px 8px" }}>
+                              <div style={{ color: "#f1f5f9", fontWeight: 600, fontSize: 12 }}>{a.nombre}</div>
+                              <div style={{ color: "#475569", fontSize: 10 }}>{a.agencia}</div>
+                            </td>
+                            {ultimos12.map(m => {
+                              const v = mesesAsesor[m] || 0;
+                              const intensidad = maxMes > 0 ? v / maxMes : 0;
+                              const bg = v > 0 ? `rgba(59,158,234,${0.15 + intensidad * 0.7})` : "transparent";
+                              return (
+                                <td key={m} style={{ textAlign: "center", padding: "5px 6px", background: bg, borderRadius: 4 }}>
+                                  <span style={{ color: v > 0 ? "#f1f5f9" : "#1e3a5f", fontWeight: v > 0 ? 700 : 400 }}>
+                                    {v || "·"}
+                                  </span>
+                                </td>
+                              );
+                            })}
+                            <td style={{ textAlign: "right", padding: "5px 8px", color: "#D4AF37", fontWeight: 700 }}>{totalPeriodo}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })()}
+          </Card>
+
+          {/* ── Top modelos del período ──────────────────────────────────────── */}
+          <Card>
+            <SectionHeader title="TOP MODELOS VENDIDOS — PERÍODO SELECCIONADO" icon="🥧" />
+            <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+              <PieChartLeyenda
+                datos={topModelosArr.slice(0, 8).map(([label, value]) => ({ label, value }))}
+                colores={["#3b9eea","#D4AF37","#4ade80","#c084fc","#fb923c","#f472b6","#60a5fa","#fbbf24"]}
+                size={180}
+              />
+              <div style={{ flex: 1, minWidth: 280 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                      <th style={{ textAlign: "left", padding: "5px 8px" }}>MODELO</th>
+                      <th style={{ textAlign: "center", padding: "5px 8px" }}>UNIDADES</th>
+                      <th style={{ textAlign: "right", padding: "5px 8px" }}>% DEL PERÍODO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topModelosArr.map(([modelo, count]) => (
+                      <tr key={modelo} style={{ borderBottom: "1px solid #0f2239" }}>
+                        <td style={{ padding: "5px 8px", color: "#f1f5f9" }}>{modelo}</td>
+                        <td style={{ textAlign: "center", padding: "5px 8px", color: "#D4AF37", fontWeight: 700 }}>{count}</td>
+                        <td style={{ textAlign: "right", padding: "5px 8px", color: "#64748b" }}>
+                          {ventasFiltradas.length > 0 ? `${(count / ventasFiltradas.length * 100).toFixed(1)}%` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </Card>
+
+          {/* ── Referencia de compra (ventas último trimestre por modelo) ─────── */}
+          <Card>
+            <SectionHeader title="VENTAS ÚLTIMO TRIMESTRE POR MODELO — REFERENCIA PARA COMPRA" icon="📦" />
+            <div style={{ color: "#3b9eea", fontSize: 11.5, marginBottom: 12, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "8px 12px" }}>
+              Estos datos se usan automáticamente en la pestaña de Inventario para calcular el stock ideal (1.5 meses de venta).
+              Período: <b>{trimestre.join(" → ")}</b>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {Object.entries(ventasTrimPorModelo)
+                .sort((a, b) => b[1] - a[1])
+                .map(([modelo, count]) => (
+                  <div key={modelo} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 14px", minWidth: 140 }}>
+                    <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 4 }}>{modelo}</div>
+                    <div style={{ color: "#D4AF37", fontSize: 20, fontWeight: 800 }}>{count}</div>
+                    <div style={{ color: "#475569", fontSize: 10.5 }}>
+                      {(count / 3).toFixed(1)}/mes → ideal {Math.ceil(count / 3 * 1.5)} uds.
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── SECCIÓN: Inventario ───────────────────────────────────────────────────────
 const INVENTARIO_PATH = "inventario"; // inventario/unidades = array de objetos
 
@@ -4687,6 +5235,11 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🎯 Demos</button>
+            <button onClick={() => setTab("productividad")} style={{
+              background: tab === "productividad" ? "#5eead4" : "transparent",
+              color: tab === "productividad" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>🏆 Productividad</button>
             <button onClick={() => setTab("inventario")} style={{
               background: tab === "inventario" ? "#5eead4" : "transparent",
               color: tab === "inventario" ? "#0a1628" : "#94a3b8",
@@ -4781,6 +5334,8 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           </>
         ) : tab === "funnel" ? (
           <FunnelSection monthKey={viewMonth} funnelData={funnelData} onFunnelFieldChange={onFunnelFieldChange} />
+        ) : tab === "productividad" ? (
+          <ProductividadAsesoresSection />
         ) : tab === "inventario" ? (
           <InventarioSection />
         ) : tab === "tendencias" ? (
