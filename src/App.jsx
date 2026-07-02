@@ -1953,6 +1953,29 @@ function corregirEncoding(texto) {
   }
 }
 
+// Normaliza los valores de SubCampaña: corrige encoding y agrupa variantes similares
+function normalizarSubcampania(raw) {
+  if (!raw) return "Sin subcampaña";
+  const s = raw.toString().trim()
+    .replace(/Ã³/g, "ó").replace(/Ã©/g, "é").replace(/Ã¡/g, "á").replace(/Ã\xad/g, "í")
+    .replace(/Ãº/g, "ú").replace(/Ã±/g, "ñ").replace(/Ã‰/g, "É").replace(/Ã"/g, "Ó")
+    .replace(/ÃƒÂ\x83Ã‚Â/g, "").replace(/ÃƒÂ/g, "").replace(/Ã‚Â/g, "");
+  const u = s.toUpperCase().trim();
+  // Agrupar variantes de TRÁFICO A PISO
+  if (u.includes("TRÁFICO") || u.includes("TRAFICO") || u.includes("TR") && u.includes("PISO")) return "Tráfico a Piso";
+  if (u.includes("META")) return "META";
+  if (u.includes("REDES SOCIALES") || u.includes("APV")) return "Redes Sociales APV";
+  if (u.includes("LLAMADA HOSTESS") || u.includes("HOSTESS")) return "Llamada Hostess";
+  if (u.includes("PROSPECCION") || u.includes("PROSPECCIÓN") || u.includes("PROSPECCIONES")) return "Prospecciones";
+  if (u.includes("DINÁMICA") || u.includes("DINAMICA") || u.includes("MUNDIAL")) return "Dinámica Mundial";
+  if (u.includes("WHATSAPP")) return "WhatsApp Hostess";
+  if (u.includes("TIKTOK")) return "TikTok";
+  if (u.includes("STAYINTHEGAME")) return "Stay in the Game";
+  if (u.includes("CLUB") || u.includes("PADEL")) return "Club Marca";
+  if (u.includes("OFERTA") || u.includes("CAMPAÑA") || u.includes("CAMPANA")) return "Oferta/Campaña";
+  return s || "Sin subcampaña";
+}
+
 function parseFuentesLeadsWorkbook(workbook) {
   const sheetName = workbook.SheetNames[0];
   const ws = workbook.Sheets[sheetName];
@@ -1973,6 +1996,10 @@ function parseFuentesLeadsWorkbook(workbook) {
   const iFuente = idx("Fuente");
   const iEstatus = idx("Estatus");
   const iNombre = idx("Nombre");
+  // SubCampaña — col 20 en el Excel de Changan. Buscamos por nombre (con tolerancia a encoding roto)
+  const iSubcampania = headers.findIndex(h =>
+    (h || "").toString().toLowerCase().replace(/[^a-z]/g, "").includes("subcampa")
+  );
 
   const registros = [];
   for (let r = 2; r < rows.length; r++) {
@@ -1994,6 +2021,9 @@ function parseFuentesLeadsWorkbook(workbook) {
       fuenteRaw: fuenteCelda,
       fuente: mapearFuenteExcel(fuenteCelda),
       estatus: iEstatus >= 0 ? (row[iEstatus] || "Sin estatus") : "Sin estatus",
+      subcampania: iSubcampania >= 0 && row[iSubcampania]
+        ? normalizarSubcampania(corregirEncoding(row[iSubcampania]))
+        : "Sin subcampaña",
     });
   }
   return registros;
@@ -2009,20 +2039,24 @@ function agregarFuentesLeads(registros) {
   const porTemperatura = {};
   const porProducto = {};
   const porAsesor = {};
+  const porSubcampania = {};
 
   registros.forEach(r => {
     porFuente[r.fuente] = (porFuente[r.fuente] ?? 0) + 1;
     porEstatus[r.estatus] = (porEstatus[r.estatus] ?? 0) + 1;
     porTemperatura[r.temperatura] = (porTemperatura[r.temperatura] ?? 0) + 1;
     porProducto[r.producto] = (porProducto[r.producto] ?? 0) + 1;
+    if (r.subcampania && r.subcampania !== "Sin subcampaña") {
+      porSubcampania[r.subcampania] = (porSubcampania[r.subcampania] ?? 0) + 1;
+    }
     if (!porAsesor[r.asesor]) porAsesor[r.asesor] = {};
     porAsesor[r.asesor][r.fuente] = (porAsesor[r.asesor][r.fuente] ?? 0) + 1;
   });
 
   return {
     total: registros.length,
-    porFuente, porEstatus, porTemperatura, porProducto, porAsesor,
-    registros, // se guarda el detalle completo también, por si se necesita después
+    porFuente, porEstatus, porTemperatura, porProducto, porAsesor, porSubcampania,
+    registros,
   };
 }
 
@@ -2144,11 +2178,18 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
     setFuentesSel(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
   };
 
+  const [datosPorAgenciaMesAnterior, setDatosPorAgenciaMesAnterior] = useState({});
+
   useEffect(() => {
     (async () => {
       setLoadingDatos(true);
-      const raw = await fbGet(`${FUENTES_LEADS_PATH}/${monthKey}`);
+      const prevKey = getPreviousMonthKey(monthKey);
+      const [raw, rawPrev] = await Promise.all([
+        fbGet(`${FUENTES_LEADS_PATH}/${monthKey}`),
+        fbGet(`${FUENTES_LEADS_PATH}/${prevKey}`),
+      ]);
       setDatosPorAgencia(raw || {});
+      setDatosPorAgenciaMesAnterior(rawPrev || {});
       setLoadingDatos(false);
     })();
   }, [monthKey]);
@@ -2202,6 +2243,33 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
     }
     return agregarFuentesLeads(registrosFiltrados);
   })();
+
+  // Consolidado mes anterior para comparación
+  const datosPrev = (() => {
+    const todasLasAg = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+    const registrosPrev = [];
+    todasLasAg.forEach(ag => {
+      const raw = datosPorAgenciaMesAnterior[ag];
+      if (raw && Array.isArray(raw)) registrosPrev.push(...raw);
+      else if (raw && typeof raw === "object") registrosPrev.push(...Object.values(raw));
+    });
+    return registrosPrev.length > 0 ? agregarFuentesLeads(registrosPrev) : null;
+  })();
+
+  // Helper: variación % vs mes anterior con badge visual
+  const varBadge = (actual, anterior) => {
+    if (anterior == null || anterior === 0) return null;
+    const diff = ((actual - anterior) / anterior * 100);
+    const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
+    const texto = `${diff > 0 ? "+" : ""}${diff.toFixed(0)}% vs mes ant.`;
+    return (
+      <span style={{
+        fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10,
+        background: `${color}22`, color, border: `1px solid ${color}55`,
+        marginLeft: 8, whiteSpace: "nowrap",
+      }}>{texto}</span>
+    );
+  };
 
   const datosFuentePie = datos ? FUENTES_LEAD.map(f => ({ label: f.label, value: datos.porFuente[f.key] ?? 0 })) : [];
   const coloresFuente = FUENTES_LEAD.map(f => f.color);
@@ -2348,29 +2416,149 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
       {datos && (
         <>
           <Card>
-            <SectionHeader title="DISTRIBUCIÓN POR FUENTE" icon="🥧" />
-            <PieChartLeyenda datos={datosFuentePie} colores={coloresFuente} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <SectionHeader title="DISTRIBUCIÓN POR FUENTE" icon="🥧" />
+              {datosPrev && varBadge(datos.total, datosPrev.total)}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
+              <PieChartLeyenda datos={datosFuentePie} colores={coloresFuente} />
+              {datosPrev && (
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .8, marginBottom: 10 }}>VS MES ANTERIOR</div>
+                  {FUENTES_LEAD.map(f => {
+                    const act = datos.porFuente[f.key] ?? 0;
+                    const ant = datosPrev.porFuente[f.key] ?? 0;
+                    const badge = varBadge(act, ant);
+                    if (!badge) return null;
+                    return (
+                      <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 120 }}>{f.label}</span>
+                        <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>{act}</span>
+                        {badge}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </Card>
 
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 320 }}>
               <Card>
-                <SectionHeader title="EMBUDO POR ESTATUS (REPORTE)" icon="🥧" />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                  <SectionHeader title="EMBUDO POR ESTATUS (REPORTE)" icon="🥧" />
+                  {datosPrev && varBadge(datos.total, datosPrev.total)}
+                </div>
                 <PieChartLeyenda datos={datosEstatusPie} colores={coloresEstatus} size={150} />
+                {datosPrev && (
+                  <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 5 }}>
+                    {datosEstatusPie.map(e => {
+                      const ant = datosPrev.porEstatus[e.label] ?? 0;
+                      const badge = varBadge(e.value, ant);
+                      if (!badge) return null;
+                      return (
+                        <div key={e.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 90 }}>{e.label}</span>
+                          <span style={{ color: "#f1f5f9", fontSize: 11, fontWeight: 700 }}>{e.value}</span>
+                          {badge}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </Card>
             </div>
             <div style={{ flex: 1, minWidth: 320 }}>
               <Card>
-                <SectionHeader title="TEMPERATURA DEL LEAD" icon="🥧" />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                  <SectionHeader title="TEMPERATURA DEL LEAD" icon="🥧" />
+                </div>
                 <PieChartLeyenda datos={datosTemperaturaPie} colores={coloresTemperatura} size={150} />
+                {datosPrev && (
+                  <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 5 }}>
+                    {datosTemperaturaPie.map(t => {
+                      const ant = datosPrev.porTemperatura[t.label] ?? 0;
+                      const badge = varBadge(t.value, ant);
+                      if (!badge) return null;
+                      return (
+                        <div key={t.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 90 }}>{t.label}</span>
+                          <span style={{ color: "#f1f5f9", fontSize: 11, fontWeight: 700 }}>{t.value}</span>
+                          {badge}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </Card>
             </div>
           </div>
 
           <Card>
-            <SectionHeader title="TOP PRODUCTOS DE INTERÉS" icon="🥧" />
-            <PieChartLeyenda datos={datosProductoPie} colores={coloresProducto} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <SectionHeader title="TOP PRODUCTOS DE INTERÉS" icon="🥧" />
+              {datosPrev && varBadge(datos.total, datosPrev.total)}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
+              <PieChartLeyenda datos={datosProductoPie} colores={coloresProducto} />
+              {datosPrev && (
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .8, marginBottom: 10 }}>VS MES ANTERIOR</div>
+                  {datosProductoPie.map(p => {
+                    const ant = datosPrev.porProducto[p.label] ?? 0;
+                    const badge = varBadge(p.value, ant);
+                    if (!badge) return null;
+                    return (
+                      <div key={p.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                        <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 120 }}>{p.label}</span>
+                        <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>{p.value}</span>
+                        {badge}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </Card>
+
+          {/* ── Subcampaña ──────────────────────────────────────────────────── */}
+          {datos.porSubcampania && Object.keys(datos.porSubcampania).length > 0 && (() => {
+            const subcampPie = Object.entries(datos.porSubcampania)
+              .sort((a, b) => b[1] - a[1])
+              .map(([label, value]) => ({ label, value }));
+            const coloresSub = ["#3b9eea","#D4AF37","#4ade80","#c084fc","#fb923c","#f472b6","#60a5fa","#fbbf24","#94a3b8","#34d399"];
+            return (
+              <Card>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                  <SectionHeader title="DISTRIBUCIÓN POR SUBCAMPAÑA" icon="🎯" />
+                  {datosPrev && datosPrev.porSubcampania && varBadge(
+                    Object.values(datos.porSubcampania).reduce((s,v)=>s+v,0),
+                    Object.values(datosPrev.porSubcampania).reduce((s,v)=>s+v,0)
+                  )}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
+                  <PieChartLeyenda datos={subcampPie} colores={coloresSub} />
+                  {datosPrev?.porSubcampania && Object.keys(datosPrev.porSubcampania).length > 0 && (
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .8, marginBottom: 10 }}>VS MES ANTERIOR</div>
+                      {subcampPie.map(s => {
+                        const ant = datosPrev.porSubcampania[s.label] ?? 0;
+                        const badge = varBadge(s.value, ant);
+                        return (
+                          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                            <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 140 }}>{s.label}</span>
+                            <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>{s.value}</span>
+                            {badge || <span style={{ color: "#475569", fontSize: 10 }}>nuevo</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </Card>
+            );
+          })()}
         </>
       )}
 
@@ -6167,41 +6355,59 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
   const viewMonthRef = useRef(viewMonth);
   useEffect(() => { viewMonthRef.current = viewMonth; }, [viewMonth]);
 
-  // ── Cargar el Funnel del mes en vista desde Firebase + polling ──────────────
+  // ── Cargar el Funnel del mes en vista desde Firebase ───────────────────────
   useEffect(() => {
+    // Resetear funnelData al cambiar de mes para evitar mostrar datos del mes anterior
+    setFunnelData(JSON.parse(JSON.stringify(initialFunnel)));
+
+    let cancelled = false;
     const loadFunnel = async () => {
-      if (isSavingFunnelRef.current) return; // evita pisar cambios locales no guardados aún
+      if (isSavingFunnelRef.current) return; // evita pisar cambios locales no guardados
       const raw = await fbGet(`${FUNNEL_PATH}/${viewMonthRef.current}`);
+      if (cancelled) return; // el mes cambió mientras cargaba
       if (raw && typeof raw === "object") {
         const merged = {};
-        AGENCIAS.forEach(ag => { merged[ag] = raw[ag] && typeof raw[ag] === "object" ? { ...funnelAgenciaBlank(), ...raw[ag] } : funnelAgenciaBlank(); });
+        AGENCIAS.forEach(ag => {
+          merged[ag] = raw[ag] && typeof raw[ag] === "object"
+            ? { ...funnelAgenciaBlank(), ...raw[ag] }
+            : funnelAgenciaBlank();
+        });
         setFunnelData(merged);
       } else {
         setFunnelData(JSON.parse(JSON.stringify(initialFunnel)));
       }
     };
+
     loadFunnel();
-    const poll = setInterval(loadFunnel, 15000);
-    return () => clearInterval(poll);
+    const poll = setInterval(() => {
+      if (!isSavingFunnelRef.current) loadFunnel();
+    }, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+    };
   }, [viewMonth]);
 
   const scheduleSaveFunnel = (next, targetMonth) => {
     if (funnelSaveTimer.current) clearTimeout(funnelSaveTimer.current);
-    const mesDestino = targetMonth || viewMonth;
+    const mesDestino = targetMonth || viewMonthRef.current;
     isSavingFunnelRef.current = true;
     funnelSaveTimer.current = setTimeout(async () => {
       try {
         await fbSet(`${FUNNEL_PATH}/${mesDestino}`, next);
+      } catch(e) {
+        console.error("Error guardando funnel:", e);
       } finally {
         isSavingFunnelRef.current = false;
       }
-    }, 800);
+    }, 1200); // subimos a 1.2s para dar más margen
   };
 
   const onFunnelFieldChange = (agencia, campo, val) => {
-    const mesAlEditar = viewMonth;
+    const mesAlEditar = viewMonthRef.current; // usar ref, no closure
     setFunnelData(prev => {
-      const next = { ...prev, [agencia]: { ...prev[agencia], [campo]: val } };
+      const agPrev = prev[agencia] ?? funnelAgenciaBlank();
+      const next = { ...prev, [agencia]: { ...agPrev, [campo]: val } };
       scheduleSaveFunnel(next, mesAlEditar);
       return next;
     });
