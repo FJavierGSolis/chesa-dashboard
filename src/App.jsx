@@ -3968,13 +3968,86 @@ function parseEncuestaWorkbook(workbook, tipoReporte) {
   return registros;
 }
 
+// Parser específico para el Reporte 24 HRS Prospección.
+// Procesa las 4 hojas (Agencia Tele, Digital Tele, Agencia WhatsApp, Digital WhatsApp)
+// y consolida los registros CONTACTADO con calificación.
+function parseProspeccionWorkbook(workbook) {
+  const registros = [];
+
+  workbook.SheetNames.forEach(sheetName => {
+    const ws = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+    if (rows.length < 3) return;
+
+    // Detectar canal por nombre de hoja
+    const canal = sheetName.toUpperCase().includes("WHAT") ? "WhatsApp" : "Telefónico";
+    const origen = sheetName.toUpperCase().includes("DIGITAL") ? "Digital" : "Agencia";
+
+    // Fila 2 (índice 1) = encabezados
+    const headers = rows[1] || [];
+
+    // Mapeo de columnas por contenido del encabezado
+    const findCol = (keywords) => headers.findIndex(h =>
+      h && keywords.every(k => String(h).toLowerCase().includes(k.toLowerCase()))
+    );
+
+    const iAsesor    = findCol(["NOMBRE DEL ASESOR"]);
+    const iSucursal  = findCol(["SUCURSAL"]);
+    const iVehiculo  = findCol(["VEHICULO"]);
+    const iEstatus   = findCol(["ESTATUS DEL INTENTO"]);
+    const iCalif     = findCol(["escala del 0 al 10"]);
+    const iQueja     = findCol(["Motivo de la queja"]);
+    const iFalta     = findCol(["hace falta"]);
+    const iComentario = findCol(["Algún comentario"]);
+    const iProspecto = findCol(["NOMBRE DEL PROSPECTO"]);
+    const iAtencion  = findCol(["atención adecuada"]);
+
+    for (let r = 2; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
+
+      const estatus = String(row[iEstatus] || "").trim().toUpperCase();
+      if (estatus !== "CONTACTADO") continue;
+
+      const califRaw = iCalif >= 0 ? row[iCalif] : null;
+      const califStr = String(califRaw || "").trim();
+      const califNum = califStr !== "" && !isNaN(Number(califStr)) ? Number(califStr) : null;
+
+      // Solo incluir si tiene calificación numérica (registros reales de encuesta completada)
+      // O si es WhatsApp donde la calificación puede estar vacía pero sí hay comentario
+      const tieneEncuesta = califNum !== null ||
+        (row[iQueja] && String(row[iQueja]).trim().length > 2) ||
+        (row[iComentario] && String(row[iComentario]).trim().length > 5);
+
+      if (!tieneEncuesta) continue;
+
+      registros.push({
+        asesor:      iAsesor >= 0 && row[iAsesor] ? String(row[iAsesor]).trim() : "Sin asignar",
+        sucursal:    iSucursal >= 0 && row[iSucursal] ? String(row[iSucursal]).trim() : "",
+        vehiculo:    iVehiculo >= 0 && row[iVehiculo] ? String(row[iVehiculo]).trim() : "",
+        prospecto:   iProspecto >= 0 && row[iProspecto] ? String(row[iProspecto]).trim() : "",
+        canal,
+        origen,
+        calificacion: califNum,
+        atencionAdecuada: iAtencion >= 0 && row[iAtencion] ? String(row[iAtencion]).trim() : "",
+        queja:       iQueja >= 0 && row[iQueja] ? String(row[iQueja]).trim() : "",
+        faltaPara10: iFalta >= 0 && row[iFalta] ? String(row[iFalta]).trim() : "",
+        comentario:  iComentario >= 0 && row[iComentario] ? String(row[iComentario]).trim() : "",
+      });
+    }
+  });
+
+  return registros;
+}
+
 function SatisfaccionClienteSection({ monthKey }) {
-  const [tipoActivo, setTipoActivo] = useState("ventas"); // ventas | servicio
+  const [tipoActivo, setTipoActivo] = useState("ventas"); // ventas | servicio | prospeccion
   const [agenciaSel, setAgenciaSel] = useState("TOTAL");
   const [cargando, setCargando] = useState(false);
   const [errorCarga, setErrorCarga] = useState("");
   const [datosVentas, setDatosVentas] = useState(null);
   const [datosServicio, setDatosServicio] = useState(null);
+  const [datosProspeccion, setDatosProspeccion] = useState(null);
   const [loadingDatos, setLoadingDatos] = useState(true);
   const [analisisIA, setAnalisisIA] = useState("");
   const [loadingIA, setLoadingIA] = useState(false);
@@ -3986,8 +4059,10 @@ function SatisfaccionClienteSection({ monthKey }) {
       setLoadingDatos(true);
       const v = await fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/ventas`);
       const s = await fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/servicio`);
+      const p = await fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/prospeccion`);
       setDatosVentas(Array.isArray(v) ? v : (v ? Object.values(v) : null));
       setDatosServicio(Array.isArray(s) ? s : (s ? Object.values(s) : null));
+      setDatosProspeccion(Array.isArray(p) ? p : (p ? Object.values(p) : null));
       setAnalisisIA("");
       setLoadingDatos(false);
     })();
@@ -4001,24 +4076,32 @@ function SatisfaccionClienteSection({ monthKey }) {
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
-      const registros = parseEncuestaWorkbook(wb, tipo);
+      let registros;
+      if (tipo === "prospeccion") {
+        registros = parseProspeccionWorkbook(wb);
+      } else {
+        registros = parseEncuestaWorkbook(wb, tipo);
+      }
       if (registros.length === 0) {
-        setErrorCarga("No se encontraron encuestas con estatus CONTACTADO en este archivo. Verifica que sea el reporte correcto.");
+        setErrorCarga("No se encontraron registros CONTACTADO en este archivo. Verifica que sea el reporte correcto.");
         setCargando(false);
         return;
       }
       await fbSet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/${tipo}`, registros);
-      if (tipo === "ventas") setDatosVentas(registros); else setDatosServicio(registros);
+      if (tipo === "ventas") setDatosVentas(registros);
+      else if (tipo === "servicio") setDatosServicio(registros);
+      else setDatosProspeccion(registros);
       setAnalisisIA("");
     } catch (err) {
-      setErrorCarga("No se pudo leer el archivo. Verifica que sea un Excel válido (.xlsx) del reporte de 24 hrs.");
+      console.error(err);
+      setErrorCarga("No se pudo leer el archivo. Verifica que sea un Excel válido del reporte.");
     } finally {
       setCargando(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
-  const datosCompletos = tipoActivo === "ventas" ? datosVentas : datosServicio;
+  const datosCompletos = tipoActivo === "ventas" ? datosVentas : tipoActivo === "servicio" ? datosServicio : datosProspeccion;
 
   // Lista de sucursales presentes en los datos cargados, para armar el selector dinámicamente.
   const sucursalesDisponibles = (() => {
@@ -4051,7 +4134,7 @@ function SatisfaccionClienteSection({ monthKey }) {
     if (!datos) return [];
     const map = {};
     datos.forEach(r => {
-      if (!map[r.asesor]) map[r.asesor] = { asesor: r.asesor, sucursal: r.sucursal, calificaciones: [], conComentario: 0, conQueja: 0, total: 0 };
+      if (!map[r.asesor]) map[r.asesor] = { asesor: r.asesor, sucursal: r.sucursal, canal: r.canal || "", calificaciones: [], conComentario: 0, conQueja: 0, total: 0 };
       map[r.asesor].total++;
       if (r.calificacion !== null && r.calificacion !== undefined) map[r.asesor].calificaciones.push(r.calificacion);
       if (r.comentario && !QUEJA_VACIA.has(r.comentario.toLowerCase())) map[r.asesor].conComentario++;
@@ -4167,6 +4250,12 @@ ${lineas}`;
             border: `1px solid ${tipoActivo === "servicio" ? "#3b9eea" : "#1e3a5f"}`,
             borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
           }}>🔧 Servicio</button>
+          <button onClick={() => setTipoActivo("prospeccion")} style={{
+            background: tipoActivo === "prospeccion" ? "#3b9eea" : "#0f2239",
+            color: tipoActivo === "prospeccion" ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${tipoActivo === "prospeccion" ? "#3b9eea" : "#1e3a5f"}`,
+            borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+          }}>📞 Prospección</button>
         </div>
 
         {sucursalesDisponibles.length > 0 && (
@@ -4196,10 +4285,12 @@ ${lineas}`;
             border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
             cursor: cargando ? "default" : "pointer", display: "inline-block"
           }}>
-            {cargando ? "Procesando…" : `📤 Subir reporte de ${tipoActivo === "ventas" ? "Ventas" : "Servicio"} (.xlsx)`}
+            {cargando ? "Procesando…" : `📤 Subir reporte de ${tipoActivo === "ventas" ? "Ventas" : tipoActivo === "servicio" ? "Servicio" : "Prospección"} (.xlsx)`}
           </label>
           <span style={{ color: "#64748b", fontSize: 11.5 }}>
-            Este archivo se guardará como el histórico de <b>{getMonthLabel(monthKey)}</b> (el mes seleccionado arriba en el dashboard). Se procesa en tu navegador, solo se guardan las encuestas con estatus "CONTACTADO".
+            {tipoActivo === "prospeccion"
+              ? "Reporte 24 HRS Prospección — se procesan todas las hojas (Agencia Tele + WhatsApp)."
+              : `Este archivo se guardará como el histórico de ${getMonthLabel(monthKey)}. Solo se guardan los registros con estatus CONTACTADO.`}
           </span>
         </div>
 
@@ -4213,13 +4304,14 @@ ${lineas}`;
           <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Cargando…</div>
         ) : !datos ? (
           <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "30px 0" }}>
-            Todavía no se ha cargado el reporte de {tipoActivo === "ventas" ? "Ventas" : "Servicio"} para {getMonthLabel(monthKey)}.
+            Todavía no se ha cargado el reporte de {tipoActivo === "ventas" ? "Ventas" : tipoActivo === "servicio" ? "Servicio" : "Prospección"} para {getMonthLabel(monthKey)}.
           </div>
         ) : (
           <>
+            {/* KPIs — con indicadores extra para Prospección */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 18 }}>
               <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
-                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>ENCUESTAS RESPONDIDAS</div>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{tipoActivo === "prospeccion" ? "PROSPECTOS CONTACTADOS" : "ENCUESTAS RESPONDIDAS"}</div>
                 <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.length}</div>
               </div>
               <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
@@ -4241,15 +4333,39 @@ ${lineas}`;
                   {nivelRiesgo ? `${RIESGO_EMOJI[nivelRiesgo]} ${RIESGO_LABEL[nivelRiesgo]}` : "—"}
                 </div>
               </div>
+              {/* KPIs extra para Prospección: desglose por canal */}
+              {tipoActivo === "prospeccion" && (() => {
+                const porCanal = {};
+                datos.forEach(r => {
+                  const k = r.canal || "Sin canal";
+                  if (!porCanal[k]) porCanal[k] = { count: 0, califs: [] };
+                  porCanal[k].count++;
+                  if (r.calificacion !== null) porCanal[k].califs.push(r.calificacion);
+                });
+                return Object.entries(porCanal).map(([canal, d]) => {
+                  const prom = d.califs.length > 0 ? (d.califs.reduce((s,v)=>s+v,0)/d.califs.length).toFixed(1) : "—";
+                  const color = canal === "WhatsApp" ? "#4ade80" : "#c084fc";
+                  return (
+                    <div key={canal} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${color}`, borderRadius: 8, padding: "12px 14px" }}>
+                      <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{canal.toUpperCase()}</div>
+                      <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{d.count}</div>
+                      <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>prom. {prom}</div>
+                    </div>
+                  );
+                });
+              })()}
             </div>
 
-            <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>CALIFICACIÓN POR ASESOR</p>
+            <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>
+              {tipoActivo === "prospeccion" ? "CALIFICACIÓN POR ASESOR (PROSPECTOS CONTACTADOS)" : "CALIFICACIÓN POR ASESOR"}
+            </p>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ color: "#64748b", fontSize: 11 }}>
                   <th style={{ textAlign: "left", paddingBottom: 6 }}>ASESOR</th>
                   <th style={{ textAlign: "center" }}>SUCURSAL</th>
-                  <th style={{ textAlign: "center" }}>ENCUESTAS</th>
+                  {tipoActivo === "prospeccion" && <th style={{ textAlign: "center" }}>CANAL</th>}
+                  <th style={{ textAlign: "center" }}>{tipoActivo === "prospeccion" ? "PROSPECTOS" : "ENCUESTAS"}</th>
                   <th style={{ textAlign: "center" }}>QUEJAS</th>
                   <th style={{ textAlign: "center" }}>PROMEDIO</th>
                 </tr>
@@ -4259,6 +4375,9 @@ ${lineas}`;
                   <tr key={a.asesor} style={{ borderTop: "1px solid #1e3a5f" }}>
                     <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{a.asesor}</td>
                     <td style={{ textAlign: "center", color: "#64748b", fontSize: 12 }}>{a.sucursal}</td>
+                    {tipoActivo === "prospeccion" && (
+                      <td style={{ textAlign: "center", color: "#64748b", fontSize: 11 }}>{a.canal || "—"}</td>
+                    )}
                     <td style={{ textAlign: "center", color: "#cbd5e1" }}>{a.total}</td>
                     <td style={{ textAlign: "center", color: a.conQueja > 0 ? "#f87171" : "#475569", fontWeight: a.conQueja > 0 ? 700 : 400 }}>{a.conQueja}</td>
                     <td style={{ textAlign: "center", fontWeight: 700, color: a.promedio === null ? "#475569" : a.promedio >= 9 ? "#4ade80" : a.promedio >= 7 ? "#D4AF37" : "#f87171" }}>
