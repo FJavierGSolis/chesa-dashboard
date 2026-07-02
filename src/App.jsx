@@ -2237,12 +2237,31 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         return;
       }
       const agregado = agregarFuentesLeads(registros);
-      // Guardamos en Firebase SOLO los agregados, sin el array de registros individuales
-      // El array de registros puede ser muy grande (500+ filas) y causar timeouts
+      // Firebase no acepta claves con caracteres especiales: . $ # [ ] / +
+      // Limpiamos porSubcampania y porProducto antes de guardar
+      const limpiarClaves = (obj) => {
+        const limpio = {};
+        Object.entries(obj ?? {}).forEach(([k, v]) => {
+          const claveLimpia = k.replace(/[.$#[\]/+]/g, "_").trim() || "sin_clave";
+          limpio[claveLimpia] = (limpio[claveLimpia] ?? 0) + v;
+        });
+        return limpio;
+      };
       const { registros: _omit, ...soloAgregados } = agregado;
-      await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, soloAgregados);
-      // En estado local guardamos el objeto completo con registros para uso inmediato
-      setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: agregado }));
+      const paraFirebase = {
+        ...soloAgregados,
+        porSubcampania: limpiarClaves(soloAgregados.porSubcampania),
+        porProducto: limpiarClaves(soloAgregados.porProducto),
+        porAsesor: Object.fromEntries(
+          Object.entries(soloAgregados.porAsesor ?? {}).map(([asesor, fuentes]) => [
+            asesor.replace(/[.$#[\]/+]/g, "_"),
+            limpiarClaves(fuentes)
+          ])
+        ),
+      };
+      await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, paraFirebase);
+      // En estado local guardamos con registros para uso inmediato en la sesión
+      setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: { ...paraFirebase, registros } }));
       // El total de leads del reporte alimenta automáticamente la primera etapa del Funnel.
       if (onFunnelFieldChange) {
         onFunnelFieldChange(agenciaSel, "leads", agregado.total);
