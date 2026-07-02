@@ -2179,11 +2179,13 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
   };
 
   const [datosPorAgenciaMesAnterior, setDatosPorAgenciaMesAnterior] = useState({});
+  const [prevMonthKey, setPrevMonthKey] = useState("");
 
   useEffect(() => {
     (async () => {
       setLoadingDatos(true);
       const prevKey = getPreviousMonthKey(monthKey);
+      setPrevMonthKey(prevKey);
       const [raw, rawPrev] = await Promise.all([
         fbGet(`${FUENTES_LEADS_PATH}/${monthKey}`),
         fbGet(`${FUENTES_LEADS_PATH}/${prevKey}`),
@@ -2415,6 +2417,12 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
 
       {datos && (
         <>
+          {/* Aviso si no hay datos del mes anterior para comparar */}
+          {!datosPrev && prevMonthKey && (
+            <div style={{ background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 8, padding: "10px 14px", color: "#64748b", fontSize: 12 }}>
+              💡 No hay reporte de <b style={{ color: "#3b9eea" }}>{getMonthLabel(prevMonthKey)}</b> cargado — sube el Excel de ese mes para ver las variaciones.
+            </div>
+          )}
           <Card>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
               <SectionHeader title="DISTRIBUCIÓN POR FUENTE" icon="🥧" />
@@ -6398,17 +6406,23 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
       } catch(e) {
         console.error("Error guardando funnel:", e);
       } finally {
-        isSavingFunnelRef.current = false;
+        // Extendemos la protección 3s extra después del guardado
+        // para que el polling no sobreescriba inmediatamente
+        setTimeout(() => { isSavingFunnelRef.current = false; }, 3000);
       }
-    }, 1200); // subimos a 1.2s para dar más margen
+    }, 1200);
   };
 
   const onFunnelFieldChange = (agencia, campo, val) => {
-    const mesAlEditar = viewMonthRef.current; // usar ref, no closure
+    // Capturar el mes destino AHORA, antes de cualquier async
+    const mesDestino = viewMonthRef.current;
     setFunnelData(prev => {
       const agPrev = prev[agencia] ?? funnelAgenciaBlank();
-      const next = { ...prev, [agencia]: { ...agPrev, [campo]: val } };
-      scheduleSaveFunnel(next, mesAlEditar);
+      const next = {
+        ...prev,
+        [agencia]: { ...agPrev, [campo]: val }
+      };
+      scheduleSaveFunnel(next, mesDestino);
       return next;
     });
   };
