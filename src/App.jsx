@@ -2237,7 +2237,11 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         return;
       }
       const agregado = agregarFuentesLeads(registros);
-      await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, agregado);
+      // Guardamos en Firebase SOLO los agregados, sin el array de registros individuales
+      // El array de registros puede ser muy grande (500+ filas) y causar timeouts
+      const { registros: _omit, ...soloAgregados } = agregado;
+      await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, soloAgregados);
+      // En estado local guardamos el objeto completo con registros para uso inmediato
       setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: agregado }));
       // El total de leads del reporte alimenta automáticamente la primera etapa del Funnel.
       if (onFunnelFieldChange) {
@@ -2260,44 +2264,81 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
     return agenciasConDatos.flatMap(ag => (datosPorAgencia[ag]?.registros ?? []).map(r => ({ ...r, _agencia: ag })));
   })();
 
+  // Si no hay registros individuales (cargado desde Firebase sin registros),
+  // construimos datos directamente desde los agregados guardados
+  const datosDesdeAgregados = (() => {
+    const todasLasAg = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+    const hayAgregados = todasLasAg.some(ag => datosPorAgencia[ag]?.porFuente);
+    if (!hayAgregados) return null;
+    // Combinar los agregados de las agencias seleccionadas
+    const merged = {
+      total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {},
+      porProducto: {}, porAsesor: {}, porSubcampania: {}, registros: []
+    };
+    todasLasAg.forEach(ag => {
+      const d = datosPorAgencia[ag];
+      if (!d) return;
+      merged.total += d.total ?? 0;
+      ['porFuente','porEstatus','porTemperatura','porProducto','porSubcampania'].forEach(key => {
+        Object.entries(d[key] ?? {}).forEach(([k,v]) => {
+          merged[key][k] = (merged[key][k] ?? 0) + v;
+        });
+      });
+    });
+    return merged;
+  })();
+
   const todasFuentesSeleccionadas = fuentesSel.length === FUENTES_LEAD.length;
   const registrosFiltrados = todasFuentesSeleccionadas
     ? todosLosRegistros
     : todosLosRegistros.filter(r => fuentesSel.includes(r.fuente));
 
   const datos = (() => {
-    if (registrosFiltrados.length === 0 && (agenciaSel === "TODAS" ? todosLosRegistros.length === 0 : !datosPorAgencia[agenciaSel])) {
-      return null;
-    }
-    const agregado = agregarFuentesLeads(registrosFiltrados);
-    // Si porSubcampania está vacío pero Firebase tiene el valor guardado, usarlo directamente
-    // (ocurre cuando los registros se guardaron antes del campo subcampania)
-    if (Object.keys(agregado.porSubcampania).length === 0) {
-      const todasLasAg = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
-      const subcampMerged = {};
-      todasLasAg.forEach(ag => {
-        const saved = datosPorAgencia[ag];
-        if (saved?.porSubcampania) {
-          Object.entries(saved.porSubcampania).forEach(([k, v]) => {
+    // Si hay registros en memoria, recalcular desde ellos (más preciso, filtra por fuente)
+    if (registrosFiltrados.length > 0) {
+      const agregado = agregarFuentesLeads(registrosFiltrados);
+      // Rescatar porSubcampania guardado si el recálculo lo pierde
+      if (Object.keys(agregado.porSubcampania).length === 0) {
+        const todasLasAg = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+        const subcampMerged = {};
+        todasLasAg.forEach(ag => {
+          Object.entries(datosPorAgencia[ag]?.porSubcampania ?? {}).forEach(([k,v]) => {
             subcampMerged[k] = (subcampMerged[k] ?? 0) + v;
           });
-        }
-      });
-      if (Object.keys(subcampMerged).length > 0) agregado.porSubcampania = subcampMerged;
+        });
+        if (Object.keys(subcampMerged).length > 0) agregado.porSubcampania = subcampMerged;
+      }
+      return agregado;
     }
-    return agregado;
+    // Si no hay registros (cargado desde Firebase sin el array), usar los agregados directos
+    if (datosDesdeAgregados && datosDesdeAgregados.total > 0) return datosDesdeAgregados;
+    return null;
   })();
 
   // Consolidado mes anterior para comparación
   const datosPrev = (() => {
     const todasLasAg = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+    // Intentar desde registros individuales primero
     const registrosPrev = [];
     todasLasAg.forEach(ag => {
       const raw = datosPorAgenciaMesAnterior[ag];
-      if (raw && Array.isArray(raw)) registrosPrev.push(...raw);
-      else if (raw && typeof raw === "object") registrosPrev.push(...Object.values(raw));
+      if (raw?.registros && Array.isArray(raw.registros)) registrosPrev.push(...raw.registros);
+      else if (raw && Array.isArray(raw)) registrosPrev.push(...raw);
     });
-    return registrosPrev.length > 0 ? agregarFuentesLeads(registrosPrev) : null;
+    if (registrosPrev.length > 0) return agregarFuentesLeads(registrosPrev);
+    // Fallback: usar agregados guardados directamente
+    const merged = { total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {}, porProducto: {}, porSubcampania: {} };
+    let tieneAlgo = false;
+    todasLasAg.forEach(ag => {
+      const d = datosPorAgenciaMesAnterior[ag];
+      if (!d) return;
+      tieneAlgo = true;
+      merged.total += d.total ?? 0;
+      ['porFuente','porEstatus','porTemperatura','porProducto','porSubcampania'].forEach(key => {
+        Object.entries(d[key] ?? {}).forEach(([k,v]) => { merged[key][k] = (merged[key][k] ?? 0) + v; });
+      });
+    });
+    return tieneAlgo ? merged : null;
   })();
 
   // Helper: variación % vs mes anterior con badge visual
