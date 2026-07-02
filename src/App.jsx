@@ -2572,18 +2572,20 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
 
       {/* ── Captura manual del Funnel de Ventas ──────────────────────────────── */}
       <Card>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <SectionHeader title={`CAPTURA DEL FUNNEL — ${agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}`} icon="✍️" />
-          {saveStatus === "guardando" && (
-            <span style={{ fontSize: 12, color: "#fbbf24", fontWeight: 700 }}>⏳ Guardando en {getMonthLabel(monthKey)}…</span>
-          )}
-          {saveStatus === "guardado" && (
-            <span style={{ fontSize: 12, color: "#4ade80", fontWeight: 700 }}>✅ Guardado en {getMonthLabel(monthKey)}</span>
-          )}
-          {saveStatus === "error" && (
-            <span style={{ fontSize: 12, color: "#ef4444", fontWeight: 700 }}>❌ Error al guardar — revisa tu conexión</span>
-          )}
-        </div>
+        <SectionHeader title={`CAPTURA DEL FUNNEL — ${agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}`} icon="✍️" />
+        {saveStatus && (
+          <div style={{
+            background: saveStatus === "guardado" ? "#14532d" : saveStatus === "error" ? "#7f1d1d" : "#1e3a5f",
+            border: `1px solid ${saveStatus === "guardado" ? "#4ade80" : saveStatus === "error" ? "#ef4444" : "#fbbf24"}`,
+            borderRadius: 8, padding: "10px 16px", marginBottom: 14,
+            color: saveStatus === "guardado" ? "#4ade80" : saveStatus === "error" ? "#ef4444" : "#fbbf24",
+            fontSize: 13, fontWeight: 700,
+          }}>
+            {saveStatus === "guardando" && `⏳ Guardando datos de ${getMonthLabel(monthKey)}…`}
+            {saveStatus === "guardado" && `✅ Datos guardados correctamente en ${getMonthLabel(monthKey)}`}
+            {saveStatus === "error" && "❌ Error al guardar. Verifica tu conexión e intenta de nuevo."}
+          </div>
+        )}
         {agenciaSel === "TODAS" ? (
           <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "10px 0 18px" }}>
             Selecciona una agencia específica arriba para capturar sus valores del Funnel.
