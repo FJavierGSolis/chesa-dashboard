@@ -2216,8 +2216,19 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         fbGet(`${FUENTES_LEADS_PATH}/${monthKey}`),
         fbGet(`${FUENTES_LEADS_PATH}/${prevKey}`),
       ]);
-      setDatosPorAgencia(raw || {});
-      setDatosPorAgenciaMesAnterior(rawPrev || {});
+      // Firebase guarda con claves encodeadas (encodeKey) — remapear a nombres originales
+      const remapAgencias = (obj) => {
+        if (!obj || typeof obj !== "object") return {};
+        const result = {};
+        AGENCIAS.forEach(ag => {
+          const encoded = encodeKey(ag);
+          // Buscar tanto por nombre original como por nombre encodeado
+          result[ag] = obj[ag] ?? obj[encoded] ?? null;
+        });
+        return result;
+      };
+      setDatosPorAgencia(remapAgencias(raw));
+      setDatosPorAgenciaMesAnterior(remapAgencias(rawPrev));
       setLoadingDatos(false);
     })();
   }, [monthKey]);
@@ -2254,7 +2265,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         porProducto: limpiarClaves(agregado.porProducto),
         porSubcampania: limpiarClaves(agregado.porSubcampania),
       };
-      await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, paraFirebase);
+      await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${encodeKey(agenciaSel)}`, paraFirebase);
       setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: { ...paraFirebase, registros, porAsesor: agregado.porAsesor } }));
       // El total de leads del reporte alimenta automáticamente la primera etapa del Funnel.
       if (onFunnelFieldChange) {
@@ -6062,14 +6073,18 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
       const resumenMes = buildResumenParaIA(data, monthKey);
       const resumenFunnel = buildResumenFunnelParaIA(funnelData);
 
-      // Solo lecturas rápidas — sin buildResumenHistorico que puede tardar mucho
-      const [rawInv, rawSatV, rawSatS, rawSatP] = await Promise.all([
+      // Todas las lecturas Firebase en paralelo
+      const [rawInv, rawSatV, rawSatS, rawSatP, rawDemos, rawVentasHist, rawAdach] = await Promise.all([
         fbGet("inventario"),
         fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/ventas`),
         fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/servicio`),
         fbGet(`${SATISFACCION_PATH_PREFIX}/${monthKey}/prospeccion`),
+        fbGet(`encuestasDemo/${monthKey}`),
+        fbGet(VENTAS_HIST_PATH),
+        fbGet(ADACH_PATH),
       ]);
 
+      // Inventario
       let resumenInventario = "";
       if (rawInv?.unidades?.length > 0) {
         const criticas = rawInv.unidades.filter(u => u.dias > 120).length;
@@ -6079,17 +6094,18 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
           return s + u.costoFactura * tasa / 365 * u.dias;
         }, 0);
         resumenInventario = `\nINVENTARIO (${rawInv.unidades.length} unidades):
-- Unidades críticas (>120 días): ${criticas}
-- Unidades urgentes (91-120 días): ${urgentes}
+- Críticas (>120 días): ${criticas} | Urgentes (91-120 días): ${urgentes}
 - Costo plan piso acumulado: $${Math.round(totalPP).toLocaleString("es-MX")}`;
       }
 
+      // Satisfacción cliente
       const procesarEncuestas = (raw, tipo) => {
         const arr = Array.isArray(raw) ? raw : (raw ? Object.values(raw) : []);
         if (!arr.length) return null;
         const califs = arr.map(r => r.calificacion).filter(v => v != null);
         const prom = califs.length ? (califs.reduce((s,v)=>s+v,0)/califs.length).toFixed(1) : "—";
-        const conQueja = arr.filter(r => r.queja && r.queja.trim().length > 3).length;
+        const conQueja = arr.filter(r => r.queja && r.queja.trim().length > 3 &&
+          !["sin comentarios","sin comentario",""].includes(r.queja.trim().toLowerCase())).length;
         return `${tipo}: ${arr.length} encuestas, promedio ${prom}/10, quejas: ${conQueja}`;
       };
       const lineasSat = [
@@ -6098,14 +6114,67 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
         procesarEncuestas(rawSatP, "Prospección"),
       ].filter(Boolean);
       const resumenSatisfaccion = lineasSat.length > 0
-        ? `\nSATISFACCIÓN CLIENTE:\n` + lineasSat.map(l => `- ${l}`).join("\n") : "";
+        ? `\nSATISFACCIÓN CLIENTE — ${getMonthLabel(monthKey)}:\n` + lineasSat.map(l => `- ${l}`).join("\n") : "";
+
+      // Demos
+      let resumenDemos = "";
+      if (rawDemos) {
+        const demos = Array.isArray(rawDemos) ? rawDemos : Object.values(rawDemos);
+        if (demos.length > 0) {
+          const califs = demos.map(d => d.calificacion).filter(v => v != null);
+          const prom = califs.length ? (califs.reduce((s,v)=>s+v,0)/califs.length).toFixed(1) : "—";
+          const modelos = {};
+          demos.forEach(d => { if (d.version) modelos[d.version] = (modelos[d.version]||0)+1; });
+          const topModelo = Object.entries(modelos).sort((a,b)=>b[1]-a[1])[0];
+          resumenDemos = `\nDEMOS — ${getMonthLabel(monthKey)}: ${demos.length} encuestas, promedio ${prom}/10, modelo más demostrado: ${topModelo ? `${topModelo[0]} (${topModelo[1]})` : "—"}`;
+        }
+      }
+
+      // Productividad asesores
+      let resumenProductividad = "";
+      if (rawVentasHist?.registros?.length > 0) {
+        const registros = rawVentasHist.registros;
+        const meses = [...new Set(registros.map(v => v.mes).filter(Boolean))].sort();
+        const ultimoMes = meses[meses.length - 1];
+        if (ultimoMes) {
+          const [y, m] = ultimoMes.split("-").map(Number);
+          const trim = [];
+          for (let i = 2; i >= 0; i--) {
+            let mm = m - i; let yy = y;
+            if (mm <= 0) { mm += 12; yy -= 1; }
+            trim.push(`${yy}-${String(mm).padStart(2,"0")}`);
+          }
+          const ventasTrim = registros.filter(v => trim.includes(v.mes));
+          const porAsesor = {};
+          ventasTrim.forEach(v => {
+            const key = v.nombre || v.clave || "Sin nombre";
+            if (!porAsesor[key]) porAsesor[key] = 0;
+            porAsesor[key]++;
+          });
+          const ranking = Object.entries(porAsesor).sort((a,b)=>b[1]-a[1]).slice(0,5);
+          resumenProductividad = `\nPRODUCTIVIDAD ASESORES (${trim[0]} → ${trim[2]}): ${ventasTrim.length} ventas totales, ${(ventasTrim.length/3).toFixed(1)}/mes promedio. Top 5: ${ranking.map(([n,c])=>`${n}(${c})`).join(", ")}`;
+        }
+      }
+
+      // Mercado ADACH
+      let resumenMercado = "";
+      if (rawAdach && typeof rawAdach === "object") {
+        const mesesAdach = Object.keys(rawAdach).sort().reverse();
+        if (mesesAdach.length > 0) {
+          const d = rawAdach[mesesAdach[0]]?.datos;
+          if (d) {
+            const competidores = d.competidoresChinos?.map(c => `${c.marca}:${c.unidades}`).join(", ") || "—";
+            resumenMercado = `\nMERCADO CHIAPAS (${getMonthLabel(mesesAdach[0])} ADACH): mercado total ${d.mercadoTotal} uds (${d.variacionVsAnioAnterior>=0?"+":""}${d.variacionVsAnioAnterior}% vs año ant.), CHESA ${d.changanUnidades} uds (${d.changanShare}% MS), segmento emergentes ${d.marcasEmergentesTotal} uds. Competidores chinos: ${competidores}`;
+          }
+        }
+      }
 
       const hoy = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
       const prompt = `${CONTEXTO_CHESA}
 
-Hoy es ${hoy}. Escríbele a Javier García un briefing ejecutivo conversacional — como su asesor de confianza.
+Hoy es ${hoy}. Escríbele a Javier García un briefing ejecutivo conversacional — como su asesor de confianza que ya analizó todo.
 
-REGLAS: habla en segunda persona, sé específico con números, prioriza acciones sobre diagnósticos, máximo 5 riesgos y 3 acciones concretas para hoy, cierra con proyección del mes. Párrafos cortos, markdown solo para negritas y encabezados ##.
+REGLAS: habla en segunda persona, sé específico con números reales, prioriza acciones sobre diagnósticos, máximo 5 situaciones de riesgo ordenadas por urgencia, máximo 3 acciones concretas para hoy con impacto estimado, cierra con proyección del mes. Párrafos cortos, markdown solo para negritas y encabezados ##. Integra satisfacción, demos, productividad y mercado ADACH cuando sean relevantes.
 
 DATOS OPERATIVOS:
 ${resumenMes}
@@ -6113,7 +6182,10 @@ ${resumenMes}
 FUNNEL:
 ${resumenFunnel}
 ${resumenInventario}
-${resumenSatisfaccion}`;
+${resumenSatisfaccion}
+${resumenDemos}
+${resumenProductividad}
+${resumenMercado}`;
 
       const response = await fetch("/api/analisis", {
         method: "POST",
