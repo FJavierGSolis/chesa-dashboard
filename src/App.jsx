@@ -2356,6 +2356,72 @@ function buildResumenFunnelParaIA(funnelData) {
   return lineas.join("\n");
 }
 
+// ── Componente reutilizable: botón + resultado de análisis IA ─────────────────
+function AnalisisIABlock({ titulo, subtitulo, loadingLabel, buildPrompt }) {
+  const [resultado, setResultado] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const generar = async () => {
+    setLoading(true); setError(""); setResultado("");
+    try {
+      const prompt = buildPrompt();
+      const response = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await response.json();
+      if (!response.ok) { setError(data.error || "Error generando análisis."); return; }
+      setResultado(data.text || "No se recibió respuesta.");
+    } catch { setError("Error de conexión con la IA."); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <Card>
+      <SectionHeader title={titulo} icon="🧠" />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={generar} disabled={loading} style={{
+          background: loading ? "#1e3a5f" : "#D4AF37",
+          color: loading ? "#64748b" : "#0a1628",
+          border: "none", borderRadius: 8, padding: "10px 20px",
+          fontSize: 13, fontWeight: 700, cursor: loading ? "default" : "pointer"
+        }}>
+          {loading ? loadingLabel : subtitulo}
+        </button>
+        {resultado && !loading && (
+          <button onClick={() => setResultado("")} style={{
+            background: "transparent", border: "1px solid #2a3f5f",
+            color: "#64748b", borderRadius: 6, padding: "8px 14px",
+            fontSize: 12, cursor: "pointer"
+          }}>✕ Limpiar</button>
+        )}
+      </div>
+      {error && (
+        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginBottom: 14 }}>
+          {error}
+        </div>
+      )}
+      {loading && (
+        <div style={{ color: "#94a3b8", fontSize: 13, padding: "20px 0", textAlign: "center" }}>
+          Procesando con IA — esto toma unos segundos…
+        </div>
+      )}
+      {!loading && resultado && (
+        <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px", maxHeight: "70vh", overflowY: "auto" }}>
+          {renderMarkdownGlobal(resultado)}
+        </div>
+      )}
+      {!loading && !resultado && !error && (
+        <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "20px 0" }}>
+          Da clic en el botón para generar el análisis con IA.
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ── SECCIÓN: Productividad Asesores ──────────────────────────────────────────
 const VENTAS_HIST_PATH = "ventasHistoricas"; // ventasHistoricas/registros = array
 
@@ -2898,13 +2964,53 @@ function ProductividadAsesoresSection() {
                 ))}
             </div>
           </Card>
+
+          {/* ── Análisis IA de Productividad ─────────────────────────────────── */}
+          <AnalisisIABlock
+            titulo="ANÁLISIS DE PRODUCTIVIDAD CON IA"
+            subtitulo="🧠 Generar análisis de asesores"
+            loadingLabel="Analizando productividad…"
+            buildPrompt={() => {
+              const lineas = [];
+              lineas.push(`Eres el director comercial de CHESA Changan, grupo de 5 agencias en Chiapas.`);
+              lineas.push(`Analiza la productividad de los asesores y genera recomendaciones de coaching y gestión.\n`);
+              lineas.push(`PERÍODO ANALIZADO: ${filtroMes === "TRIMESTRE" ? `Último trimestre (${trimestre.join(" → ")})` : filtroMes === "TODO" ? "Todo el histórico (may 2024 – jun 2026)" : getMonthLabel(filtroMes)}`);
+              lineas.push(`AGENCIA FILTRO: ${filtroAgencia}\n`);
+              lineas.push(`RESUMEN PERÍODO:`);
+              lineas.push(`- Total ventas: ${ventasFiltradas.length}`);
+              lineas.push(`- Asesores activos: ${ranking.length}`);
+              lineas.push(`- Promedio por asesor: ${ranking.length > 0 ? (ventasFiltradas.length/ranking.length).toFixed(1) : "—"} ventas`);
+              lineas.push(`- Utilidad total: $${Math.round(ventasFiltradas.reduce((s,v)=>s+v.utilidad,0)).toLocaleString("es-MX")}`);
+              lineas.push(`- Venta total: $${Math.round(ventasFiltradas.reduce((s,v)=>s+v.ventaUnidad,0)).toLocaleString("es-MX")}\n`);
+              lineas.push(`RANKING COMPLETO DE ASESORES:`);
+              ranking.forEach((a, idx) => {
+                const modeloTop = Object.entries(a.modelos).sort((x,y)=>y[1]-x[1])[0];
+                const promedio = a.ventaTotal/a.ventas;
+                const utilPct = a.ventaTotal > 0 ? (a.utilidadTotal/a.ventaTotal*100).toFixed(1) : "0";
+                lineas.push(`  ${idx+1}. ${a.nombre} (${a.agencia}): ${a.ventas} ventas | util $${Math.round(a.utilidadTotal).toLocaleString("es-MX")} (${utilPct}%) | venta prom $${Math.round(promedio).toLocaleString("es-MX")} | top: ${modeloTop?.[0] || "—"} (${modeloTop?.[1] || 0})`);
+                if (trimestre.length > 1) {
+                  const porMesStr = trimestre.map(m => `${m.slice(5)}:${a.porMes[m]||0}`).join(", ");
+                  lineas.push(`     Evolución: ${porMesStr}`);
+                }
+              });
+              lineas.push(`\nTOP MODELOS VENDIDOS:`);
+              topModelosArr.forEach(([m, c]) => lineas.push(`  - ${m}: ${c} unidades (${ventasFiltradas.length>0?(c/ventasFiltradas.length*100).toFixed(1):0}%)`));
+              lineas.push(`\nPREGUNTAS A RESPONDER:`);
+              lineas.push(`1. ¿Cuáles son los 3 asesores con mejor desempeño y qué prácticas deberían replicarse?`);
+              lineas.push(`2. ¿Qué asesores muestran señales de alerta (caída sostenida, resultados muy por debajo de la media) y qué acción tomar?`);
+              lineas.push(`3. ¿Hay alguna agencia con un patrón de productividad preocupante vs las otras?`);
+              lineas.push(`4. ¿Qué modelo están vendiendo más los asesores top y qué podría explicarlo?`);
+              lineas.push(`5. Recomienda 2-3 acciones concretas de coaching para el equipo este mes.`);
+              lineas.push(`Responde en markdown, directo y ejecutivo. Usa los nombres completos de los asesores, no las claves.`);
+              return lineas.join("\n");
+            }}
+          />
         </>
       )}
     </div>
   );
 }
 
-// ── SECCIÓN: Inventario ───────────────────────────────────────────────────────
 const INVENTARIO_PATH = "inventario"; // inventario/unidades = array de objetos
 
 // Mapea la ubicación física del Excel a una de las 5 agencias
@@ -3033,14 +3139,48 @@ function InventarioSection() {
   useEffect(() => {
     (async () => {
       setLoadingDatos(true);
+
+      // 1. Cargar inventario
       const raw = await fbGet(INVENTARIO_PATH);
       if (raw && raw.unidades && Array.isArray(raw.unidades)) {
         setUnidades(raw.unidades);
         setFechaCarga(raw.fechaCarga || null);
         if (raw.tiie) setTiie(raw.tiie);
         if (raw.spread) setSpread(raw.spread);
-        if (raw.ventasTrim) setVentasTrim(raw.ventasTrim);
       }
+
+      // 2. Calcular ventasTrim desde el historial de ventas (Productividad)
+      //    Esto sincroniza automáticamente sin captura manual.
+      const rawVentas = await fbGet(VENTAS_HIST_PATH);
+      if (rawVentas && Array.isArray(rawVentas.registros) && rawVentas.registros.length > 0) {
+        const registros = rawVentas.registros;
+        // Obtener el último trimestre
+        const meses = [...new Set(registros.map(v => v.mes).filter(Boolean))].sort();
+        const ultimoMes = meses[meses.length - 1];
+        if (ultimoMes) {
+          const [y, m] = ultimoMes.split("-").map(Number);
+          const trim = [];
+          for (let i = 2; i >= 0; i--) {
+            let mm = m - i; let yy = y;
+            if (mm <= 0) { mm += 12; yy -= 1; }
+            trim.push(`${yy}-${String(mm).padStart(2, "0")}`);
+          }
+          // Contar ventas por modelo en ese trimestre
+          const conteo = {};
+          registros.filter(v => trim.includes(v.mes)).forEach(v => {
+            const k = v.modelo.replace(/[^a-zA-Z0-9]/g, "_");
+            conteo[k] = (conteo[k] || 0) + 1;
+          });
+          // Usar los datos calculados (si ya había manuales guardados, los sobreescribe con los reales)
+          setVentasTrim(conteo);
+          // Guardar en Firebase para que Inventario los tenga siempre actualizados
+          if (raw) await fbSet(`${INVENTARIO_PATH}/ventasTrim`, conteo);
+        }
+      } else if (raw?.ventasTrim) {
+        // Si no hay historial de ventas, usar lo guardado manualmente
+        setVentasTrim(raw.ventasTrim);
+      }
+
       setLoadingDatos(false);
     })();
   }, []);
@@ -3310,9 +3450,11 @@ function InventarioSection() {
           {/* ── Resumen por modelo (referencia compra mensual) ─────────────────── */}
           <Card>
             <SectionHeader title="INVENTARIO POR MODELO — REFERENCIA DE COMPRA" icon="📦" />
-            <div style={{ color: "#475569", fontSize: 11.5, marginBottom: 14, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "8px 12px" }}>
-              Objetivo: mantener <b style={{ color: "#3b9eea" }}>1.5 meses de venta</b> en inventario por modelo, basado en el último trimestre.
-              Ingresa las ventas del trimestre por modelo para calcular el stock ideal y el faltante o excedente.
+            <div style={{ color: "#475569", fontSize: 11.5, marginBottom: 14, background: "#4ade8011", border: "1px solid #4ade8033", borderRadius: 6, padding: "8px 12px" }}>
+              ✅ <b style={{ color: "#4ade80" }}>Sincronizado automáticamente</b> desde la pestaña de Productividad Asesores.
+              Las ventas del último trimestre se calculan del historial cargado allá.
+              Objetivo: mantener <b style={{ color: "#3b9eea" }}>1.5 meses de venta</b> por modelo.
+              Si no has subido el reporte de ventas aún, puedes capturar manualmente en la columna "VENTAS TRIM."
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -3377,13 +3519,77 @@ function InventarioSection() {
               🟠 Excedente = tienes más stock del necesario · 🟢 Faltante = necesitas pedir más unidades
             </div>
           </Card>
+          {/* ── Análisis IA de Inventario ─────────────────────────────────── */}
+          <AnalisisIABlock
+            titulo="ANÁLISIS DE INVENTARIO CON IA"
+            subtitulo="🧠 Generar análisis de inventario"
+            loadingLabel="Analizando inventario…"
+            buildPrompt={() => {
+              const hoy = new Date();
+              const criticas = unidades.filter(u => nivelRiesgo(u.dias) === "rojo");
+              const urgentes = unidades.filter(u => nivelRiesgo(u.dias) === "naranja");
+              const conDanio = unidades.filter(u => u.danio);
+              const totalPP = unidades.reduce((s, u) => s + costoPlanPiso(u.costoFactura, u.dias, tiie, spread), 0);
+              const fmt = (n) => `$${Math.round(n).toLocaleString("es-MX")}`;
+              const porAgencia = {};
+              AGENCIAS.forEach(ag => {
+                const uds = unidades.filter(u => u.agencia === ag);
+                porAgencia[ag] = {
+                  total: uds.length,
+                  criticas: uds.filter(u => nivelRiesgo(u.dias) === "rojo").length,
+                  costoTotal: uds.reduce((s, u) => s + u.costoFactura, 0),
+                  planPiso: uds.reduce((s, u) => s + costoPlanPiso(u.costoFactura, u.dias, tiie, spread), 0),
+                };
+              });
+              const lineas = [];
+              lineas.push(`Eres el asesor financiero y comercial de CHESA Changan, grupo de 5 agencias en Chiapas.`);
+              lineas.push(`Analiza el estado del inventario y genera recomendaciones ejecutivas concretas.\n`);
+              lineas.push(`PARÁMETROS: TIIE ${tiie}% + spread ${spread}% = ${(tiie+spread).toFixed(2)}% anual para plan piso`);
+              lineas.push(`FECHA DE ANÁLISIS: ${hoy.toLocaleDateString("es-MX")}\n`);
+              lineas.push(`RESUMEN GLOBAL:`);
+              lineas.push(`- Total unidades: ${unidades.length}`);
+              lineas.push(`- Valor total inventario: ${fmt(unidades.reduce((s,u)=>s+u.costoFactura,0))}`);
+              lineas.push(`- Costo plan piso acumulado: ${fmt(totalPP)}`);
+              lineas.push(`- Días promedio en inventario: ${Math.round(unidades.reduce((s,u)=>s+u.dias,0)/unidades.length)}`);
+              lineas.push(`- Unidades críticas (>120 días): ${criticas.length}`);
+              lineas.push(`- Unidades urgentes (91-120 días): ${urgentes.length}`);
+              lineas.push(`- Unidades con daño reportado: ${conDanio.length}\n`);
+              lineas.push(`POR AGENCIA:`);
+              Object.entries(porAgencia).forEach(([ag, d]) => {
+                lineas.push(`  ${ag}: ${d.total} uds, ${d.criticas} críticas, costo ${fmt(d.costoTotal)}, plan piso acum. ${fmt(d.planPiso)}`);
+              });
+              lineas.push(`\nUNIDADES CRÍTICAS (>120 días, ordenadas por antigüedad):`);
+              criticas.sort((a,b)=>b.dias-a.dias).slice(0,15).forEach(u => {
+                lineas.push(`  - ${u.modelo} | ${u.color} | ${u.dias} días | ${fmt(u.costoFactura)} | Plan piso: ${fmt(costoPlanPiso(u.costoFactura,u.dias,tiie,spread))} | ${u.agencia}${u.danio ? ` | DAÑO: ${u.danio}` : ""}`);
+              });
+              lineas.push(`\nUNIDADES CON DAÑO PENDIENTE:`);
+              conDanio.forEach(u => {
+                lineas.push(`  - ${u.modelo} | ${u.dias} días | ${u.agencia} | ${u.danio}`);
+              });
+              lineas.push(`\nSTOCK VS DEMANDA (último trimestre):`);
+              modelosOrdenados.forEach(m => {
+                const modeloKey = m.modelo.replace(/[^a-zA-Z0-9]/g,"_");
+                const vTrim = ventasTrim[modeloKey] ?? 0;
+                const ideal = vTrim > 0 ? Math.ceil(vTrim/3*1.5) : null;
+                const dif = ideal !== null ? m.cantidad - ideal : null;
+                const estado = dif === null ? "sin referencia" : dif > 3 ? `EXCEDENTE +${dif}` : dif < -1 ? `FALTANTE ${dif}` : "OK";
+                lineas.push(`  ${m.modelo}: stock ${m.cantidad} uds (${m.diasProm} días prom) | ventas trim ${vTrim} | ideal ${ideal ?? "—"} | ${estado}`);
+              });
+              lineas.push(`\nPREGUNTAS A RESPONDER:`);
+              lineas.push(`1. ¿Cuáles son las 3 acciones más urgentes para reducir el costo financiero esta semana?`);
+              lineas.push(`2. ¿Qué modelos tienen riesgo real de depreciación o pérdida y qué hacer con ellos?`);
+              lineas.push(`3. ¿Qué comprar en la próxima orden y qué modelos evitar?`);
+              lineas.push(`4. ¿Hay alguna agencia con un problema de inventario específico que requiera atención inmediata?`);
+              lineas.push(`Responde en formato markdown, directo y ejecutivo. Sin relleno.`);
+              return lineas.join("\n");
+            }}
+          />
         </>
       )}
     </div>
   );
 }
-
-// Input simple para ventas del trimestre en la tabla de compra mensual
+ en la tabla de compra mensual
 function VentasTriInput({ value, onChange }) {
   const [local, setLocal] = useState(String(value || 0));
   useEffect(() => setLocal(String(value || 0)), [value]);
