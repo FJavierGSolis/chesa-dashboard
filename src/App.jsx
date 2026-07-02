@@ -2147,8 +2147,9 @@ function FunnelEtapas({ etapasData }) {
   );
 }
 
-function PieChartLeyenda({ datos, colores, size = 170 }) {
+function PieChartLeyenda({ datos, colores, size = 170, prevDatos = null }) {
   // datos: [{ label, value }]
+  // prevDatos: { label: value } — mapa del mes anterior para mostrar variación inline
   const entries = datos.map((d, i) => ({ ...d, color: colores[i % colores.length] }));
   const total = entries.reduce((s, e) => s + e.value, 0);
   return (
@@ -2157,12 +2158,28 @@ function PieChartLeyenda({ datos, colores, size = 170 }) {
       <div style={{ flex: 1, minWidth: 180 }}>
         {entries.filter(e => e.value > 0).sort((a, b) => b.value - a.value).map(e => {
           const pct = total > 0 ? (e.value / total * 100) : 0;
+          const ant = prevDatos?.[e.label];
+          let varEl = null;
+          if (ant != null && ant > 0) {
+            const diff = ((e.value - ant) / ant * 100);
+            const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
+            varEl = (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 8,
+                background: `${color}22`, color, border: `1px solid ${color}44`,
+                whiteSpace: "nowrap", marginLeft: 4,
+              }}>
+                {diff > 0 ? "+" : ""}{diff.toFixed(0)}%
+              </span>
+            );
+          }
           return (
             <div key={e.label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, fontSize: 12 }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: e.color, flexShrink: 0 }} />
               <span style={{ color: "#cbd5e1", flex: 1 }}>{e.label}</span>
               <span style={{ color: "#94a3b8", fontWeight: 700 }}>{e.value}</span>
               <span style={{ color: "#64748b", fontSize: 11, minWidth: 38, textAlign: "right" }}>{pct.toFixed(0)}%</span>
+              {varEl}
             </div>
           );
         })}
@@ -2252,7 +2269,23 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
     if (registrosFiltrados.length === 0 && (agenciaSel === "TODAS" ? todosLosRegistros.length === 0 : !datosPorAgencia[agenciaSel])) {
       return null;
     }
-    return agregarFuentesLeads(registrosFiltrados);
+    const agregado = agregarFuentesLeads(registrosFiltrados);
+    // Si porSubcampania está vacío pero Firebase tiene el valor guardado, usarlo directamente
+    // (ocurre cuando los registros se guardaron antes del campo subcampania)
+    if (Object.keys(agregado.porSubcampania).length === 0) {
+      const todasLasAg = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+      const subcampMerged = {};
+      todasLasAg.forEach(ag => {
+        const saved = datosPorAgencia[ag];
+        if (saved?.porSubcampania) {
+          Object.entries(saved.porSubcampania).forEach(([k, v]) => {
+            subcampMerged[k] = (subcampMerged[k] ?? 0) + v;
+          });
+        }
+      });
+      if (Object.keys(subcampMerged).length > 0) agregado.porSubcampania = subcampMerged;
+    }
+    return agregado;
   })();
 
   // Consolidado mes anterior para comparación
@@ -2433,110 +2466,46 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             </div>
           )}
           <Card>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <SectionHeader title="DISTRIBUCIÓN POR FUENTE" icon="🥧" />
-              {datosPrev && varBadge(datos.total, datosPrev.total)}
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
-              <PieChartLeyenda datos={datosFuentePie} colores={coloresFuente} />
-              {datosPrev && (
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .8, marginBottom: 10 }}>VS MES ANTERIOR</div>
-                  {FUENTES_LEAD.map(f => {
-                    const act = datos.porFuente[f.key] ?? 0;
-                    const ant = datosPrev.porFuente[f.key] ?? 0;
-                    const badge = varBadge(act, ant);
-                    if (!badge) return null;
-                    return (
-                      <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                        <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 120 }}>{f.label}</span>
-                        <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>{act}</span>
-                        {badge}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            <SectionHeader title="DISTRIBUCIÓN POR FUENTE" icon="🥧" />
+            <PieChartLeyenda
+              datos={datosFuentePie}
+              colores={coloresFuente}
+              prevDatos={datosPrev ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, datosPrev.porFuente[f.key] ?? 0])) : null}
+            />
           </Card>
 
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 320 }}>
               <Card>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                  <SectionHeader title="EMBUDO POR ESTATUS (REPORTE)" icon="🥧" />
-                  {datosPrev && varBadge(datos.total, datosPrev.total)}
-                </div>
-                <PieChartLeyenda datos={datosEstatusPie} colores={coloresEstatus} size={150} />
-                {datosPrev && (
-                  <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 5 }}>
-                    {datosEstatusPie.map(e => {
-                      const ant = datosPrev.porEstatus[e.label] ?? 0;
-                      const badge = varBadge(e.value, ant);
-                      if (!badge) return null;
-                      return (
-                        <div key={e.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 90 }}>{e.label}</span>
-                          <span style={{ color: "#f1f5f9", fontSize: 11, fontWeight: 700 }}>{e.value}</span>
-                          {badge}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <SectionHeader title="EMBUDO POR ESTATUS (REPORTE)" icon="🥧" />
+                <PieChartLeyenda
+                  datos={datosEstatusPie}
+                  colores={coloresEstatus}
+                  size={150}
+                  prevDatos={datosPrev ? datosPrev.porEstatus : null}
+                />
               </Card>
             </div>
             <div style={{ flex: 1, minWidth: 320 }}>
               <Card>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                  <SectionHeader title="TEMPERATURA DEL LEAD" icon="🥧" />
-                </div>
-                <PieChartLeyenda datos={datosTemperaturaPie} colores={coloresTemperatura} size={150} />
-                {datosPrev && (
-                  <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 5 }}>
-                    {datosTemperaturaPie.map(t => {
-                      const ant = datosPrev.porTemperatura[t.label] ?? 0;
-                      const badge = varBadge(t.value, ant);
-                      if (!badge) return null;
-                      return (
-                        <div key={t.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 90 }}>{t.label}</span>
-                          <span style={{ color: "#f1f5f9", fontSize: 11, fontWeight: 700 }}>{t.value}</span>
-                          {badge}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <SectionHeader title="TEMPERATURA DEL LEAD" icon="🥧" />
+                <PieChartLeyenda
+                  datos={datosTemperaturaPie}
+                  colores={coloresTemperatura}
+                  size={150}
+                  prevDatos={datosPrev ? datosPrev.porTemperatura : null}
+                />
               </Card>
             </div>
           </div>
 
           <Card>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <SectionHeader title="TOP PRODUCTOS DE INTERÉS" icon="🥧" />
-              {datosPrev && varBadge(datos.total, datosPrev.total)}
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
-              <PieChartLeyenda datos={datosProductoPie} colores={coloresProducto} />
-              {datosPrev && (
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .8, marginBottom: 10 }}>VS MES ANTERIOR</div>
-                  {datosProductoPie.map(p => {
-                    const ant = datosPrev.porProducto[p.label] ?? 0;
-                    const badge = varBadge(p.value, ant);
-                    if (!badge) return null;
-                    return (
-                      <div key={p.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                        <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 120 }}>{p.label}</span>
-                        <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>{p.value}</span>
-                        {badge}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            <SectionHeader title="TOP PRODUCTOS DE INTERÉS" icon="🥧" />
+            <PieChartLeyenda
+              datos={datosProductoPie}
+              colores={coloresProducto}
+              prevDatos={datosPrev ? datosPrev.porProducto : null}
+            />
           </Card>
 
           {/* ── Subcampaña ──────────────────────────────────────────────────── */}
@@ -2547,32 +2516,12 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             const coloresSub = ["#3b9eea","#D4AF37","#4ade80","#c084fc","#fb923c","#f472b6","#60a5fa","#fbbf24","#94a3b8","#34d399"];
             return (
               <Card>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                  <SectionHeader title="DISTRIBUCIÓN POR SUBCAMPAÑA" icon="🎯" />
-                  {datosPrev && datosPrev.porSubcampania && varBadge(
-                    Object.values(datos.porSubcampania).reduce((s,v)=>s+v,0),
-                    Object.values(datosPrev.porSubcampania).reduce((s,v)=>s+v,0)
-                  )}
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
-                  <PieChartLeyenda datos={subcampPie} colores={coloresSub} />
-                  {datosPrev?.porSubcampania && Object.keys(datosPrev.porSubcampania).length > 0 && (
-                    <div style={{ flex: 1, minWidth: 200 }}>
-                      <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .8, marginBottom: 10 }}>VS MES ANTERIOR</div>
-                      {subcampPie.map(s => {
-                        const ant = datosPrev.porSubcampania[s.label] ?? 0;
-                        const badge = varBadge(s.value, ant);
-                        return (
-                          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                            <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 140 }}>{s.label}</span>
-                            <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>{s.value}</span>
-                            {badge || <span style={{ color: "#475569", fontSize: 10 }}>nuevo</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                <SectionHeader title="DISTRIBUCIÓN POR SUBCAMPAÑA" icon="🎯" />
+                <PieChartLeyenda
+                  datos={subcampPie}
+                  colores={coloresSub}
+                  prevDatos={datosPrev?.porSubcampania ?? null}
+                />
               </Card>
             );
           })()}
