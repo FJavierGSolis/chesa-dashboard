@@ -6365,14 +6365,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
 
   // ── Cargar el Funnel del mes en vista desde Firebase ───────────────────────
   useEffect(() => {
-    // Resetear funnelData al cambiar de mes para evitar mostrar datos del mes anterior
-    setFunnelData(JSON.parse(JSON.stringify(initialFunnel)));
-
     let cancelled = false;
-    const loadFunnel = async () => {
-      if (isSavingFunnelRef.current) return; // evita pisar cambios locales no guardados
-      const raw = await fbGet(`${FUNNEL_PATH}/${viewMonthRef.current}`);
-      if (cancelled) return; // el mes cambió mientras cargaba
+    const mesACagar = viewMonth;
+
+    (async () => {
+      const raw = await fbGet(`${FUNNEL_PATH}/${mesACagar}`);
+      if (cancelled) return;
       if (raw && typeof raw === "object") {
         const merged = {};
         AGENCIAS.forEach(ag => {
@@ -6384,16 +6382,24 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
       } else {
         setFunnelData(JSON.parse(JSON.stringify(initialFunnel)));
       }
-    };
+    })();
 
-    loadFunnel();
-    const poll = setInterval(() => {
-      if (!isSavingFunnelRef.current) loadFunnel();
-    }, 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(poll);
-    };
+    const poll = setInterval(async () => {
+      if (isSavingFunnelRef.current || cancelled) return;
+      const raw = await fbGet(`${FUNNEL_PATH}/${mesACagar}`);
+      if (cancelled || isSavingFunnelRef.current) return;
+      if (raw && typeof raw === "object") {
+        const merged = {};
+        AGENCIAS.forEach(ag => {
+          merged[ag] = raw[ag] && typeof raw[ag] === "object"
+            ? { ...funnelAgenciaBlank(), ...raw[ag] }
+            : funnelAgenciaBlank();
+        });
+        setFunnelData(merged);
+      }
+    }, 20000);
+
+    return () => { cancelled = true; clearInterval(poll); };
   }, [viewMonth]);
 
   const scheduleSaveFunnel = (next, targetMonth) => {
@@ -6406,22 +6412,16 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
       } catch(e) {
         console.error("Error guardando funnel:", e);
       } finally {
-        // Extendemos la protección 3s extra después del guardado
-        // para que el polling no sobreescriba inmediatamente
-        setTimeout(() => { isSavingFunnelRef.current = false; }, 3000);
+        setTimeout(() => { isSavingFunnelRef.current = false; }, 5000);
       }
-    }, 1200);
+    }, 600);
   };
 
   const onFunnelFieldChange = (agencia, campo, val) => {
-    // Capturar el mes destino AHORA, antes de cualquier async
     const mesDestino = viewMonthRef.current;
     setFunnelData(prev => {
       const agPrev = prev[agencia] ?? funnelAgenciaBlank();
-      const next = {
-        ...prev,
-        [agencia]: { ...agPrev, [campo]: val }
-      };
+      const next = { ...prev, [agencia]: { ...agPrev, [campo]: val } };
       scheduleSaveFunnel(next, mesDestino);
       return next;
     });
