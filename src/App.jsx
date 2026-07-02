@@ -2237,30 +2237,33 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         return;
       }
       const agregado = agregarFuentesLeads(registros);
-      // Firebase no acepta claves con caracteres especiales: . $ # [ ] / +
-      // Limpiamos porSubcampania y porProducto antes de guardar
+      // Firebase no acepta claves con caracteres especiales ni espacios en algunas versiones
       const limpiarClaves = (obj) => {
         const limpio = {};
         Object.entries(obj ?? {}).forEach(([k, v]) => {
-          const claveLimpia = k.replace(/[.$#[\]/+]/g, "_").trim() || "sin_clave";
-          limpio[claveLimpia] = (limpio[claveLimpia] ?? 0) + v;
+          const claveLimpia = String(k)
+            .replace(/[.$#[\]/+]/g, "_")
+            .replace(/\s+/g, "_")
+            .trim() || "sin_clave";
+          limpio[claveLimpia] = (limpio[claveLimpia] ?? 0) + (typeof v === "number" ? v : 0);
         });
         return limpio;
       };
-      const { registros: _omit, ...soloAgregados } = agregado;
       const paraFirebase = {
-        ...soloAgregados,
-        porSubcampania: limpiarClaves(soloAgregados.porSubcampania),
-        porProducto: limpiarClaves(soloAgregados.porProducto),
+        total: agregado.total ?? 0,
+        porFuente: limpiarClaves(agregado.porFuente),
+        porEstatus: limpiarClaves(agregado.porEstatus),
+        porTemperatura: limpiarClaves(agregado.porTemperatura),
+        porProducto: limpiarClaves(agregado.porProducto),
+        porSubcampania: limpiarClaves(agregado.porSubcampania),
         porAsesor: Object.fromEntries(
-          Object.entries(soloAgregados.porAsesor ?? {}).map(([asesor, fuentes]) => [
-            asesor.replace(/[.$#[\]/+]/g, "_"),
+          Object.entries(agregado.porAsesor ?? {}).map(([asesor, fuentes]) => [
+            String(asesor).replace(/[.$#[\]/+\s]/g, "_").trim() || "sin_asesor",
             limpiarClaves(fuentes)
           ])
         ),
       };
       await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${agenciaSel}`, paraFirebase);
-      // En estado local guardamos con registros para uso inmediato en la sesión
       setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: { ...paraFirebase, registros } }));
       // El total de leads del reporte alimenta automáticamente la primera etapa del Funnel.
       if (onFunnelFieldChange) {
