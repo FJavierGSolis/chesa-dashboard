@@ -4200,12 +4200,46 @@ Responde con markdown. Sé directo y ejecutivo. Estructura:
 (máximo 3 párrafos cortos en total)`;
 }
 
+// Datos nacionales AMIA/INEGI hardcodeados — se actualizan manualmente cada mes
+// Fuente: RAIAVL INEGI + AMIA/AMDA reporte mensual
+const DATOS_NACIONALES = {
+  "2026-06": {
+    mercadoTotal: 126778,
+    mercadoTotalMesAnterior: 127107,
+    variacionVs2025: 7.6,
+    acumuladoAnio: 754394,
+    acumuladoAnio2025: 716299,
+    variacionAcumulada: 5.3,
+    changan: { junio: 2008, acumulado: 11325, variacion: 25.4, variacionAcum: 56.8 },
+    topMarcas: [
+      { marca: "Nissan",         junio: 19279, acumulado: 127099, share: 16.8 },
+      { marca: "General Motors", junio: 14904, acumulado: 96941,  share: 12.9 },
+      { marca: "Volkswagen",     junio: 14038, acumulado: 82612,  share: 11.0 },
+      { marca: "Toyota",         junio: 10662, acumulado: 62129,  share: 8.2  },
+      { marca: "KIA",            junio: 9506,  acumulado: 54852,  share: 7.3  },
+      { marca: "Mazda",          junio: 9328,  acumulado: 52010,  share: 6.9  },
+      { marca: "Stellantis",     junio: 8055,  acumulado: 48748,  share: 6.5  },
+      { marca: "MG Motor",       junio: 4873,  acumulado: 27800,  share: 3.7  },
+      { marca: "Hyundai",        junio: 4980,  acumulado: 26434,  share: 3.5  },
+      { marca: "Ford",           junio: 4600,  acumulado: 25019,  share: 3.3  },
+      { marca: "Changan",        junio: 2008,  acumulado: 11325,  share: 1.5  },
+      { marca: "JAC",            junio: 2001,  acumulado: 11468,  share: 1.5  },
+      { marca: "Geely",          junio: 4103,  acumulado: 23121,  share: 3.1  },
+      { marca: "Renault",        junio: 3976,  acumulado: 17316,  share: 2.3  },
+    ],
+    fuente: "INEGI RAIAVL + AMIA/AMDA · 2 de julio de 2026",
+  },
+};
+
+const NACIONAL_PATH = "mercadoNacional"; // mercadoNacional/{mesKey}
+
 function MercadoADACHSection({ monthKey }) {
   const [cargando, setCargando] = useState(false);
   const [loadingDatos, setLoadingDatos] = useState(true);
   const [errorCarga, setErrorCarga] = useState("");
   const [reportesMes, setReportesMes] = useState({}); // { mesKey: { datos, analisis, fechaCarga } }
   const [mesVista, setMesVista] = useState(null);
+  const [vistaActiva, setVistaActiva] = useState("chiapas"); // chiapas | nacional
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -4297,14 +4331,123 @@ function MercadoADACHSection({ monthKey }) {
     CHIREY: "#fb923c", JETOUR: "#4ade80", GWM: "#f472b6",
   };
 
-  if (loadingDatos) return <Card><div style={{ color: "#64748b", textAlign: "center", padding: "40px 0" }}>Cargando datos ADACH…</div></Card>;
+  // Datos nacionales: primero busca en Firebase, luego en el objeto hardcodeado
+  const [datosNacionales, setDatosNacionales] = useState(DATOS_NACIONALES);
+  useEffect(() => {
+    (async () => {
+      const raw = await fbGet(NACIONAL_PATH);
+      if (raw && typeof raw === "object" && Object.keys(raw).length > 0) {
+        setDatosNacionales(prev => ({ ...DATOS_NACIONALES, ...raw }));
+      }
+    })();
+  }, []);
+
+  if (loadingDatos) return <Card><div style={{ color: "#64748b", textAlign: "center", padding: "40px 0" }}>Cargando datos…</div></Card>;
+
+  // ── Vista Nacional ────────────────────────────────────────────────────────
+  const mesesNacional = Object.keys(datosNacionales).sort().reverse();
+  const mesNacVista = mesesNacional[0] || "2026-06";
+  const dnac = datosNacionales[mesNacVista];
+  const colorVar = (n) => n == null ? "#64748b" : n >= 0 ? "#4ade80" : "#ef4444";
+  const fmt = (n) => n != null ? Number(n).toLocaleString("es-MX") : "—";
+  const fmtPct = (n, signo = true) => n != null ? `${signo && n > 0 ? "+" : ""}${Number(n).toFixed(1)}%` : "—";
+
+  const VistaAnualNacional = () => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Card>
+        <SectionHeader title={`MERCADO NACIONAL — ${getMonthLabel(mesNacVista).toUpperCase()} 2026`} icon="🇲🇽" />
+        <div style={{ color: "#475569", fontSize: 11, marginBottom: 14 }}>
+          Fuente: {dnac?.fuente || "INEGI RAIAVL + AMIA/AMDA"}
+        </div>
+
+        {/* KPIs nacionales */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))", gap: 12, marginBottom: 20 }}>
+          {[
+            { label: "VENTAS JUNIO 2026", value: fmt(dnac?.mercadoTotal), sub: `${fmtPct(dnac?.variacionVs2025)} vs jun 2025`, color: "#3b9eea", varN: dnac?.variacionVs2025 },
+            { label: "ACUMULADO ENE-JUN 2026", value: fmt(dnac?.acumuladoAnio), sub: `${fmtPct(dnac?.variacionAcumulada)} vs 2025`, color: "#4ade80", varN: dnac?.variacionAcumulada },
+            { label: "CHANGAN — JUNIO", value: fmt(dnac?.changan?.junio), sub: `${fmtPct(dnac?.changan?.variacion)} vs jun 2025`, color: "#D4AF37", varN: dnac?.changan?.variacion },
+            { label: "CHANGAN — ACUMULADO", value: fmt(dnac?.changan?.acumulado), sub: `${fmtPct(dnac?.changan?.variacionAcum)} vs 2025`, color: "#D4AF37", varN: dnac?.changan?.variacionAcum },
+          ].map(k => (
+            <div key={k.label} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.color}`, borderRadius: 8, padding: "12px 14px" }}>
+              <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.label}</div>
+              <div style={{ color: "#f1f5f9", fontSize: 20, fontWeight: 900, marginTop: 4 }}>{k.value}</div>
+              <div style={{ color: colorVar(k.varN), fontSize: 11, marginTop: 3, fontWeight: 700 }}>{k.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Tabla marcas nacionales */}
+        <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 10, letterSpacing: .8 }}>TOP MARCAS — VENTAS NACIONALES JUNIO 2026 VS 2025</p>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                <th style={{ textAlign: "left", padding: "6px 8px" }}>MARCA</th>
+                <th style={{ textAlign: "right", padding: "6px 8px" }}>JUN 2026</th>
+                <th style={{ textAlign: "right", padding: "6px 8px" }}>ACUM. ENE-JUN</th>
+                <th style={{ textAlign: "right", padding: "6px 8px" }}>SHARE ENE-JUN</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(dnac?.topMarcas || []).sort((a, b) => b.junio - a.junio).map((m, i) => {
+                const esChangan = m.marca === "Changan";
+                return (
+                  <tr key={m.marca} style={{ borderBottom: "1px solid #1e3a5f", background: esChangan ? "#D4AF3708" : "transparent" }}>
+                    <td style={{ padding: "7px 8px", color: esChangan ? "#D4AF37" : "#f1f5f9", fontWeight: esChangan ? 800 : 600 }}>
+                      {i + 1}. {m.marca} {esChangan ? "★" : ""}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "7px 8px", color: esChangan ? "#D4AF37" : "#cbd5e1", fontWeight: esChangan ? 700 : 400 }}>
+                      {fmt(m.junio)}
+                    </td>
+                    <td style={{ textAlign: "right", padding: "7px 8px", color: "#94a3b8" }}>{fmt(m.acumulado)}</td>
+                    <td style={{ textAlign: "right", padding: "7px 8px", color: esChangan ? "#D4AF37" : "#64748b", fontWeight: esChangan ? 700 : 400 }}>
+                      {m.share ? `${m.share.toFixed(1)}%` : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Contexto Changan nacional */}
+        <div style={{ marginTop: 16, background: "#D4AF3711", border: "1px solid #D4AF3733", borderRadius: 8, padding: "12px 16px" }}>
+          <div style={{ color: "#D4AF37", fontSize: 11, fontWeight: 700, marginBottom: 6 }}>★ CHANGAN EN EL MERCADO NACIONAL</div>
+          <div style={{ color: "#cbd5e1", fontSize: 12.5, lineHeight: 1.7 }}>
+            En junio 2026, Changan vendió <b style={{ color: "#D4AF37" }}>{fmt(dnac?.changan?.junio)} unidades</b> a nivel nacional (+{dnac?.changan?.variacion}% vs jun 2025),
+            acumulando <b style={{ color: "#D4AF37" }}>{fmt(dnac?.changan?.acumulado)} unidades</b> en el primer semestre (+{dnac?.changan?.variacionAcum}% vs 2025).
+            El mercado total de junio fue <b style={{ color: "#3b9eea" }}>{fmt(dnac?.mercadoTotal)} unidades</b> (+{dnac?.variacionVs2025}% vs jun 2025),
+            con un acumulado de <b style={{ color: "#3b9eea" }}>{fmt(dnac?.acumuladoAnio)} unidades</b> (+{dnac?.variacionAcumulada}% vs 2025).
+            CHESA representa el <b style={{ color: "#D4AF37" }}>100% de las ventas Changan en Chiapas</b>.
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
-      {/* ── Cabecera ─────────────────────────────────────────────────────────── */}
+      {/* ── Selector de vista ─────────────────────────────────────────────────── */}
+      <div style={{ display: "flex", gap: 8 }}>
+        {[
+          { key: "chiapas",  label: "🗺️ Mercado Chiapas (ADACH)" },
+          { key: "nacional", label: "🇲🇽 Mercado Nacional (AMIA/INEGI)" },
+        ].map(v => (
+          <button key={v.key} onClick={() => setVistaActiva(v.key)} style={{
+            background: vistaActiva === v.key ? "#D4AF37" : "#0f2239",
+            color: vistaActiva === v.key ? "#0a1628" : "#94a3b8",
+            border: `1px solid ${vistaActiva === v.key ? "#D4AF37" : "#1e3a5f"}`,
+            borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer"
+          }}>{v.label}</button>
+        ))}
+      </div>
+
+      {vistaActiva === "nacional" ? <VistaAnualNacional /> : (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* ── Cabecera ADACH ───────────────────────────────────────────────────── */}
       <Card>
-        <SectionHeader title="MERCADO AUTOMOTRIZ CHIAPAS — REPORTE ADACH" icon="📈" />
+        <SectionHeader title="MERCADO AUTOMOTRIZ CHIAPAS — REPORTE ADACH" icon="🗺️" />
         <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
             <input ref={fileInputRef} type="file" accept=".pdf" onChange={handleFile} style={{ display: "none" }} id="file-adach" />
@@ -4535,6 +4678,9 @@ function MercadoADACHSection({ monthKey }) {
           )}
         </>
       )}
+    </div>
+    </div>
+    )}
     </div>
   );
 }
@@ -6741,7 +6887,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               background: tab === "marketShare" ? "#5eead4" : "transparent",
               color: tab === "marketShare" ? "#0a1628" : "#94a3b8",
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-            }}>📈 Mercado ADACH</button>
+            }}>📈 Mercado Automotriz</button>
             <button onClick={() => setTab("tendencias")} style={{
               background: tab === "tendencias" ? "#5eead4" : "transparent",
               color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
