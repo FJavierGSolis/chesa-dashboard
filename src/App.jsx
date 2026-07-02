@@ -1682,50 +1682,200 @@ function KpiBar({ data, monthKey }) {
   const avanceV  = pct(totalFact, totalObj);
   const avanceMx = pct(totalFactMx, totalObjMx);
 
-  // SSI promedio (agencias con datos)
   const ssiAgencias = Object.keys(data.ssi ?? {});
   const ssiVals = ssiAgencias.map(a => data.ssi[a]?.ssi ?? 0).filter(v => v > 0);
   const ssiPromedio = ssiVals.length > 0 ? (ssiVals.reduce((s, v) => s + v, 0) / ssiVals.length) : null;
   const ssiObj = ssiAgencias.length > 0 ? ((data.ssi[ssiAgencias[0]]?.objetivo ?? 0.87) * 100) : 87;
 
-  // CSI promedio (agencias con datos)
   const csiAgencias = Object.keys(data.csi ?? {});
   const csiVals = csiAgencias.map(a => data.csi[a]?.csi ?? 0).filter(v => v > 0);
   const csiPromedio = csiVals.length > 0 ? (csiVals.reduce((s, v) => s + v, 0) / csiVals.length) : null;
   const csiObj = csiAgencias.length > 0 ? ((data.csi[csiAgencias[0]]?.objetivo ?? 0.87) * 100) : 87;
 
-  const vauOk = AGENCIAS.filter(a => data.vau[a]).length;
+  const vauOk  = AGENCIAS.filter(a => data.vau[a]).length;
   const wsReal = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.real ?? 0), 0);
   const wsObj  = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.objetivo ?? 0), 0);
   const vanReal = AGENCIAS.reduce((s, a) => s + (data.van[a]?.real ?? 0), 0);
   const vanObj  = AGENCIAS.reduce((s, a) => s + (data.van[a]?.objetivo ?? 0), 0);
 
+  // Cada KPI tiene un nivel: "rojo" | "amarillo" | "verde"
+  // Se calcula según qué tan lejos está del objetivo, no solo si cumple o no.
+  const calcNivel = (avancePct, umbralVerde = 80, umbralAmarillo = 50) => {
+    if (avancePct >= umbralVerde) return "verde";
+    if (avancePct >= umbralAmarillo) return "amarillo";
+    return "rojo";
+  };
+
   const kpis = [
-    { label: `Ventas ${mesAbrevCap} Interno`,      value: `${avanceV}%`,   sub: `${totalFact}/${totalObj} unid.`,           ok: avanceV >= 80 },
-    { label: `Ventas ${mesAbrevCap} Changan MX`,   value: `${avanceMx}%`,  sub: `${totalFactMx}/${totalObjMx} unid.`,       ok: avanceMx >= 80 },
-    { label: "SSI Promedio",                        value: ssiPromedio !== null ? `${ssiPromedio.toFixed(1)}%` : "—", sub: `obj. ${ssiObj}%`, ok: ssiPromedio !== null && ssiPromedio >= ssiObj },
-    { label: "CSI Promedio",                        value: csiPromedio !== null ? `${csiPromedio.toFixed(1)}%` : "—", sub: `obj. ${csiObj}%`, ok: csiPromedio !== null && csiPromedio >= csiObj },
-    { label: "VAU Cumplimiento",                    value: `${vauOk}/${AGENCIAS.length}`, sub: "agencias cumplen",           ok: vauOk === AGENCIAS.length },
-    { label: `WS Total ${mesAbrevCap}`,             value: wsReal,          sub: `de ${wsObj} objetivo`,                     ok: wsReal >= wsObj },
-    { label: `VAN Total ${mesAbrevCap}`,            value: vanReal,         sub: `de ${vanObj} objetivo`,                    ok: vanObj > 0 && vanReal >= vanObj },
+    {
+      label: `Ventas ${mesAbrevCap} Interno`,
+      value: `${avanceV}%`,
+      sub: `${totalFact} de ${totalObj} unidades`,
+      nivel: calcNivel(avanceV),
+      peso: 10, // peso para ordenar (mayor = más importante)
+    },
+    {
+      label: `Ventas ${mesAbrevCap} Changan MX`,
+      value: `${avanceMx}%`,
+      sub: `${totalFactMx} de ${totalObjMx} unidades`,
+      nivel: calcNivel(avanceMx),
+      peso: 9,
+    },
+    {
+      label: "VAU Cumplimiento",
+      value: `${vauOk}/${AGENCIAS.length}`,
+      sub: `${AGENCIAS.length - vauOk} agencia${AGENCIAS.length - vauOk !== 1 ? "s" : ""} sin cumplir`,
+      nivel: vauOk === AGENCIAS.length ? "verde" : vauOk >= 3 ? "amarillo" : "rojo",
+      peso: 8,
+    },
+    {
+      label: `WS Total ${mesAbrevCap}`,
+      value: wsReal,
+      sub: `de ${wsObj} objetivo`,
+      nivel: calcNivel(pct(wsReal, wsObj)),
+      peso: 7,
+    },
+    {
+      label: `VAN Total ${mesAbrevCap}`,
+      value: vanReal,
+      sub: `de ${vanObj} objetivo`,
+      nivel: vanObj > 0 ? calcNivel(pct(vanReal, vanObj)) : "verde",
+      peso: 6,
+    },
+    {
+      label: "SSI Promedio",
+      value: ssiPromedio !== null ? `${ssiPromedio.toFixed(1)}%` : "—",
+      sub: `objetivo ${ssiObj}%`,
+      nivel: ssiPromedio === null ? "verde" : calcNivel((ssiPromedio / ssiObj) * 100),
+      peso: 5,
+    },
+    {
+      label: "CSI Promedio",
+      value: csiPromedio !== null ? `${csiPromedio.toFixed(1)}%` : "—",
+      sub: `objetivo ${csiObj}%`,
+      nivel: csiPromedio === null ? "verde" : calcNivel((csiPromedio / csiObj) * 100),
+      peso: 4,
+    },
   ];
 
+  // Ordenar: rojo primero (más urgente), luego amarillo, luego verde.
+  // Dentro de cada nivel, por peso descendente (más importante primero).
+  const nivelOrden = { rojo: 0, amarillo: 1, verde: 2 };
+  const kpisOrdenados = [...kpis].sort((a, b) => {
+    if (nivelOrden[a.nivel] !== nivelOrden[b.nivel]) return nivelOrden[a.nivel] - nivelOrden[b.nivel];
+    return b.peso - a.peso;
+  });
+
+  const rojos    = kpis.filter(k => k.nivel === "rojo").length;
+  const amarillos = kpis.filter(k => k.nivel === "amarillo").length;
+  const verdes   = kpis.filter(k => k.nivel === "verde").length;
+
+  // Color del panel de estado general
+  const estadoGeneral = rojos > 0 ? "rojo" : amarillos > 0 ? "amarillo" : "verde";
+  const ESTADO = {
+    rojo:     { color: "#ef4444", bg: "#7f1d1d22", border: "#ef4444", emoji: "🔴", texto: `${rojos} indicador${rojos !== 1 ? "es" : ""} crítico${rojos !== 1 ? "s" : ""}` },
+    amarillo: { color: "#fbbf24", bg: "#78350f22", border: "#fbbf24", emoji: "🟡", texto: `${amarillos} indicador${amarillos !== 1 ? "es" : ""} en atención` },
+    verde:    { color: "#4ade80", bg: "#14532d22", border: "#4ade80", emoji: "🟢", texto: "Todos los indicadores en orden" },
+  };
+  const estado = ESTADO[estadoGeneral];
+
+  const NIV = {
+    rojo:     { border: "#ef4444", topBorder: "#ef4444", bg: "#7f1d1d18", valuColor: "#f87171", badgeBg: "#ef444422", badgeColor: "#ef4444", badgeLabel: "CRÍTICO" },
+    amarillo: { border: "#fbbf2455", topBorder: "#fbbf24", bg: "#78350f15", valuColor: "#fbbf24", badgeBg: "#fbbf2422", badgeColor: "#fbbf24", badgeLabel: "ATENCIÓN" },
+    verde:    { border: "#16a34a55", topBorder: "#4ade80", bg: "transparent", valuColor: "#f1f5f9", badgeBg: "#4ade8022", badgeColor: "#4ade80", badgeLabel: "OK" },
+  };
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
-      {kpis.map(k => (
-        <div key={k.label} style={{
-          background: "#0f2239", border: `1px solid ${k.ok ? "#16a34a55" : "#1e3a5f"}`,
-          borderTop: `3px solid ${k.ok ? "#4ade80" : "#D4AF37"}`,
-          borderRadius: 8, padding: "12px 14px"
-        }}>
-          <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8, marginBottom: 4 }}>{k.label}</div>
-          <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{k.value}</div>
-          <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>{k.sub}</div>
+    <div style={{ marginBottom: 20 }}>
+      {/* ── Panel de estado general ───────────────────────────────────────── */}
+      <div style={{
+        background: estado.bg,
+        border: `1px solid ${estado.border}55`,
+        borderLeft: `4px solid ${estado.color}`,
+        borderRadius: 10,
+        padding: "14px 20px",
+        marginBottom: 14,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 12,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <span style={{ fontSize: 28 }}>{estado.emoji}</span>
+          <div>
+            <div style={{ color: estado.color, fontSize: 13, fontWeight: 800, letterSpacing: .5 }}>
+              ESTADO OPERATIVO — {getMonthLabel(monthKey).toUpperCase()}
+            </div>
+            <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 900, lineHeight: 1.1, marginTop: 2 }}>
+              {estado.texto}
+            </div>
+          </div>
         </div>
-      ))}
+        <div style={{ display: "flex", gap: 10 }}>
+          {rojos > 0 && (
+            <div style={{ background: "#ef444422", border: "1px solid #ef4444", borderRadius: 8, padding: "8px 14px", textAlign: "center" }}>
+              <div style={{ color: "#ef4444", fontSize: 22, fontWeight: 900, lineHeight: 1 }}>{rojos}</div>
+              <div style={{ color: "#ef4444", fontSize: 10, fontWeight: 700, marginTop: 2 }}>CRÍTICO</div>
+            </div>
+          )}
+          {amarillos > 0 && (
+            <div style={{ background: "#fbbf2422", border: "1px solid #fbbf24", borderRadius: 8, padding: "8px 14px", textAlign: "center" }}>
+              <div style={{ color: "#fbbf24", fontSize: 22, fontWeight: 900, lineHeight: 1 }}>{amarillos}</div>
+              <div style={{ color: "#fbbf24", fontSize: 10, fontWeight: 700, marginTop: 2 }}>ATENCIÓN</div>
+            </div>
+          )}
+          {verdes > 0 && (
+            <div style={{ background: "#4ade8022", border: "1px solid #4ade80", borderRadius: 8, padding: "8px 14px", textAlign: "center" }}>
+              <div style={{ color: "#4ade80", fontSize: 22, fontWeight: 900, lineHeight: 1 }}>{verdes}</div>
+              <div style={{ color: "#4ade80", fontSize: 10, fontWeight: 700, marginTop: 2 }}>OK</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── KPIs ordenados por urgencia ──────────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))", gap: 10 }}>
+        {kpisOrdenados.map((k, i) => {
+          const n = NIV[k.nivel];
+          const esPrimero = i === 0 && k.nivel === "rojo";
+          return (
+            <div key={k.label} style={{
+              background: n.bg || "#0f2239",
+              border: `1px solid ${n.border}`,
+              borderTop: `3px solid ${n.topBorder}`,
+              borderRadius: 8,
+              padding: esPrimero ? "16px 16px" : "12px 14px",
+              position: "relative",
+              // El indicador más crítico (primero rojo) tiene un leve efecto de pulsación visual
+              boxShadow: esPrimero ? `0 0 18px ${n.topBorder}33` : "none",
+            }}>
+              {/* Badge de nivel */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.label}</div>
+                <span style={{
+                  background: n.badgeBg, color: n.badgeColor,
+                  fontSize: 9, fontWeight: 800, padding: "2px 6px",
+                  borderRadius: 10, border: `1px solid ${n.badgeColor}55`,
+                  letterSpacing: .5, whiteSpace: "nowrap"
+                }}>{n.badgeLabel}</span>
+              </div>
+              <div style={{
+                color: n.valuColor,
+                fontSize: esPrimero ? 28 : 22,
+                fontWeight: 900,
+                lineHeight: 1,
+                marginBottom: 4,
+              }}>{k.value}</div>
+              <div style={{ color: "#475569", fontSize: 11 }}>{k.sub}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
+
 
 // ── SECCIÓN: Fuentes y Leads (detalle real desde el reporte de la plataforma) ──
 const FUENTES_LEADS_PATH = "fuentesLeads"; // fuentesLeads/{monthKey}/{AGENCIA}
