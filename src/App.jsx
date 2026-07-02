@@ -2165,7 +2165,7 @@ function PieChartLeyenda({ datos, colores, size = 170 }) {
 const COLORES_ESTATUS = { "Sin Atender": "#f87171", "Asignado": "#fbbf24", "Contactado": "#60a5fa", "Finalizado": "#4ade80", "Abandonados": "#94a3b8", "1 Ventas": "#34d399", "2 Ventas": "#10b981" };
 const COLORES_TEMPERATURA = { "Caliente": "#f87171", "Tibio": "#fbbf24", "Frio": "#60a5fa", "Sin dato": "#475569" };
 
-function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
+function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }) {
   const [agenciaSel, setAgenciaSel] = useState(AGENCIAS[0]);
   const [fuentesSel, setFuentesSel] = useState(FUENTES_LEAD.map(f => f.key)); // todas activas por defecto
   const [datosPorAgencia, setDatosPorAgencia] = useState({});
@@ -2572,7 +2572,18 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange }) {
 
       {/* ── Captura manual del Funnel de Ventas ──────────────────────────────── */}
       <Card>
-        <SectionHeader title={`CAPTURA DEL FUNNEL — ${agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}`} icon="✍️" />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <SectionHeader title={`CAPTURA DEL FUNNEL — ${agenciaSel === "TODAS" ? "TODAS LAS AGENCIAS" : agenciaSel}`} icon="✍️" />
+          {saveStatus === "guardando" && (
+            <span style={{ fontSize: 12, color: "#fbbf24", fontWeight: 700 }}>⏳ Guardando en {getMonthLabel(monthKey)}…</span>
+          )}
+          {saveStatus === "guardado" && (
+            <span style={{ fontSize: 12, color: "#4ade80", fontWeight: 700 }}>✅ Guardado en {getMonthLabel(monthKey)}</span>
+          )}
+          {saveStatus === "error" && (
+            <span style={{ fontSize: 12, color: "#ef4444", fontWeight: 700 }}>❌ Error al guardar — revisa tu conexión</span>
+          )}
+        </div>
         {agenciaSel === "TODAS" ? (
           <div style={{ color: "#475569", fontSize: 12.5, textAlign: "center", padding: "10px 0 18px" }}>
             Selecciona una agencia específica arriba para capturar sus valores del Funnel.
@@ -6402,15 +6413,23 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
     return () => { cancelled = true; clearInterval(poll); };
   }, [viewMonth]);
 
+  const [funnelSaveStatus, setFunnelSaveStatus] = useState(""); // "" | "guardando" | "guardado" | "error"
+  const funnelSaveStatusTimer = useRef(null);
+
   const scheduleSaveFunnel = (next, targetMonth) => {
     if (funnelSaveTimer.current) clearTimeout(funnelSaveTimer.current);
     const mesDestino = targetMonth || viewMonthRef.current;
     isSavingFunnelRef.current = true;
+    setFunnelSaveStatus("guardando");
     funnelSaveTimer.current = setTimeout(async () => {
       try {
         await fbSet(`${FUNNEL_PATH}/${mesDestino}`, next);
+        setFunnelSaveStatus("guardado");
+        if (funnelSaveStatusTimer.current) clearTimeout(funnelSaveStatusTimer.current);
+        funnelSaveStatusTimer.current = setTimeout(() => setFunnelSaveStatus(""), 3000);
       } catch(e) {
         console.error("Error guardando funnel:", e);
+        setFunnelSaveStatus("error");
       } finally {
         setTimeout(() => { isSavingFunnelRef.current = false; }, 5000);
       }
@@ -6418,14 +6437,18 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
   };
 
   const onFunnelFieldChange = (agencia, campo, val) => {
+    // Capturar el mes AHORA antes de cualquier async
     const mesDestino = viewMonthRef.current;
     setFunnelData(prev => {
       const agPrev = prev[agencia] ?? funnelAgenciaBlank();
       const next = { ...prev, [agencia]: { ...agPrev, [campo]: val } };
+      // Guardar inmediatamente con debounce
       scheduleSaveFunnel(next, mesDestino);
       return next;
     });
   };
+
+
 
   // ── Lista de meses disponibles: desde mayo 2024 hasta el mes operativo actual ─
   useEffect(() => {
@@ -6819,7 +6842,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
             </div>
           </>
         ) : tab === "funnel" ? (
-          <FunnelSection monthKey={viewMonth} funnelData={funnelData} onFunnelFieldChange={onFunnelFieldChange} />
+          <FunnelSection monthKey={viewMonth} funnelData={funnelData} onFunnelFieldChange={onFunnelFieldChange} saveStatus={funnelSaveStatus} />
         ) : tab === "productividad" ? (
           <ProductividadAsesoresSection />
         ) : tab === "inventario" ? (
