@@ -785,8 +785,12 @@ function LoginScreen({ onLoginSuccess }) {
 }
 
 function NumInput({ value, onChange, step = 1, min = 0, width = 60, valueColor, disabled }) {
-  const [local, setLocal] = useState(String(value));
-  useEffect(() => setLocal(String(value)), [value]);
+  const [local, setLocal] = useState(String(value ?? 0));
+  const [focused, setFocused] = useState(false);
+  // Solo sincronizar con el valor externo cuando el campo NO tiene foco
+  useEffect(() => {
+    if (!focused) setLocal(String(value ?? 0));
+  }, [value, focused]);
   return (
     <input
       type="number"
@@ -795,7 +799,12 @@ function NumInput({ value, onChange, step = 1, min = 0, width = 60, valueColor, 
       step={step}
       disabled={disabled}
       onChange={e => setLocal(e.target.value)}
-      onBlur={() => { const n = Number(local); if (!isNaN(n)) onChange(n); }}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        const n = Number(local);
+        if (!isNaN(n)) onChange(n);
+      }}
       onKeyDown={e => { if (e.key === "Enter") { const n = Number(local); if (!isNaN(n)) onChange(n); } }}
       style={{
         width, background: disabled ? "#0a1830" : "#0d1b2e", border: "1px solid #2a3f5f",
@@ -2599,7 +2608,9 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                 </div>
                 <NumInput
                   value={et.key === "leads" ? leadsParaFunnel : (funnelData[agenciaSel] ?? funnelAgenciaBlank())[et.key]}
-                  onChange={v => onFunnelFieldChange(agenciaSel, et.key, v)}
+                  onChange={v => {
+                    if (onFunnelFieldChange) onFunnelFieldChange(agenciaSel, et.key, v);
+                  }}
                   width={70}
                   disabled={et.key === "leads"}
                 />
