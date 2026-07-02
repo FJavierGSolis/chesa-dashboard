@@ -2356,7 +2356,501 @@ function buildResumenFunnelParaIA(funnelData) {
   return lineas.join("\n");
 }
 
-// ── SECCIÓN: Tendencias ───────────────────────────────────────────────────────
+// ── SECCIÓN: Inventario ───────────────────────────────────────────────────────
+const INVENTARIO_PATH = "inventario"; // inventario/unidades = array de objetos
+
+// Mapea la ubicación física del Excel a una de las 5 agencias
+function mapearUbicacionAgencia(ubic) {
+  const u = (ubic || "").toLowerCase().trim();
+  if (u.includes("tapachula")) return "TAPACHULA";
+  if (u.includes("cristobal") || u.includes("cristóbal")) return "SAN CRISTÓBAL";
+  if (u.includes("ocosingo")) return "OCOSINGO";
+  if (u.includes("comitan") || u.includes("comitán")) return "COMITÁN";
+  if (u.includes("tuxtla") || u.includes("agencia") || u.includes("patio")) return "TUXTLA";
+  return "TUXTLA"; // default
+}
+
+// Extrae el nombre corto del modelo (primeras 2-3 palabras para mostrar en tabla)
+function nombreCortoModelo(nombreCompleto) {
+  if (!nombreCompleto) return "—";
+  const n = nombreCompleto.trim();
+  // Detectar línea por palabras clave al inicio
+  const lineas = [
+    { key: "alsvin plus", label: "Alsvin Plus" },
+    { key: "alsvin", label: "Alsvin" },
+    { key: "cs35 max luxury", label: "CS35 Max Luxury" },
+    { key: "cs35 max", label: "CS35 Max" },
+    { key: "cs35 plus", label: "CS35 Plus" },
+    { key: "cs55 plus idd luxury", label: "CS55 IDD Luxury" },
+    { key: "cs55 plus idd", label: "CS55 IDD" },
+    { key: "cs55 plus", label: "CS55 Plus" },
+    { key: "cs75 pro luxury", label: "CS75 Pro Luxury" },
+    { key: "cs75 pro", label: "CS75 Pro" },
+    { key: "cs75 plus", label: "CS75 Plus" },
+    { key: "cs95", label: "CS95" },
+    { key: "eado plus luxury", label: "Eado Plus Luxury" },
+    { key: "eado plus", label: "Eado Plus" },
+    { key: "honor", label: "Honor S VAN" },
+    { key: "hunter e", label: "Hunter E" },
+    { key: "hunter plus", label: "Hunter Plus" },
+    { key: "hunter work", label: "Hunter Work" },
+    { key: "hunter chasis", label: "Hunter Chasis" },
+    { key: "new star truck caja", label: "Star Truck Caja" },
+    { key: "new star truck", label: "Star Truck DC" },
+    { key: "s05", label: "S05 REEV" },
+    { key: "s07", label: "S07 REEV" },
+    { key: "uni-k", label: "UNI-K" },
+  ];
+  const lower = n.toLowerCase();
+  for (const l of lineas) {
+    if (lower.startsWith(l.key)) return l.label;
+  }
+  return n.split(" ").slice(0, 3).join(" ");
+}
+
+function parseInventarioWorkbook(workbook) {
+  const ws = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  const hoy = new Date();
+  const unidades = [];
+  for (let i = 7; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r || !r[7]) continue; // necesita nombre de modelo
+    const costoFactura = typeof r[25] === "number" ? r[25] : 0;
+    if (costoFactura === 0) continue;
+    const diasExcel = typeof r[6] === "number" ? r[6] : 0;
+    const arribo = r[19] ? new Date(r[19]) : null;
+    const diasCalculados = arribo ? Math.floor((hoy - arribo) / (1000 * 60 * 60 * 24)) : diasExcel;
+    const dias = diasCalculados > 0 ? diasCalculados : diasExcel;
+    const noInv = r[4] ? String(r[4]).replace(/^'/, "").trim() : "—";
+    const exterior = r[3] ? String(r[3]).trim() : "—";
+    const numSerie = r[17] ? String(r[17]).trim() : "—";
+    const danio = r[22] ? String(r[22]).trim() : null;
+    const ubicRaw = r[20] ? String(r[20]).trim() : "";
+    unidades.push({
+      noInv,
+      nombreCompleto: String(r[7]).trim(),
+      modelo: nombreCortoModelo(String(r[7])),
+      anio: r[8] || "—",
+      color: exterior,
+      numSerie,
+      dias,
+      costoFactura,
+      agencia: mapearUbicacionAgencia(ubicRaw),
+      ubicFisica: ubicRaw,
+      danio,
+    });
+  }
+  return unidades;
+}
+
+function nivelRiesgo(dias) {
+  if (dias > 120) return "rojo";
+  if (dias > 90) return "naranja";
+  if (dias > 60) return "amarillo";
+  return "verde";
+}
+
+const RIESGO = {
+  verde:    { color: "#4ade80", bg: "#14532d22", label: "OK",       border: "#4ade80" },
+  amarillo: { color: "#fbbf24", bg: "#78350f22", label: "Atención", border: "#fbbf24" },
+  naranja:  { color: "#f97316", bg: "#7c2d1222", label: "Urgente",  border: "#f97316" },
+  rojo:     { color: "#ef4444", bg: "#7f1d1d33", label: "Crítico",  border: "#ef4444" },
+};
+
+function costoPlanPiso(costoFactura, dias, tiie, spread) {
+  const tasa = (tiie + spread) / 100;
+  return costoFactura * tasa / 365 * dias;
+}
+
+function InventarioSection() {
+  const [unidades, setUnidades] = useState([]);
+  const [cargando, setCargando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState("");
+  const [loadingDatos, setLoadingDatos] = useState(true);
+  const [fechaCarga, setFechaCarga] = useState(null);
+
+  // Parámetros de plan piso — editables en UI
+  const [tiie, setTiie] = useState(8.5);
+  const [spread, setSpread] = useState(2.0);
+  const [ventasTrim, setVentasTrim] = useState({}); // { modeloKey: número }
+
+  // Filtros
+  const [filtroAgencia, setFiltroAgencia] = useState("TODAS");
+  const [filtroModelo, setFiltroModelo] = useState("TODOS");
+  const [filtroRiesgo, setFiltroRiesgo] = useState("TODOS");
+
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingDatos(true);
+      const raw = await fbGet(INVENTARIO_PATH);
+      if (raw && raw.unidades && Array.isArray(raw.unidades)) {
+        setUnidades(raw.unidades);
+        setFechaCarga(raw.fechaCarga || null);
+        if (raw.tiie) setTiie(raw.tiie);
+        if (raw.spread) setSpread(raw.spread);
+        if (raw.ventasTrim) setVentasTrim(raw.ventasTrim);
+      }
+      setLoadingDatos(false);
+    })();
+  }, []);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCargando(true);
+    setErrorCarga("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const parsed = parseInventarioWorkbook(wb);
+      if (parsed.length === 0) {
+        setErrorCarga("No se encontraron unidades en este archivo. Verifica que sea el reporte de Existencia por Antigüedad.");
+        setCargando(false);
+        return;
+      }
+      const payload = {
+        unidades: parsed,
+        fechaCarga: new Date().toISOString(),
+        tiie,
+        spread,
+      };
+      await fbSet(INVENTARIO_PATH, payload);
+      setUnidades(parsed);
+      setFechaCarga(payload.fechaCarga);
+    } catch (err) {
+      console.error(err);
+      setErrorCarga("No se pudo leer el archivo. Verifica que sea un Excel válido del sistema de inventario.");
+    } finally {
+      setCargando(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const guardarTasas = async () => {
+    if (unidades.length > 0) {
+      await fbSet(INVENTARIO_PATH, { unidades, fechaCarga, tiie, spread, ventasTrim });
+    }
+  };
+
+  // Modelos únicos para filtro
+  const modelosUnicos = ["TODOS", ...Array.from(new Set(unidades.map(u => u.modelo))).sort()];
+
+  // Filtrado
+  const unidadesFiltradas = unidades.filter(u => {
+    if (filtroAgencia !== "TODAS" && u.agencia !== filtroAgencia) return false;
+    if (filtroModelo !== "TODOS" && u.modelo !== filtroModelo) return false;
+    if (filtroRiesgo !== "TODOS" && nivelRiesgo(u.dias) !== filtroRiesgo) return false;
+    return true;
+  }).sort((a, b) => b.dias - a.dias);
+
+  // KPIs globales (sobre todas las unidades sin filtro)
+  const totalUnidades = unidades.length;
+  const totalCosto = unidades.reduce((s, u) => s + u.costoFactura, 0);
+  const totalPlanPiso = unidades.reduce((s, u) => s + costoPlanPiso(u.costoFactura, u.dias, tiie, spread), 0);
+  const diasPromedio = unidades.length > 0 ? Math.round(unidades.reduce((s, u) => s + u.dias, 0) / unidades.length) : 0;
+  const conteoRiesgo = { verde: 0, amarillo: 0, naranja: 0, rojo: 0 };
+  unidades.forEach(u => { conteoRiesgo[nivelRiesgo(u.dias)]++; });
+
+  // Agrupación por modelo para compra mensual
+  const porModelo = {};
+  unidades.forEach(u => {
+    if (!porModelo[u.modelo]) porModelo[u.modelo] = { modelo: u.modelo, cantidad: 0, costoTotal: 0, diasProm: 0, diasSum: 0 };
+    porModelo[u.modelo].cantidad++;
+    porModelo[u.modelo].costoTotal += u.costoFactura;
+    porModelo[u.modelo].diasSum += u.dias;
+  });
+  Object.values(porModelo).forEach(m => { m.diasProm = Math.round(m.diasSum / m.cantidad); });
+  const modelosOrdenados = Object.values(porModelo).sort((a, b) => b.cantidad - a.cantidad);
+
+  const fmt = (n) => new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 0 }).format(n);
+
+  if (loadingDatos) return <Card><div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "40px 0" }}>Cargando inventario…</div></Card>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {/* ── Cabecera: subida + tasas ──────────────────────────────────────────── */}
+      <Card>
+        <SectionHeader title="INVENTARIO — EXISTENCIA POR ANTIGÜEDAD" icon="🚗" />
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end" }}>
+          {/* Subida de Excel */}
+          <div>
+            <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-inventario" />
+            <label htmlFor="file-inventario" style={{
+              background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
+              border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
+              cursor: cargando ? "default" : "pointer", display: "inline-block"
+            }}>
+              {cargando ? "Procesando…" : "📤 Subir inventario actualizado (.xlsx)"}
+            </label>
+            {fechaCarga && (
+              <div style={{ color: "#475569", fontSize: 11, marginTop: 6 }}>
+                Última carga: {new Date(fechaCarga).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </div>
+            )}
+          </div>
+
+          {/* Tasas plan piso */}
+          <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 8, padding: "12px 16px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 700 }}>PLAN PISO: TIIE</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <NumInput value={tiie} onChange={v => setTiie(v)} step={0.25} min={0} width={65} />
+              <span style={{ color: "#64748b", fontSize: 13 }}>%</span>
+            </div>
+            <span style={{ color: "#64748b", fontSize: 13 }}>+</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <NumInput value={spread} onChange={v => setSpread(v)} step={0.25} min={0} width={55} />
+              <span style={{ color: "#64748b", fontSize: 13 }}>%</span>
+            </div>
+            <span style={{ color: "#3b9eea", fontSize: 12, fontWeight: 700 }}>= {(tiie + spread).toFixed(2)}% anual</span>
+            <button onClick={guardarTasas} style={{ background: "#3b9eea22", border: "1px solid #3b9eea", color: "#3b9eea", borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+              Guardar tasas
+            </button>
+          </div>
+        </div>
+        {errorCarga && (
+          <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginTop: 12 }}>
+            {errorCarga}
+          </div>
+        )}
+      </Card>
+
+      {unidades.length === 0 ? (
+        <Card>
+          <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: "40px 0" }}>
+            Sube el reporte de "Existencia Total por Antigüedad" para visualizar el inventario.
+          </div>
+        </Card>
+      ) : (
+        <>
+          {/* ── KPIs globales ──────────────────────────────────────────────────── */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            {[
+              { label: "TOTAL UNIDADES",    value: totalUnidades,           sub: "en inventario",          color: "#3b9eea" },
+              { label: "VALOR INVENTARIO",  value: fmt(totalCosto),         sub: "costo factura total",    color: "#D4AF37" },
+              { label: "COSTO PLAN PISO",   value: fmt(totalPlanPiso),      sub: `TIIE ${tiie}% + ${spread}% acumulado`, color: "#f97316" },
+              { label: "DÍAS PROMEDIO",     value: `${diasPromedio} días`,  sub: "antigüedad promedio",    color: "#c084fc" },
+              { label: "🟡 ATENCIÓN",       value: conteoRiesgo.amarillo,   sub: "61–90 días",             color: "#fbbf24" },
+              { label: "🟠 URGENTE",        value: conteoRiesgo.naranja,    sub: "91–120 días",            color: "#f97316" },
+              { label: "🔴 CRÍTICO",        value: conteoRiesgo.rojo,       sub: "más de 120 días",        color: "#ef4444" },
+            ].map(k => (
+              <div key={k.label} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.color}`, borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.label}</div>
+                <div style={{ color: "#f1f5f9", fontSize: k.value.toString().length > 8 ? 16 : 22, fontWeight: 800, lineHeight: 1.2, marginTop: 4 }}>{k.value}</div>
+                <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>{k.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Filtros ────────────────────────────────────────────────────────── */}
+          <Card>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+              <div>
+                <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>AGENCIA</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {["TODAS", ...AGENCIAS].map(ag => (
+                    <button key={ag} onClick={() => setFiltroAgencia(ag)} style={{
+                      background: filtroAgencia === ag ? "#3b9eea" : "#0f2239",
+                      color: filtroAgencia === ag ? "#0a1628" : "#94a3b8",
+                      border: `1px solid ${filtroAgencia === ag ? "#3b9eea" : "#1e3a5f"}`,
+                      borderRadius: 6, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+                    }}>{ag}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>NIVEL DE RIESGO</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[
+                    { key: "TODOS", label: "Todos", color: "#94a3b8" },
+                    { key: "amarillo", label: "🟡 Atención", color: "#fbbf24" },
+                    { key: "naranja",  label: "🟠 Urgente",  color: "#f97316" },
+                    { key: "rojo",     label: "🔴 Crítico",  color: "#ef4444" },
+                    { key: "verde",    label: "✅ OK",        color: "#4ade80" },
+                  ].map(r => (
+                    <button key={r.key} onClick={() => setFiltroRiesgo(r.key)} style={{
+                      background: filtroRiesgo === r.key ? `${r.color}33` : "#0f2239",
+                      color: filtroRiesgo === r.key ? r.color : "#94a3b8",
+                      border: `1px solid ${filtroRiesgo === r.key ? r.color : "#1e3a5f"}`,
+                      borderRadius: 6, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+                    }}>{r.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 5 }}>MODELO</div>
+                <select value={filtroModelo} onChange={e => setFiltroModelo(e.target.value)} style={{
+                  background: "#0f2239", border: "1px solid #1e3a5f", color: "#f1f5f9",
+                  borderRadius: 6, padding: "6px 10px", fontSize: 12
+                }}>
+                  {modelosUnicos.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div style={{ marginLeft: "auto", color: "#475569", fontSize: 12 }}>
+                Mostrando <b style={{ color: "#f1f5f9" }}>{unidadesFiltradas.length}</b> de {totalUnidades} unidades
+              </div>
+            </div>
+          </Card>
+
+          {/* ── Tabla de inventario ────────────────────────────────────────────── */}
+          <Card>
+            <SectionHeader title={`DETALLE DE UNIDADES — ${filtroAgencia}`} icon="📋" />
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>NIVEL</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>MODELO</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>COLOR</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>NO. INV.</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>AGENCIA</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>DÍAS</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>COSTO FACTURA</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>COSTO PLAN PISO</th>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>DAÑO</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unidadesFiltradas.map((u, idx) => {
+                    const nivel = nivelRiesgo(u.dias);
+                    const r = RIESGO[nivel];
+                    const planPiso = costoPlanPiso(u.costoFactura, u.dias, tiie, spread);
+                    return (
+                      <tr key={idx} style={{ borderBottom: "1px solid #1e3a5f", background: nivel !== "verde" ? r.bg : "transparent" }}>
+                        <td style={{ padding: "7px 8px" }}>
+                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: `${r.color}22`, color: r.color, border: `1px solid ${r.color}`, whiteSpace: "nowrap" }}>
+                            {r.label}
+                          </span>
+                        </td>
+                        <td style={{ padding: "7px 8px", color: "#f1f5f9", fontWeight: 600 }}>{u.modelo}</td>
+                        <td style={{ padding: "7px 8px", color: "#94a3b8" }}>{u.color}</td>
+                        <td style={{ padding: "7px 8px", color: "#64748b", fontSize: 11 }}>{u.noInv}</td>
+                        <td style={{ padding: "7px 8px", color: "#94a3b8" }}>{u.agencia}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", fontWeight: 700, color: r.color }}>{u.dias}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: "#cbd5e1" }}>{fmt(u.costoFactura)}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: nivel === "rojo" ? "#ef4444" : nivel === "naranja" ? "#f97316" : "#D4AF37", fontWeight: 700 }}>
+                          {fmt(planPiso)}
+                        </td>
+                        <td style={{ padding: "7px 8px", color: u.danio ? "#f87171" : "#1e3a5f", fontSize: 11 }}>
+                          {u.danio || "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                    <td colSpan={6} style={{ padding: "8px 8px", color: "#D4AF37", fontWeight: 700, fontSize: 12 }}>
+                      SUBTOTAL FILTRADO ({unidadesFiltradas.length} unidades)
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right", color: "#D4AF37", fontWeight: 700 }}>
+                      {fmt(unidadesFiltradas.reduce((s, u) => s + u.costoFactura, 0))}
+                    </td>
+                    <td style={{ padding: "8px 8px", textAlign: "right", color: "#f97316", fontWeight: 700 }}>
+                      {fmt(unidadesFiltradas.reduce((s, u) => s + costoPlanPiso(u.costoFactura, u.dias, tiie, spread), 0))}
+                    </td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </Card>
+
+          {/* ── Resumen por modelo (referencia compra mensual) ─────────────────── */}
+          <Card>
+            <SectionHeader title="INVENTARIO POR MODELO — REFERENCIA DE COMPRA" icon="📦" />
+            <div style={{ color: "#475569", fontSize: 11.5, marginBottom: 14, background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 6, padding: "8px 12px" }}>
+              Objetivo: mantener <b style={{ color: "#3b9eea" }}>1.5 meses de venta</b> en inventario por modelo, basado en el último trimestre.
+              Ingresa las ventas del trimestre por modelo para calcular el stock ideal y el faltante o excedente.
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                    <th style={{ textAlign: "left", padding: "6px 8px" }}>MODELO</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>STOCK ACTUAL</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>DÍAS PROM.</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>COSTO TOTAL</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>PLAN PISO ACUM.</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px", color: "#3b9eea" }}>VENTAS TRIM. (cap.)</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px", color: "#3b9eea" }}>STOCK IDEAL (1.5m)</th>
+                    <th style={{ textAlign: "right", padding: "6px 8px" }}>DIFERENCIA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {modelosOrdenados.map((m, idx) => {
+                    const modeloKey = m.modelo.replace(/[^a-zA-Z0-9]/g, "_");
+                    const planPisoModelo = unidades
+                      .filter(u => u.modelo === m.modelo)
+                      .reduce((s, u) => s + costoPlanPiso(u.costoFactura, u.dias, tiie, spread), 0);
+                    const vTrim = ventasTrim[modeloKey] ?? 0;
+                    const ventasMensuales = vTrim / 3;
+                    const stockIdeal = ventasMensuales > 0 ? Math.ceil(ventasMensuales * 1.5) : null;
+                    const diferencia = stockIdeal !== null ? m.cantidad - stockIdeal : null;
+                    return (
+                      <tr key={m.modelo} style={{ borderBottom: "1px solid #1e3a5f" }}>
+                        <td style={{ padding: "7px 8px", color: "#f1f5f9", fontWeight: 600 }}>{m.modelo}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: "#D4AF37", fontWeight: 700 }}>{m.cantidad}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: nivelRiesgo(m.diasProm) === "rojo" ? "#ef4444" : nivelRiesgo(m.diasProm) === "naranja" ? "#f97316" : "#94a3b8" }}>
+                          {m.diasProm}
+                        </td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: "#cbd5e1" }}>{fmt(m.costoTotal)}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: "#f97316" }}>{fmt(planPisoModelo)}</td>
+                        <td style={{ padding: "7px 8px", textAlign: "right" }}>
+                          <VentasTriInput
+                            value={vTrim}
+                            onChange={async (v) => {
+                              const updated = { ...ventasTrim, [modeloKey]: v };
+                              setVentasTrim(updated);
+                              await fbSet(`${INVENTARIO_PATH}/ventasTrim`, updated);
+                            }}
+                          />
+                        </td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", color: "#3b9eea", fontWeight: 700 }}>
+                          {stockIdeal !== null ? stockIdeal : "—"}
+                        </td>
+                        <td style={{ padding: "7px 8px", textAlign: "right", fontWeight: 700 }}>
+                          {diferencia !== null ? (
+                            <span style={{ color: diferencia > 0 ? "#f97316" : diferencia < 0 ? "#4ade80" : "#64748b" }}>
+                              {diferencia > 0 ? `+${diferencia} excedente` : diferencia < 0 ? `${Math.abs(diferencia)} faltante` : "OK"}
+                            </span>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ color: "#475569", fontSize: 11, marginTop: 10 }}>
+              🟠 Excedente = tienes más stock del necesario · 🟢 Faltante = necesitas pedir más unidades
+            </div>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Input simple para ventas del trimestre en la tabla de compra mensual
+function VentasTriInput({ value, onChange }) {
+  const [local, setLocal] = useState(String(value || 0));
+  useEffect(() => setLocal(String(value || 0)), [value]);
+  return (
+    <input
+      type="number" min={0} value={local}
+      onChange={e => setLocal(e.target.value)}
+      onBlur={() => { const n = Number(local); if (!isNaN(n)) onChange(n); }}
+      onKeyDown={e => { if (e.key === "Enter") { const n = Number(local); if (!isNaN(n)) onChange(n); } }}
+      style={{ width: 65, background: "#0d1b2e", border: "1px solid #3b9eea", color: "#3b9eea", borderRadius: 4, padding: "2px 6px", fontSize: 12, textAlign: "center", outline: "none" }}
+    />
+  );
+}
+
+
 // Calcula el valor agregado (un solo número) de un indicador a partir del objeto "data" de un mes.
 function computeIndicadorValue(indicador, data, agencia) {
   const agencias = agencia === "TOTAL" ? AGENCIAS : [agencia];
@@ -4193,6 +4687,11 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
               fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>🎯 Demos</button>
+            <button onClick={() => setTab("inventario")} style={{
+              background: tab === "inventario" ? "#5eead4" : "transparent",
+              color: tab === "inventario" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>📦 Inventario</button>
             <button onClick={() => setTab("tendencias")} style={{
               background: tab === "tendencias" ? "#5eead4" : "transparent",
               color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
@@ -4282,6 +4781,8 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           </>
         ) : tab === "funnel" ? (
           <FunnelSection monthKey={viewMonth} funnelData={funnelData} onFunnelFieldChange={onFunnelFieldChange} />
+        ) : tab === "inventario" ? (
+          <InventarioSection />
         ) : tab === "tendencias" ? (
           <TendenciasSection currentMonthKey={currentMonthKey} />
         ) : tab === "analisis" ? (
