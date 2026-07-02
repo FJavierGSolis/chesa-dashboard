@@ -4200,6 +4200,68 @@ Responde con markdown. Sé directo y ejecutivo. Estructura:
 (máximo 3 párrafos cortos en total)`;
 }
 
+// Prompt para que la IA extraiga datos estructurados del PDF nacional AMIA/INEGI
+function buildPromptExtraccionNacional(mesLabel, mesNum) {
+  const mesNombre = MES_NOMBRES[mesNum - 1];
+  return `Eres un extractor de datos estructurados. Se te proporciona el reporte mensual de ventas de vehículos ligeros a nivel NACIONAL de México (Fuente: INEGI RAIAVL + AMIA/AMDA) correspondiente a ${mesLabel}.
+
+Extrae EXACTAMENTE los siguientes datos del PDF y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, sin explicaciones. El campo "${mesNombre}" en cada marca representa las ventas del mes de ${mesNombre}:
+
+{
+  "mercadoTotal": <unidades vendidas a nivel nacional en el mes de ${mesNombre}>,
+  "mercadoTotalMesAnterior": <unidades del mes inmediato anterior, o null>,
+  "variacionVs2025": <porcentaje de variación del mes vs mismo mes año anterior (número, puede ser negativo)>,
+  "acumuladoAnio": <unidades acumuladas enero a ${mesNombre} 2026>,
+  "acumuladoAnio2025": <unidades acumuladas enero a ${mesNombre} 2025, o null>,
+  "variacionAcumulada": <porcentaje del acumulado 2026 vs 2025 (número)>,
+  "changan": {
+    "${mesNombre}": <ventas de Changan en el mes>,
+    "acumulado": <ventas acumuladas de Changan ene-${mesNombre} 2026>,
+    "variacion": <porcentaje del mes vs mismo mes 2025 (número)>,
+    "variacionAcum": <porcentaje del acumulado vs 2025 (número)>
+  },
+  "topMarcas": [
+    {"marca": "Nissan", "${mesNombre}": <número>, "acumulado": <número>, "share": <porcentaje del acumulado, número>}
+  ],
+  "fuente": "INEGI RAIAVL + AMIA/AMDA · ${mesLabel}"
+}
+
+INSTRUCCIONES IMPORTANTES:
+- En "topMarcas" incluye TODAS las marcas principales que aparezcan en el reporte (Nissan, General Motors, Volkswagen, Toyota, KIA, Mazda, Stellantis, MG Motor, Hyundai, Ford, Changan, JAC, Geely, Renault y cualquier otra relevante).
+- IMPORTANTE: cada objeto de marca DEBE usar la clave literal "${mesNombre}" para las ventas del mes (no "mes" ni "ventas").
+- Incluye siempre a Changan tanto en el objeto "changan" como dentro de "topMarcas".
+- Si algún dato no aparece, usa null. No uses comas en los números. No incluyas texto fuera del JSON.`;
+}
+
+// Prompt para el análisis narrativo del mercado nacional (contexto para CHESA)
+function buildPromptAnalisisNacional(datos, mesLabel, mesNombre) {
+  const val = (o) => o?.mes ?? o?.[mesNombre] ?? o?.junio ?? null;
+  const topStr = (datos.topMarcas || [])
+    .slice()
+    .sort((a, b) => (val(b) ?? 0) - (val(a) ?? 0))
+    .slice(0, 12)
+    .map(m => `${m.marca}: ${val(m)} en el mes, ${m.acumulado ?? "N/D"} acum (${m.share != null ? m.share + "%" : "N/D"})`)
+    .join("\n");
+
+  return `${CONTEXTO_CHESA}
+
+Eres el asesor comercial de CHESA Changan. Analiza los siguientes datos del mercado automotriz NACIONAL de México correspondientes a ${mesLabel} (Fuente: INEGI RAIAVL + AMIA/AMDA) y genera un análisis ejecutivo conciso para el Director de Marca, siempre conectándolo con lo que significa para CHESA (único distribuidor Changan en Chiapas).
+
+DATOS DEL MERCADO NACIONAL:
+- Mercado total nacional: ${datos.mercadoTotal} unidades en el mes (${datos.variacionVs2025 >= 0 ? '+' : ''}${datos.variacionVs2025}% vs mismo mes año anterior)
+- Acumulado del año: ${datos.acumuladoAnio} unidades (${datos.variacionAcumulada >= 0 ? '+' : ''}${datos.variacionAcumulada}% vs año anterior)
+- Changan nacional: ${val(datos.changan)} unidades en el mes (${datos.changan?.variacion >= 0 ? '+' : ''}${datos.changan?.variacion}% vs año ant.), ${datos.changan?.acumulado} acumulado (${datos.changan?.variacionAcum >= 0 ? '+' : ''}${datos.changan?.variacionAcum}% vs año ant.)
+
+RANKING DE MARCAS (mes):
+${topStr}
+
+Responde con markdown. Sé directo y ejecutivo. Estructura:
+## Cómo va Changan a nivel nacional
+## Qué está pasando en el mercado
+## Qué significa para CHESA en Chiapas
+(máximo 3 párrafos cortos en total, conectando siempre la tendencia nacional de Changan con la operación local de CHESA)`;
+}
+
 // Datos nacionales AMIA/INEGI hardcodeados — se actualizan manualmente cada mes
 // Fuente: RAIAVL INEGI + AMIA/AMDA reporte mensual
 const DATOS_NACIONALES = {
@@ -4241,6 +4303,10 @@ function MercadoADACHSection({ monthKey }) {
   const [mesVista, setMesVista] = useState(null);
   const [vistaActiva, setVistaActiva] = useState("chiapas"); // chiapas | nacional
   const fileInputRef = useRef(null);
+  const fileInputNacionalRef = useRef(null);
+  const [cargandoNacional, setCargandoNacional] = useState(false);
+  const [errorCargaNacional, setErrorCargaNacional] = useState("");
+  const [mesNacionalSel, setMesNacionalSel] = useState(null); // mes elegido para ver en la vista nacional
 
   useEffect(() => {
     (async () => {
@@ -4317,6 +4383,84 @@ function MercadoADACHSection({ monthKey }) {
     }
   };
 
+  // ── Carga del PDF nacional AMIA/INEGI ──────────────────────────────────────
+  const handleFileNacional = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setErrorCargaNacional("Por favor sube un archivo PDF del reporte nacional (AMIA/INEGI).");
+      return;
+    }
+    setCargandoNacional(true); setErrorCargaNacional("");
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result.split(",")[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+
+      const mesKey = monthKey; // usa el mes seleccionado arriba en el dashboard
+      const mesLabel = getMonthLabel(mesKey);
+      const mesNum = getMonthNumFromKey(mesKey);
+      const mesNombre = MES_NOMBRES[mesNum - 1];
+
+      const extractResponse = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: buildPromptExtraccionNacional(mesLabel, mesNum),
+          pdf: base64,
+        }),
+      });
+      const extractData = await extractResponse.json();
+      if (!extractResponse.ok) throw new Error(extractData.error || "Error al extraer datos");
+
+      let texto = extractData.text || "";
+      texto = texto.replace(/```json|```/g, "").trim();
+      const datosNac = JSON.parse(texto);
+
+      // Normalizar la clave del mes a "mes" genérico, para que la UI funcione
+      // con cualquier mes (no solo junio). Conservamos también la clave original.
+      if (datosNac.changan) {
+        datosNac.changan.mes = datosNac.changan[mesNombre] ?? datosNac.changan.mes ?? datosNac.changan.junio ?? null;
+      }
+      if (Array.isArray(datosNac.topMarcas)) {
+        datosNac.topMarcas.forEach(m => {
+          m.mes = m[mesNombre] ?? m.mes ?? m.junio ?? null;
+        });
+      }
+      if (!datosNac.fuente) datosNac.fuente = `INEGI RAIAVL + AMIA/AMDA · ${mesLabel}`;
+
+      // Paso 2: generar análisis narrativo y guardarlo dentro del mismo objeto.
+      try {
+        const analisisResponse = await fetch("/api/analisis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: buildPromptAnalisisNacional(datosNac, mesLabel, mesNombre) }),
+        });
+        const analisisData = await analisisResponse.json();
+        if (analisisResponse.ok) {
+          datosNac._analisis = analisisData.text || "";
+          datosNac._analisisFecha = new Date().toISOString();
+        }
+      } catch (errAnalisis) {
+        console.error("No se pudo generar el análisis nacional:", errAnalisis);
+        // El análisis es opcional: si falla, se guardan los datos igual.
+      }
+
+      await fbSet(`${NACIONAL_PATH}/${mesKey}`, datosNac);
+      setDatosNacionales(prev => ({ ...prev, [mesKey]: datosNac }));
+      setMesNacionalSel(mesKey);
+    } catch (err) {
+      console.error(err);
+      setErrorCargaNacional(`Error procesando el PDF nacional: ${err.message}. Verifica que sea un reporte AMIA/INEGI válido.`);
+    } finally {
+      setCargandoNacional(false);
+      if (fileInputNacionalRef.current) fileInputNacionalRef.current.value = "";
+    }
+  };
+
   const mesesDisponibles = Object.keys(reportesMes).sort().reverse();
   const reporte = mesVista ? reportesMes[mesVista] : null;
   const datos = reporte?.datos;
@@ -4346,16 +4490,73 @@ function MercadoADACHSection({ monthKey }) {
 
   // ── Vista Nacional ────────────────────────────────────────────────────────
   const mesesNacional = Object.keys(datosNacionales).sort().reverse();
-  const mesNacVista = mesesNacional[0] || "2026-06";
+  const mesNacVista = mesNacionalSel && datosNacionales[mesNacionalSel]
+    ? mesNacionalSel
+    : (mesesNacional[0] || "2026-06");
   const dnac = datosNacionales[mesNacVista];
-  const colorVar = (n) => n == null ? "#64748b" : n >= 0 ? "#4ade80" : "#ef4444";
-  const fmt = (n) => n != null ? Number(n).toLocaleString("es-MX") : "—";
-  const fmtPct = (n, signo = true) => n != null ? `${signo && n > 0 ? "+" : ""}${Number(n).toFixed(1)}%` : "—";
+
+  // Etiquetas dinámicas según el mes en vista (ya no hardcodeado a junio)
+  const nacMesNum = getMonthNumFromKey(mesNacVista);
+  const nacMesNombre = MES_NOMBRES[nacMesNum - 1] || "";
+  const nacMesAbrev = nacMesNombre.slice(0, 3);
+  const nacMesCap = nacMesNombre.charAt(0).toUpperCase() + nacMesNombre.slice(1);
+  const nacAnio = getYearFromKey(mesNacVista);
+  const nacAnioPrev = String(parseInt(nacAnio, 10) - 1);
+  // Lee el valor del mes de una marca/objeto, tolerando la clave nombrada o la genérica "mes",
+  // y "junio" para los datos hardcodeados originales.
+  const valMes = (obj) => obj?.mes ?? obj?.[nacMesNombre] ?? obj?.junio ?? null;
 
   const VistaAnualNacional = () => (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* ── Cabecera: carga de PDF nacional + selector de mes ──────────────── */}
       <Card>
-        <SectionHeader title={`MERCADO NACIONAL — ${getMonthLabel(mesNacVista).toUpperCase()} 2026`} icon="🇲🇽" />
+        <SectionHeader title="MERCADO AUTOMOTRIZ NACIONAL — REPORTE AMIA/INEGI" icon="🇲🇽" />
+        <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <input ref={fileInputNacionalRef} type="file" accept=".pdf" onChange={handleFileNacional} style={{ display: "none" }} id="file-nacional" />
+            <label htmlFor="file-nacional" style={{
+              background: cargandoNacional ? "#1e3a5f" : "#D4AF37", color: cargandoNacional ? "#64748b" : "#0a1628",
+              border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 700,
+              cursor: cargandoNacional ? "default" : "pointer", display: "inline-block"
+            }}>
+              {cargandoNacional ? "📊 Procesando PDF con IA…" : "📤 Subir reporte nacional (.pdf)"}
+            </label>
+            <div style={{ color: "#475569", fontSize: 11, marginTop: 6 }}>
+              La IA extraerá automáticamente los datos del mes seleccionado arriba ({getMonthLabel(monthKey)})
+            </div>
+          </div>
+
+          {mesesNacional.length > 0 && (
+            <div>
+              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>MES EN VISTA</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {mesesNacional.map(m => (
+                  <button key={m} onClick={() => setMesNacionalSel(m)} style={{
+                    background: mesNacVista === m ? "#3b9eea" : "#0f2239",
+                    color: mesNacVista === m ? "#0a1628" : "#94a3b8",
+                    border: `1px solid ${mesNacVista === m ? "#3b9eea" : "#1e3a5f"}`,
+                    borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+                  }}>{getMonthLabel(m)}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {errorCargaNacional && (
+          <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginTop: 12 }}>
+            {errorCargaNacional}
+          </div>
+        )}
+        {cargandoNacional && (
+          <div style={{ background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 8, padding: "12px 16px", marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+            🧠 La IA está leyendo el PDF y extrayendo las ventas por marca… esto toma ~15-20 segundos.
+          </div>
+        )}
+      </Card>
+
+      <Card>
+        <SectionHeader title={`MERCADO NACIONAL — ${nacMesCap.toUpperCase()} ${nacAnio}`} icon="🇲🇽" />
         <div style={{ color: "#475569", fontSize: 11, marginBottom: 14 }}>
           Fuente: {dnac?.fuente || "INEGI RAIAVL + AMIA/AMDA"}
         </div>
@@ -4363,10 +4564,10 @@ function MercadoADACHSection({ monthKey }) {
         {/* KPIs nacionales */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))", gap: 12, marginBottom: 20 }}>
           {[
-            { label: "VENTAS JUNIO 2026", value: fmt(dnac?.mercadoTotal), sub: `${fmtPct(dnac?.variacionVs2025)} vs jun 2025`, color: "#3b9eea", varN: dnac?.variacionVs2025 },
-            { label: "ACUMULADO ENE-JUN 2026", value: fmt(dnac?.acumuladoAnio), sub: `${fmtPct(dnac?.variacionAcumulada)} vs 2025`, color: "#4ade80", varN: dnac?.variacionAcumulada },
-            { label: "CHANGAN — JUNIO", value: fmt(dnac?.changan?.junio), sub: `${fmtPct(dnac?.changan?.variacion)} vs jun 2025`, color: "#D4AF37", varN: dnac?.changan?.variacion },
-            { label: "CHANGAN — ACUMULADO", value: fmt(dnac?.changan?.acumulado), sub: `${fmtPct(dnac?.changan?.variacionAcum)} vs 2025`, color: "#D4AF37", varN: dnac?.changan?.variacionAcum },
+            { label: `VENTAS ${nacMesCap.toUpperCase()} ${nacAnio}`, value: fmt(dnac?.mercadoTotal), sub: `${fmtPct(dnac?.variacionVs2025)} vs ${nacMesAbrev} ${nacAnioPrev}`, color: "#3b9eea", varN: dnac?.variacionVs2025 },
+            { label: `ACUMULADO ENE-${nacMesAbrev.toUpperCase()} ${nacAnio}`, value: fmt(dnac?.acumuladoAnio), sub: `${fmtPct(dnac?.variacionAcumulada)} vs ${nacAnioPrev}`, color: "#4ade80", varN: dnac?.variacionAcumulada },
+            { label: `CHANGAN — ${nacMesCap.toUpperCase()}`, value: fmt(valMes(dnac?.changan)), sub: `${fmtPct(dnac?.changan?.variacion)} vs ${nacMesAbrev} ${nacAnioPrev}`, color: "#D4AF37", varN: dnac?.changan?.variacion },
+            { label: "CHANGAN — ACUMULADO", value: fmt(dnac?.changan?.acumulado), sub: `${fmtPct(dnac?.changan?.variacionAcum)} vs ${nacAnioPrev}`, color: "#D4AF37", varN: dnac?.changan?.variacionAcum },
           ].map(k => (
             <div key={k.label} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.color}`, borderRadius: 8, padding: "12px 14px" }}>
               <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.label}</div>
@@ -4377,19 +4578,19 @@ function MercadoADACHSection({ monthKey }) {
         </div>
 
         {/* Tabla marcas nacionales */}
-        <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 10, letterSpacing: .8 }}>TOP MARCAS — VENTAS NACIONALES JUNIO 2026 VS 2025</p>
+        <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 10, letterSpacing: .8 }}>TOP MARCAS — VENTAS NACIONALES {nacMesCap.toUpperCase()} {nacAnio} VS {nacAnioPrev}</p>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead>
               <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
                 <th style={{ textAlign: "left", padding: "6px 8px" }}>MARCA</th>
-                <th style={{ textAlign: "right", padding: "6px 8px" }}>JUN 2026</th>
-                <th style={{ textAlign: "right", padding: "6px 8px" }}>ACUM. ENE-JUN</th>
-                <th style={{ textAlign: "right", padding: "6px 8px" }}>SHARE ENE-JUN</th>
+                <th style={{ textAlign: "right", padding: "6px 8px" }}>{nacMesAbrev.toUpperCase()} {nacAnio}</th>
+                <th style={{ textAlign: "right", padding: "6px 8px" }}>ACUM. ENE-{nacMesAbrev.toUpperCase()}</th>
+                <th style={{ textAlign: "right", padding: "6px 8px" }}>SHARE ENE-{nacMesAbrev.toUpperCase()}</th>
               </tr>
             </thead>
             <tbody>
-              {(dnac?.topMarcas || []).sort((a, b) => b.junio - a.junio).map((m, i) => {
+              {(dnac?.topMarcas || []).slice().sort((a, b) => (valMes(b) ?? 0) - (valMes(a) ?? 0)).map((m, i) => {
                 const esChangan = m.marca === "Changan";
                 return (
                   <tr key={m.marca} style={{ borderBottom: "1px solid #1e3a5f", background: esChangan ? "#D4AF3708" : "transparent" }}>
@@ -4397,7 +4598,7 @@ function MercadoADACHSection({ monthKey }) {
                       {i + 1}. {m.marca} {esChangan ? "★" : ""}
                     </td>
                     <td style={{ textAlign: "right", padding: "7px 8px", color: esChangan ? "#D4AF37" : "#cbd5e1", fontWeight: esChangan ? 700 : 400 }}>
-                      {fmt(m.junio)}
+                      {fmt(valMes(m))}
                     </td>
                     <td style={{ textAlign: "right", padding: "7px 8px", color: "#94a3b8" }}>{fmt(m.acumulado)}</td>
                     <td style={{ textAlign: "right", padding: "7px 8px", color: esChangan ? "#D4AF37" : "#64748b", fontWeight: esChangan ? 700 : 400 }}>
@@ -4414,14 +4615,28 @@ function MercadoADACHSection({ monthKey }) {
         <div style={{ marginTop: 16, background: "#D4AF3711", border: "1px solid #D4AF3733", borderRadius: 8, padding: "12px 16px" }}>
           <div style={{ color: "#D4AF37", fontSize: 11, fontWeight: 700, marginBottom: 6 }}>★ CHANGAN EN EL MERCADO NACIONAL</div>
           <div style={{ color: "#cbd5e1", fontSize: 12.5, lineHeight: 1.7 }}>
-            En junio 2026, Changan vendió <b style={{ color: "#D4AF37" }}>{fmt(dnac?.changan?.junio)} unidades</b> a nivel nacional (+{dnac?.changan?.variacion}% vs jun 2025),
-            acumulando <b style={{ color: "#D4AF37" }}>{fmt(dnac?.changan?.acumulado)} unidades</b> en el primer semestre (+{dnac?.changan?.variacionAcum}% vs 2025).
-            El mercado total de junio fue <b style={{ color: "#3b9eea" }}>{fmt(dnac?.mercadoTotal)} unidades</b> (+{dnac?.variacionVs2025}% vs jun 2025),
-            con un acumulado de <b style={{ color: "#3b9eea" }}>{fmt(dnac?.acumuladoAnio)} unidades</b> (+{dnac?.variacionAcumulada}% vs 2025).
+            En {nacMesNombre} {nacAnio}, Changan vendió <b style={{ color: "#D4AF37" }}>{fmt(valMes(dnac?.changan))} unidades</b> a nivel nacional ({fmtPct(dnac?.changan?.variacion)} vs {nacMesAbrev} {nacAnioPrev}),
+            acumulando <b style={{ color: "#D4AF37" }}>{fmt(dnac?.changan?.acumulado)} unidades</b> en el año ({fmtPct(dnac?.changan?.variacionAcum)} vs {nacAnioPrev}).
+            El mercado total de {nacMesNombre} fue <b style={{ color: "#3b9eea" }}>{fmt(dnac?.mercadoTotal)} unidades</b> ({fmtPct(dnac?.variacionVs2025)} vs {nacMesAbrev} {nacAnioPrev}),
+            con un acumulado de <b style={{ color: "#3b9eea" }}>{fmt(dnac?.acumuladoAnio)} unidades</b> ({fmtPct(dnac?.variacionAcumulada)} vs {nacAnioPrev}).
             CHESA representa el <b style={{ color: "#D4AF37" }}>100% de las ventas Changan en Chiapas</b>.
           </div>
         </div>
       </Card>
+
+      {/* ── Análisis narrativo nacional ──────────────────────────────────── */}
+      {dnac?._analisis && (
+        <Card>
+          <SectionHeader title="ANÁLISIS NACIONAL — CONTEXTO PARA CHESA" icon="🧠" />
+          <div style={{ color: "#475569", fontSize: 11, marginBottom: 14 }}>
+            Generado por IA · Fuente: Reporte AMIA/INEGI {getMonthLabel(mesNacVista)}
+            {dnac._analisisFecha ? ` · Cargado: ${new Date(dnac._analisisFecha).toLocaleDateString("es-MX")}` : ""}
+          </div>
+          <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px" }}>
+            {renderMarkdownGlobal(dnac._analisis)}
+          </div>
+        </Card>
+      )}
     </div>
   );
 
@@ -4678,7 +4893,6 @@ function MercadoADACHSection({ monthKey }) {
           )}
         </>
       )}
-    </div>
     </div>
     )}
     </div>
