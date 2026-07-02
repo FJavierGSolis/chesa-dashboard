@@ -3589,7 +3589,8 @@ function InventarioSection() {
     </div>
   );
 }
- en la tabla de compra mensual
+
+// Input simple para ventas del trimestre en la tabla de compra mensual
 function VentasTriInput({ value, onChange }) {
   const [local, setLocal] = useState(String(value || 0));
   useEffect(() => setLocal(String(value || 0)), [value]);
