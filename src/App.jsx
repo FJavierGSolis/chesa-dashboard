@@ -402,6 +402,53 @@ function Badge({ ok }) {
 // justo después de la prueba de manejo. Guarda en Firebase bajo encuestasDemo/{monthKey}.
 const ENCUESTA_DEMO_PATH_PREFIX = "encuestasDemo";
 
+// ── Contexto estratégico de CHESA — se inyecta en TODOS los prompts de IA ───
+// Actualizar aquí cuando cambien las prioridades del negocio.
+const CONTEXTO_CHESA = `CONTEXTO ESTRATÉGICO DE CHESA CHANGAN (leer antes de cualquier análisis):
+
+Grupo CHESA es distribuidor exclusivo de Changan en Chiapas, México, con 5 agencias:
+Tuxtla Gutiérrez (flagship, mayor objetivo), Tapachula, San Cristóbal de las Casas, Comitán y Ocosingo.
+
+MARCA Y MERCADO:
+- Changan es una marca china relativamente nueva en México. El principal obstáculo comercial es la desconfianza del consumidor chiapaneco hacia marcas chinas.
+- Competidores directos en el mismo rango de precio: Chevrolet (GM), Nissan, Kia.
+- Los indicadores de satisfacción (SSI/CSI) y las demos (pruebas de manejo) son críticos porque son la principal herramienta para romper la barrera de desconfianza.
+- Cada venta perdida por atención lenta o mala experiencia se va directamente a la competencia.
+
+CONTEXTO DE MERCADO CHIAPAS 2026 (Fuente: ADACH — Asociación de Distribuidores de Automóviles de Chiapas):
+- Mercado total Chiapas promedio mensual ene-may 2026: ~2,832 unidades/mes
+- Tendencia 2026 vs 2025: mercado con leve contracción proyectada (-1.3%)
+- Distribución geográfica: Tuxtla concentra ~59% de ventas, Tapachula ~21%, San Cristóbal ~10-13%
+- IMPORTANTE: En los reportes ADACH, las ventas de Changan en "Tuxtla" integran también Ocosingo, Comitán y San Cristóbal. Es decir, CHESA ES el único distribuidor Changan en Chiapas — los datos de ADACH representan el 100% de las ventas Changan en el estado.
+- Ventas Changan = Ventas CHESA en Chiapas: Ene: 46, Feb: 50, Mar: 33, Abr: 37, May: 36 unidades
+- Market share Changan/CHESA en Chiapas: ~1% del mercado total, ~10-14% dentro del segmento de marcas emergentes
+- Segmento de marcas emergentes (chinas y nuevas): promedio 279 uds/mes en 2026 vs 335 en 2025 (-17%)
+- GEELY y BYD ya no reportan ventas en Chiapas — el segmento chino se está concentrando
+- Principales competidores chinos directos en Chiapas: MG (~40 uds/mes), JAC (~33 uds/mes), Chirey (~53 uds/mes), Jetour (~31 uds/mes)
+- Líderes del mercado total: Nissan (~460-630 uds/mes), VW (~460-545), GM (~390-512)
+
+IMPLICACIONES ESTRATÉGICAS DEL MERCADO:
+- CHESA captura el 100% de las ventas Changan en Chiapas — no hay competencia interna de marca
+- Con 33-50 unidades/mes, CHESA compite contra MG, JAC, Chirey y Jetour dentro del segmento emergente
+- El mercado de marcas chinas NO está creciendo en Chiapas — la desconfianza es real y medible (-17% segmento)
+- Crecer participación en un mercado en contracción requiere diferenciarse en experiencia, no solo en precio
+- Tapachula y San Cristóbal son plazas con alto potencial para Changan dado el tamaño del mercado local
+
+WHOLESALE (WS): NO es prioridad en este momento. CHESA está sobreinventariado. Si el WS está bajo vs objetivo, NO señalarlo como problema urgente — el objetivo es regularizar el inventario antes de comprar más. Solo mencionar WS si hay excedente operativo que resolver.
+
+FINANCIAMIENTO: El foco es BBVA con ~50% de participación en ventas financiadas. No interesa crecer en otras financieras. Excepción: CAFI (financiera de casa, para clientes rechazados por banca o no bancarizados) — es estratégica. Si BBVA está por debajo del 50%, es alerta real.
+
+INVENTARIO: El costo de plan piso (TIIE + spread diario) es pérdida financiera real. Unidades con más de 90 días son prioridad de venta agresiva, no de reposición. Unidades con daño pendiente = riesgo financiero + riesgo de imagen.
+
+PRIORIDADES EN ORDEN REAL:
+① Cierre de ventas del mes vs objetivo interno
+② Velocidad de contactación de leads (tiempo de respuesta < 10 minutos es el estándar Changan)
+③ Rotación de inventario crítico (>90 días)
+④ Participación de BBVA en el mix de financiamiento (~50%)
+⑤ SSI/CSI como indicador de la barrera de desconfianza
+⑥ WS: solo si hay excedente operativo, no como objetivo de compra`;
+
+
 // Catálogo simple de asesores por agencia (solo nombre), gestionado desde la pestaña Demos.
 // Reemplaza al antiguo modelo de "Conversión de Asesores"; solo alimenta el selector
 // de la encuesta pública de prueba de manejo.
@@ -3852,6 +3899,413 @@ function LineChart({ series, width = 760, height = 220, suffix = "" }) {
   );
 }
 
+// ── SECCIÓN: Market Share ADACH ──────────────────────────────────────────────
+const ADACH_PATH = "adachReportes"; // adachReportes/{mesKey} = { datos, analisis, fechaCarga }
+
+// Prompt para que la IA extraiga datos estructurados del PDF de ADACH
+function buildPromptExtraccionADACH(mesLabel) {
+  return `Eres un extractor de datos estructurados. Se te proporciona el reporte mensual de ADACH (Asociación de Distribuidores de Automóviles de Chiapas) correspondiente a ${mesLabel}.
+
+Extrae EXACTAMENTE los siguientes datos del PDF y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, sin explicaciones:
+
+{
+  "mes": "YYYY-MM",
+  "mercadoTotal": <número de unidades vendidas en el mes>,
+  "mercadoTotalAnterior": <número de unidades mismo mes año anterior>,
+  "variacionVsMesAnterior": <porcentaje de variación vs mes anterior (número, puede ser negativo)>,
+  "variacionVsAnioAnterior": <porcentaje vs mismo mes año anterior (número)>,
+  "proyeccionCierreAnio": <número proyectado de unidades al cierre del año>,
+  "tendenciaAnio": <porcentaje de tendencia al cierre (número, puede ser negativo)>,
+  "changanUnidades": <unidades vendidas por Changan en el mes>,
+  "changanShare": <porcentaje de market share de Changan (número)>,
+  "marcasEmergentesTotal": <total unidades segmento marcas emergentes/chinas>,
+  "marcasEmergentesShare": <porcentaje del mercado total (número)>,
+  "topMarcas": [
+    {"marca": "NISSAN", "unidades": <número>, "share": <número>},
+    {"marca": "VOLKSWAGEN", "unidades": <número>, "share": <número>},
+    {"marca": "GM", "unidades": <número>, "share": <número>},
+    {"marca": "TOYOTA", "unidades": <número>, "share": <número>},
+    {"marca": "STELLANTIS", "unidades": <número>, "share": <número>}
+  ],
+  "competidoresChinos": [
+    {"marca": "MG", "unidades": <número>},
+    {"marca": "JAC", "unidades": <número>},
+    {"marca": "CHIREY", "unidades": <número>},
+    {"marca": "JETOUR", "unidades": <número>},
+    {"marca": "CHANGAN", "unidades": <número>},
+    {"marca": "GWM", "unidades": <número>}
+  ],
+  "ventasPorCiudad": [
+    {"ciudad": "Tuxtla", "unidades": <número>, "pct": <número>},
+    {"ciudad": "Tapachula", "unidades": <número>, "pct": <número>},
+    {"ciudad": "San Cristóbal", "unidades": <número>, "pct": <número>},
+    {"ciudad": "Comitán", "unidades": <número>, "pct": <número>},
+    {"ciudad": "Ocosingo", "unidades": <número>, "pct": <número>}
+  ]
+}
+
+Si algún dato no aparece en el PDF, usa null. No uses comas en los números. No incluyas texto fuera del JSON.`;
+}
+
+function buildPromptAnalisisADACH(datos, mesLabel) {
+  return `${CONTEXTO_CHESA}
+
+Eres el asesor comercial de CHESA Changan. Analiza los siguientes datos del mercado automotriz de Chiapas correspondientes a ${mesLabel} (Fuente: ADACH) y genera un análisis ejecutivo conciso para el Director de Marca.
+
+DATOS DEL MERCADO:
+- Mercado total Chiapas: ${datos.mercadoTotal} unidades (${datos.variacionVsAnioAnterior >= 0 ? '+' : ''}${datos.variacionVsAnioAnterior}% vs mismo mes año anterior)
+- Proyección cierre 2026: ${datos.proyeccionCierreAnio} unidades (tendencia ${datos.tendenciaAnio >= 0 ? '+' : ''}${datos.tendenciaAnio}%)
+- Changan/CHESA: ${datos.changanUnidades} unidades (${datos.changanShare}% del mercado total)
+- Segmento emergentes: ${datos.marcasEmergentesTotal} unidades (${datos.marcasEmergentesShare}% del mercado)
+- Competidores chinos directos: ${datos.competidoresChinos?.map(c => `${c.marca}: ${c.unidades}`).join(', ')}
+
+Responde con markdown. Sé directo y ejecutivo. Estructura:
+## Posición de CHESA en el mercado
+## Contexto competitivo
+## Lo que esto implica para CHESA este mes
+(máximo 3 párrafos cortos en total)`;
+}
+
+function MarketShareSection({ monthKey }) {
+  const [cargando, setCargando] = useState(false);
+  const [loadingDatos, setLoadingDatos] = useState(true);
+  const [errorCarga, setErrorCarga] = useState("");
+  const [reportesMes, setReportesMes] = useState({}); // { mesKey: { datos, analisis, fechaCarga } }
+  const [mesVista, setMesVista] = useState(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingDatos(true);
+      const raw = await fbGet(ADACH_PATH);
+      if (raw && typeof raw === "object") {
+        setReportesMes(raw);
+        // Seleccionar el mes más reciente disponible
+        const meses = Object.keys(raw).sort().reverse();
+        if (meses.length > 0) setMesVista(meses[0]);
+      }
+      setLoadingDatos(false);
+    })();
+  }, []);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setErrorCarga("Por favor sube un archivo PDF del reporte ADACH.");
+      return;
+    }
+    setCargando(true); setErrorCarga("");
+    try {
+      // Leer PDF como base64
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result.split(",")[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+
+      // Determinar mes del reporte desde el nombre del archivo o fecha actual
+      const mesKey = monthKey; // usar el mes seleccionado en el dashboard
+      const mesLabel = getMonthLabel(mesKey);
+
+      // Paso 1: Extraer datos estructurados
+      const extractResponse = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: buildPromptExtraccionADACH(mesLabel),
+          pdf: base64,
+        }),
+      });
+      const extractData = await extractResponse.json();
+      if (!extractResponse.ok) throw new Error(extractData.error || "Error al extraer datos");
+
+      // Parsear JSON del texto de respuesta
+      let texto = extractData.text || "";
+      texto = texto.replace(/```json|```/g, "").trim();
+      const datos = JSON.parse(texto);
+
+      // Paso 2: Generar análisis narrativo
+      const analisisResponse = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: buildPromptAnalisisADACH(datos, mesLabel) }),
+      });
+      const analisisData = await analisisResponse.json();
+      const analisis = analisisData.text || "";
+
+      // Guardar en Firebase
+      const payload = { datos, analisis, fechaCarga: new Date().toISOString() };
+      await fbSet(`${ADACH_PATH}/${mesKey}`, payload);
+      setReportesMes(prev => ({ ...prev, [mesKey]: payload }));
+      setMesVista(mesKey);
+    } catch (err) {
+      console.error(err);
+      setErrorCarga(`Error procesando el PDF: ${err.message}. Verifica que sea un reporte ADACH válido.`);
+    } finally {
+      setCargando(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const mesesDisponibles = Object.keys(reportesMes).sort().reverse();
+  const reporte = mesVista ? reportesMes[mesVista] : null;
+  const datos = reporte?.datos;
+
+  const fmt = (n) => n != null ? Number(n).toLocaleString("es-MX") : "—";
+  const fmtPct = (n, signo = true) => n != null ? `${signo && n > 0 ? "+" : ""}${Number(n).toFixed(1)}%` : "—";
+  const colorVar = (n) => n == null ? "#64748b" : n >= 0 ? "#4ade80" : "#ef4444";
+
+  // Colores para gráfica de competidores
+  const COLORES_MARCAS = {
+    CHANGAN: "#D4AF37", MG: "#3b9eea", JAC: "#c084fc",
+    CHIREY: "#fb923c", JETOUR: "#4ade80", GWM: "#f472b6",
+  };
+
+  if (loadingDatos) return <Card><div style={{ color: "#64748b", textAlign: "center", padding: "40px 0" }}>Cargando datos ADACH…</div></Card>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {/* ── Cabecera ─────────────────────────────────────────────────────────── */}
+      <Card>
+        <SectionHeader title="MERCADO AUTOMOTRIZ CHIAPAS — REPORTE ADACH" icon="📈" />
+        <div style={{ display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <input ref={fileInputRef} type="file" accept=".pdf" onChange={handleFile} style={{ display: "none" }} id="file-adach" />
+            <label htmlFor="file-adach" style={{
+              background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
+              border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 700,
+              cursor: cargando ? "default" : "pointer", display: "inline-block"
+            }}>
+              {cargando ? "📊 Procesando PDF con IA…" : "📤 Subir reporte ADACH (.pdf)"}
+            </label>
+            <div style={{ color: "#475569", fontSize: 11, marginTop: 6 }}>
+              La IA extraerá automáticamente los datos del mes seleccionado arriba ({getMonthLabel(monthKey)})
+            </div>
+          </div>
+
+          {/* Selector de mes disponible */}
+          {mesesDisponibles.length > 0 && (
+            <div>
+              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>MES EN VISTA</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {mesesDisponibles.map(m => (
+                  <button key={m} onClick={() => setMesVista(m)} style={{
+                    background: mesVista === m ? "#3b9eea" : "#0f2239",
+                    color: mesVista === m ? "#0a1628" : "#94a3b8",
+                    border: `1px solid ${mesVista === m ? "#3b9eea" : "#1e3a5f"}`,
+                    borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+                  }}>{getMonthLabel(m)}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {errorCarga && (
+          <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginTop: 12 }}>
+            {errorCarga}
+          </div>
+        )}
+        {cargando && (
+          <div style={{ background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 8, padding: "12px 16px", marginTop: 12, color: "#94a3b8", fontSize: 13 }}>
+            🧠 La IA está leyendo el PDF, extrayendo datos y generando el análisis competitivo… esto toma ~15-20 segundos.
+          </div>
+        )}
+      </Card>
+
+      {!datos && !cargando && (
+        <Card>
+          <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: "40px 0" }}>
+            Sube el reporte mensual de ADACH para visualizar los indicadores del mercado automotriz de Chiapas.
+          </div>
+        </Card>
+      )}
+
+      {datos && (
+        <>
+          {/* ── KPIs del mercado ─────────────────────────────────────────────── */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(155px, 1fr))", gap: 12 }}>
+            {[
+              { label: "MERCADO TOTAL CHIAPAS", value: fmt(datos.mercadoTotal), sub: `${fmtPct(datos.variacionVsAnioAnterior)} vs año ant.`, color: "#3b9eea", varN: datos.variacionVsAnioAnterior },
+              { label: "PROYECCIÓN CIERRE 2026", value: fmt(datos.proyeccionCierreAnio), sub: `tendencia ${fmtPct(datos.tendenciaAnio)}`, color: datos.tendenciaAnio >= 0 ? "#4ade80" : "#fbbf24", varN: datos.tendenciaAnio },
+              { label: "CHANGAN / CHESA", value: `${fmt(datos.changanUnidades)} uds`, sub: `${fmtPct(datos.changanShare, false)} del mercado total`, color: "#D4AF37", varN: null },
+              { label: "SEGMENTO EMERGENTES", value: `${fmt(datos.marcasEmergentesTotal)} uds`, sub: `${fmtPct(datos.marcasEmergentesShare, false)} del mercado`, color: "#c084fc", varN: null },
+            ].map(k => (
+              <div key={k.label} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.color}`, borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.label}</div>
+                <div style={{ color: "#f1f5f9", fontSize: 20, fontWeight: 900, marginTop: 4 }}>{k.value}</div>
+                <div style={{ color: colorVar(k.varN), fontSize: 11, marginTop: 3, fontWeight: k.varN != null ? 700 : 400 }}>{k.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+
+            {/* ── Competidores chinos ──────────────────────────────────────────── */}
+            {datos.competidoresChinos?.length > 0 && (
+              <Card style={{ flex: 1, minWidth: 300 }}>
+                <SectionHeader title="CHANGAN VS COMPETENCIA CHINA — CHIAPAS" icon="🏁" />
+                <div style={{ color: "#475569", fontSize: 11.5, marginBottom: 16 }}>
+                  Ventas del mes en Chiapas. Changan = 100% CHESA.
+                </div>
+                {(() => {
+                  const maxUds = Math.max(1, ...datos.competidoresChinos.map(c => c.unidades || 0));
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {[...datos.competidoresChinos]
+                        .filter(c => c.unidades != null)
+                        .sort((a, b) => b.unidades - a.unidades)
+                        .map(c => {
+                          const color = COLORES_MARCAS[c.marca] || "#64748b";
+                          const esChangan = c.marca === "CHANGAN";
+                          const pct = (c.unidades / maxUds * 100).toFixed(0);
+                          return (
+                            <div key={c.marca}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                                <span style={{ color: esChangan ? "#D4AF37" : "#f1f5f9", fontSize: 13, fontWeight: esChangan ? 800 : 600 }}>
+                                  {c.marca} {esChangan ? "★" : ""}
+                                </span>
+                                <span style={{ color, fontSize: 13, fontWeight: 700 }}>{fmt(c.unidades)} uds</span>
+                              </div>
+                              <div style={{ background: "#0d1b2e", borderRadius: 4, height: 10, overflow: "hidden" }}>
+                                <div style={{
+                                  width: `${pct}%`, height: "100%", background: color, borderRadius: 4,
+                                  boxShadow: esChangan ? `0 0 8px ${color}66` : "none"
+                                }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  );
+                })()}
+              </Card>
+            )}
+
+            {/* ── Top marcas mercado total ─────────────────────────────────────── */}
+            {datos.topMarcas?.length > 0 && (
+              <Card style={{ flex: 1, minWidth: 280 }}>
+                <SectionHeader title="TOP MARCAS — MERCADO TOTAL CHIAPAS" icon="🏆" />
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                      <th style={{ textAlign: "left", padding: "5px 8px" }}>MARCA</th>
+                      <th style={{ textAlign: "right", padding: "5px 8px" }}>UNIDADES</th>
+                      <th style={{ textAlign: "right", padding: "5px 8px" }}>SHARE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {datos.topMarcas.filter(m => m.unidades != null).map((m, i) => (
+                      <tr key={m.marca} style={{ borderBottom: "1px solid #0f2239" }}>
+                        <td style={{ padding: "6px 8px", color: "#f1f5f9", fontWeight: 600 }}>
+                          {i + 1}. {m.marca}
+                        </td>
+                        <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1" }}>{fmt(m.unidades)}</td>
+                        <td style={{ textAlign: "right", padding: "6px 8px", color: "#D4AF37", fontWeight: 700 }}>{fmtPct(m.share, false)}</td>
+                      </tr>
+                    ))}
+                    {/* Changan comparativo */}
+                    <tr style={{ borderTop: "2px solid #D4AF3755", background: "#D4AF3708" }}>
+                      <td style={{ padding: "6px 8px", color: "#D4AF37", fontWeight: 800 }}>★ CHANGAN (CHESA)</td>
+                      <td style={{ textAlign: "right", padding: "6px 8px", color: "#D4AF37", fontWeight: 700 }}>{fmt(datos.changanUnidades)}</td>
+                      <td style={{ textAlign: "right", padding: "6px 8px", color: "#D4AF37", fontWeight: 700 }}>{fmtPct(datos.changanShare, false)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </div>
+
+          {/* ── Distribución por ciudad ──────────────────────────────────────── */}
+          {datos.ventasPorCiudad?.length > 0 && (
+            <Card>
+              <SectionHeader title="VENTAS POR CIUDAD — MERCADO TOTAL" icon="🗺️" />
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {datos.ventasPorCiudad.filter(c => c.unidades != null && c.unidades > 0).map(c => {
+                  const maxUds = Math.max(1, ...datos.ventasPorCiudad.filter(x => x.unidades).map(x => x.unidades));
+                  const barW = (c.unidades / maxUds * 100).toFixed(0);
+                  return (
+                    <div key={c.ciudad} style={{ flex: 1, minWidth: 140, background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 8, padding: "12px 14px" }}>
+                      <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>{c.ciudad.toUpperCase()}</div>
+                      <div style={{ color: "#f1f5f9", fontSize: 20, fontWeight: 900 }}>{fmt(c.unidades)}</div>
+                      <div style={{ color: "#3b9eea", fontSize: 11, fontWeight: 700, marginBottom: 8 }}>{fmtPct(c.pct, false)} del mercado</div>
+                      <div style={{ background: "#0d1b2e", borderRadius: 3, height: 6 }}>
+                        <div style={{ width: `${barW}%`, height: "100%", background: "#3b9eea", borderRadius: 3 }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+          )}
+
+          {/* ── Análisis narrativo ───────────────────────────────────────────── */}
+          {reporte?.analisis && (
+            <Card>
+              <SectionHeader title="ANÁLISIS COMPETITIVO — CONTEXTO PARA CHESA" icon="🧠" />
+              <div style={{ color: "#475569", fontSize: 11, marginBottom: 14 }}>
+                Generado por IA · Fuente: Reporte ADACH {getMonthLabel(mesVista)} · Cargado: {reporte.fechaCarga ? new Date(reporte.fechaCarga).toLocaleDateString("es-MX") : "—"}
+              </div>
+              <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px" }}>
+                {renderMarkdownGlobal(reporte.analisis)}
+              </div>
+            </Card>
+          )}
+
+          {/* ── Evolución histórica si hay múltiples meses ───────────────────── */}
+          {mesesDisponibles.length > 1 && (
+            <Card>
+              <SectionHeader title="EVOLUCIÓN HISTÓRICA — CHIAPAS" icon="📉" />
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                      <th style={{ textAlign: "left", padding: "6px 8px" }}>MES</th>
+                      <th style={{ textAlign: "right", padding: "6px 8px" }}>MERCADO TOTAL</th>
+                      <th style={{ textAlign: "right", padding: "6px 8px" }}>VAR. A/A</th>
+                      <th style={{ textAlign: "right", padding: "6px 8px" }}>CHANGAN (CHESA)</th>
+                      <th style={{ textAlign: "right", padding: "6px 8px" }}>SHARE CHANGAN</th>
+                      <th style={{ textAlign: "right", padding: "6px 8px" }}>EMERGENTES</th>
+                      <th style={{ textAlign: "right", padding: "6px 8px" }}>PROY. CIERRE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mesesDisponibles.map(m => {
+                      const d = reportesMes[m]?.datos;
+                      if (!d) return null;
+                      return (
+                        <tr key={m} style={{ borderBottom: "1px solid #1e3a5f", background: m === mesVista ? "#3b9eea08" : "transparent" }}>
+                          <td style={{ padding: "7px 8px", color: m === mesVista ? "#3b9eea" : "#f1f5f9", fontWeight: 700 }}>
+                            {getMonthLabel(m)}
+                          </td>
+                          <td style={{ textAlign: "right", padding: "7px 8px", color: "#cbd5e1" }}>{fmt(d.mercadoTotal)}</td>
+                          <td style={{ textAlign: "right", padding: "7px 8px", color: colorVar(d.variacionVsAnioAnterior), fontWeight: 700 }}>
+                            {fmtPct(d.variacionVsAnioAnterior)}
+                          </td>
+                          <td style={{ textAlign: "right", padding: "7px 8px", color: "#D4AF37", fontWeight: 700 }}>{fmt(d.changanUnidades)}</td>
+                          <td style={{ textAlign: "right", padding: "7px 8px", color: "#94a3b8" }}>{fmtPct(d.changanShare, false)}</td>
+                          <td style={{ textAlign: "right", padding: "7px 8px", color: "#c084fc" }}>{fmt(d.marcasEmergentesTotal)}</td>
+                          <td style={{ textAlign: "right", padding: "7px 8px", color: colorVar(d.tendenciaAnio) }}>
+                            {fmt(d.proyeccionCierreAnio)} ({fmtPct(d.tendenciaAnio)})
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── SECCIÓN: Tendencias ───────────────────────────────────────────────────────
 function TendenciasSection({ currentMonthKey }) {
   const [indicador, setIndicador] = useState("ventas");
   const [agenciaSel, setAgenciaSel] = useState("TOTAL");
@@ -5055,15 +5509,15 @@ function AnalisisSection({ data, monthKey, funnelData }) {
     setResultado("");
     try {
       const resumen = buildResumenParaIA(data, monthKey) + "\n" + buildResumenFunnelParaIA(funnelData);
-      const prompt = `Eres un consultor experto en gestión de dealerships automotrices (marca Changan, grupo CHESA, 5 agencias en Chiapas: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo).
+      const prompt = `${CONTEXTO_CHESA}
 
-Te comparto el corte de indicadores operativos del mes de ${getMonthLabel(monthKey)}, incluyendo el funnel de ventas por agencia. Analiza la información y entrega:
+Eres un consultor experto en gestión de dealerships automotrices. Analiza el corte de indicadores de ${getMonthLabel(monthKey)} y entrega:
 
-1. **Diagnóstico general** (3-5 puntos clave, identificando qué agencias y qué indicadores están en mayor riesgo o destacan positivamente, incluyendo el desempeño del funnel de ventas)
-2. **Plan de acción inmediato** (acciones concretas, accionables esta semana, priorizadas, indicando responsable sugerido por área: ventas, servicio/satisfacción, inventario/personal)
-3. **Alertas críticas** (cualquier indicador muy por debajo del objetivo que requiera atención urgente del Director de Marca)
+1. **Diagnóstico general** (3-5 puntos clave respetando las prioridades reales del negocio)
+2. **Plan de acción inmediato** (acciones concretas esta semana, priorizadas, con responsable sugerido)
+3. **Alertas críticas** (indicadores que requieren atención urgente del Director de Marca)
 
-Sé directo, concreto y orientado a la acción — evita generalidades. Usa los nombres reales de las agencias. Formato en markdown con encabezados.
+Sé directo y orientado a la acción. Usa los nombres reales de las agencias. Formato markdown.
 
 DATOS:
 ${resumen}`;
@@ -5150,17 +5604,17 @@ function AlertasSection({ monthKey }) {
     setResultado("");
     try {
       const historico = await buildResumenHistorico(monthKey);
-      const prompt = `Eres el director comercial con 20 años de experiencia en grupos automotrices, asesorando a CHESA (distribuidor Changan en Chiapas, México, 5 agencias: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo).
+      const prompt = `${CONTEXTO_CHESA}
 
-Te comparto la serie histórica mes a mes de los indicadores clave del negocio, desde el inicio de operaciones hasta ${getMonthLabel(monthKey)}. Tu trabajo es revisar TODO el histórico (no solo el último mes) y detectar:
+Eres el director comercial asesorando a CHESA. Revisa el histórico completo y detecta:
 
-1. **Tendencias de riesgo sostenidas** (ej. una agencia que lleva 3+ meses cayendo en algún indicador, no solo un mal mes aislado)
-2. **Comparativos relevantes** (mismo mes vs año anterior si los datos lo permiten, o contra el promedio histórico)
-3. **Señales tempranas** que un director con experiencia notaría antes de que se conviertan en crisis (ej. caída de satisfacción que suele anteceder a rotación de personal, desbalance de inventario entre agencias, estacionalidad)
+1. **Tendencias de riesgo sostenidas** (3+ meses cayendo en algún indicador)
+2. **Comparativos relevantes** vs año anterior o promedio histórico
+3. **Señales tempranas** que un director con experiencia notaría antes de que sean crisis
 
-Si NO hay nada urgente o digno de alerta, dilo claramente y de forma breve — no inventes problemas que no existen en los datos.
+Recuerda las prioridades del negocio: no señales WS como alerta urgente si el sobreinventario es la causa. Sí señala si BBVA pierde participación o si leads críticos no se contactan a tiempo.
 
-Si SÍ hay alertas, sé directo y concreto: qué agencia, qué indicador, desde cuándo, y por qué es relevante. Máximo 5 alertas, ordenadas por urgencia. Formato markdown con encabezados cortos.
+Si NO hay nada urgente, dilo claramente. Si SÍ hay alertas, máximo 5, ordenadas por urgencia. Formato markdown.
 
 HISTÓRICO MES A MES:
 ${historico}`;
@@ -5250,14 +5704,14 @@ function ChatSection({ data, monthKey, funnelData }) {
     if (contextoRef.current) return contextoRef.current;
     const historico = await buildResumenHistorico(monthKey);
     const detalleMesActual = buildResumenParaIA(data, monthKey) + "\n" + buildResumenFunnelParaIA(funnelData);
-    const contexto = `Eres el director comercial con 20 años de experiencia en grupos automotrices, asesorando a CHESA (distribuidor Changan en Chiapas, México, 5 agencias: Tuxtla, Tapachula, San Cristóbal, Comitán, Ocosingo). El usuario es el Director de Marca y te va a hacer preguntas libres sobre el negocio.
+    const contexto = `${CONTEXTO_CHESA}
 
-Responde con criterio de experto: directo, concreto, usando los nombres reales de las agencias y los números reales que te comparto. Si la pregunta requiere un cálculo o comparación, hazlo explícito. Si no tienes el dato para responder algo, dilo claramente en vez de inventar.
+Eres el director comercial asesorando a Javier García, Director de Marca de CHESA. Responde con criterio de experto que conoce las prioridades reales del negocio: directo, concreto, usando nombres reales de agencias y números reales. Si la pregunta requiere cálculo o comparación, hazlo explícito. Si no tienes el dato, dilo claramente.
 
-HISTÓRICO MES A MES (resumen):
+HISTÓRICO MES A MES:
 ${historico}
 
-DETALLE COMPLETO DEL MES ACTUAL EN VISTA (${getMonthLabel(monthKey)}):
+DETALLE DEL MES ACTUAL (${getMonthLabel(monthKey)}):
 ${detalleMesActual}`;
     contextoRef.current = contexto;
     setContextoListo(true);
@@ -5370,8 +5824,249 @@ ${detalleMesActual}`;
 }
 
 // ── ROOT ──────────────────────────────────────────────────────────────────────
-// ── VISTA EJECUTIVA — Pantalla de bienvenida con estado del negocio ──────────
-function VistaEjecutiva({ data, monthKey, onIrADetalle }) {
+// ── VISTA EJECUTIVA — Briefing inteligente al iniciar ────────────────────────
+function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
+  const [briefing, setBriefing] = useState(null);   // { texto, generadoEn }
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const hora = new Date().getHours();
+  const saludo = hora < 12 ? "Buenos días" : hora < 19 ? "Buenas tardes" : "Buenas noches";
+
+  const generarBriefing = async () => {
+    setLoading(true); setError(""); setBriefing(null);
+    try {
+      // 1. Datos del mes actual
+      const resumenMes = buildResumenParaIA(data, monthKey);
+      const resumenFunnel = buildResumenFunnelParaIA(funnelData);
+
+      // 2. Histórico completo
+      const historico = await buildResumenHistorico(monthKey);
+
+      // 3. Inventario (si existe en Firebase)
+      const rawInv = await fbGet("inventario");
+      let resumenInventario = "";
+      if (rawInv?.unidades?.length > 0) {
+        const criticas = rawInv.unidades.filter(u => u.dias > 120).length;
+        const urgentes = rawInv.unidades.filter(u => u.dias > 90 && u.dias <= 120).length;
+        const totalPP = rawInv.unidades.reduce((s, u) => {
+          const tasa = ((rawInv.tiie || 8.5) + (rawInv.spread || 2)) / 100;
+          return s + u.costoFactura * tasa / 365 * u.dias;
+        }, 0);
+        resumenInventario = `\nINVENTARIO (${rawInv.unidades.length} unidades):
+- Unidades críticas (>120 días): ${criticas}
+- Unidades urgentes (91-120 días): ${urgentes}
+- Costo plan piso acumulado: $${Math.round(totalPP).toLocaleString("es-MX")}
+- Tasa plan piso: TIIE ${rawInv.tiie || 8.5}% + ${rawInv.spread || 2}% = ${((rawInv.tiie||8.5)+(rawInv.spread||2)).toFixed(2)}% anual`;
+      }
+
+      // 4. El prompt — diseñado para que la IA hable como consejero, no como generador de reportes
+      const hoy = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+      const prompt = `Eres el asesor comercial estratégico de Javier García, Director de Marca de CHESA Changan — grupo automotriz con 5 agencias en Chiapas (Tuxtla Gutiérrez, Tapachula, San Cristóbal de las Casas, Comitán y Ocosingo).
+
+CONTEXTO ESTRATÉGICO DE CHESA — LEE ESTO ANTES DE ANALIZAR CUALQUIER DATO:
+
+1. CHANGAN EN CHIAPAS: Es una marca china relativamente nueva en México. El principal obstáculo comercial es la desconfianza del consumidor chiapaneco hacia las marcas chinas. Cada venta requiere un esfuerzo adicional de credibilidad y demostración. Los indicadores de satisfacción (SSI/CSI) y las pruebas de manejo (demos) son críticos porque son la herramienta principal para romper esa barrera.
+
+2. WHOLESALE (WS): NO es prioridad en este momento. CHESA está sobreinventariado. Si el WS está bajo vs objetivo, NO lo señales como problema urgente — al contrario, el objetivo prioritario es regularizar el inventario actual antes de comprar más unidades. Cualquier recomendación de compra debe basarse en el análisis de rotación real, no en el objetivo de WS.
+
+3. PLANES DE FINANCIAMIENTO: El foco principal es BBVA, que debe representar ~50% de participación en ventas financiadas. No interesa crecer en otras financieras. La excepción es CAFI (financiera de casa, para clientes rechazados por banca o no bancarizados) — esta sí es estratégica. Si ves que BBVA está por debajo del 50%, es una señal de alerta real.
+
+4. INVENTARIO: Con el sobreinventario actual, el costo de plan piso (TIIE + spread) es una pérdida financiera diaria. Las unidades con más de 90 días son prioridad de venta agresiva, no de reposición. Cualquier unidad con daño pendiente de resolver es doble riesgo: financiero y de imagen.
+
+5. COMPETIDORES DIRECTOS en Chiapas: Chevrolet, Nissan y Kia en el mismo rango de precio. El market share de Changan en Chiapas es todavía pequeño — cada venta perdida por desconfianza o falta de atención rápida al lead es una venta que se va a la competencia.
+
+PRIORIDADES EN ORDEN REAL (de mayor a menor impacto para Javier hoy):
+① Cierre de ventas del mes vs objetivo interno
+② Velocidad de contactación de leads (tiempo de respuesta)
+③ Rotación de inventario crítico (>90 días)
+④ Participación de BBVA en el mix de financiamiento
+⑤ SSI/CSI como indicador de la barrera de desconfianza
+⑥ WS: solo mencionarlo si hay un excedente por resolver, no como objetivo de compra
+
+Hoy es ${hoy}. Javier acaba de abrir su plataforma Foresight Auto Intelligence. Ya leíste toda la información disponible del negocio. Escríbele un briefing ejecutivo CONVERSACIONAL — como si fueras su asesor de confianza que llegó antes que él, ya analizó todo y sabe exactamente cuáles son las prioridades reales del negocio.
+
+REGLAS DE TONO Y FORMATO:
+- Habla directamente a Javier, en segunda persona ("detecté", "te recomiendo", "tu equipo")
+- Sé específico con números reales — nunca digas "algunos indicadores", di cuáles y cuánto
+- Prioriza acciones sobre diagnósticos — cada problema debe ir acompañado de QUÉ HACER HOY
+- Estima impacto cuando sea posible ("esto representa ~3 ventas adicionales")
+- Máximo 5 situaciones de riesgo, ordenadas según las prioridades reales arriba descritas
+- Máximo 3 acciones concretas para hoy, con impacto estimado
+- Cierra con una proyección: si se ejecutan las acciones, ¿qué probabilidad hay de cerrar el mes en objetivo?
+- Formato: párrafos cortos, sin tablas, sin bullets excesivos. Que suene a persona, no a reporte.
+- Usa markdown solo para negritas en datos clave y encabezados ## cuando sea necesario
+- NO menciones WS como problema urgente a menos que haya un excedente de inventario que resolver
+
+DATOS DISPONIBLES:
+
+${resumenMes}
+
+${resumenFunnel}
+
+HISTÓRICO COMPLETO (tendencias y comparativos):
+${historico}
+${resumenInventario}`;
+
+      const response = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const responseData = await response.json();
+      if (!response.ok) { setError(responseData.error || "Error generando el briefing."); return; }
+
+      setBriefing({
+        texto: responseData.text || "No se recibió respuesta.",
+        generadoEn: new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }),
+      });
+    } catch (e) {
+      setError("Error de conexión. Verifica tu conexión a internet.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 860, margin: "0 auto" }}>
+
+      {/* ── Saludo ───────────────────────────────────────────────────────── */}
+      <div>
+        <div style={{ color: "#64748b", fontSize: 12, fontWeight: 700, letterSpacing: 2, marginBottom: 6 }}>
+          {new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" }).toUpperCase()}
+        </div>
+        <h1 style={{
+          color: "#f1f5f9", fontSize: 32, fontWeight: 900,
+          fontFamily: "Georgia, serif", margin: 0, lineHeight: 1.2
+        }}>
+          {saludo}, Javier.
+        </h1>
+        <p style={{ color: "#64748b", fontSize: 14, marginTop: 8 }}>
+          {briefing
+            ? `Briefing generado hoy a las ${briefing.generadoEn} · ${getMonthLabel(monthKey)}`
+            : `Tu resumen ejecutivo de ${getMonthLabel(monthKey)} está listo para generarse.`}
+        </p>
+      </div>
+
+      {/* ── Botón de generación ──────────────────────────────────────────── */}
+      {!briefing && !loading && (
+        <div style={{
+          background: "#0f2239", border: "1px solid #1e3a5f",
+          borderLeft: "4px solid #D4AF37",
+          borderRadius: 12, padding: "24px 28px",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          flexWrap: "wrap", gap: 16,
+        }}>
+          <div>
+            <div style={{ color: "#D4AF37", fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
+              ⚡ Briefing Ejecutivo con IA
+            </div>
+            <div style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.6, maxWidth: 480 }}>
+              Analiza el mes actual, el histórico completo, el funnel de ventas y el inventario
+              para decirte qué requiere atención y qué acciones tomar hoy.
+            </div>
+          </div>
+          <button onClick={generarBriefing} style={{
+            background: "#D4AF37", color: "#0a1628",
+            border: "none", borderRadius: 10,
+            padding: "14px 28px", fontSize: 14, fontWeight: 800,
+            cursor: "pointer", whiteSpace: "nowrap",
+            boxShadow: "0 4px 20px rgba(212,175,55,0.3)",
+          }}>
+            Generar briefing del día
+          </button>
+        </div>
+      )}
+
+      {/* ── Estado de carga ──────────────────────────────────────────────── */}
+      {loading && (
+        <div style={{
+          background: "#0f2239", border: "1px solid #1e3a5f",
+          borderRadius: 12, padding: "40px 28px", textAlign: "center",
+        }}>
+          <div style={{ fontSize: 28, marginBottom: 12 }}>🧠</div>
+          <div style={{ color: "#f1f5f9", fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
+            Analizando tu negocio…
+          </div>
+          <div style={{ color: "#64748b", fontSize: 13 }}>
+            Revisando el mes actual, el histórico completo, el funnel y el inventario.
+            Esto puede tardar unos segundos.
+          </div>
+        </div>
+      )}
+
+      {/* ── Error ────────────────────────────────────────────────────────── */}
+      {error && (
+        <div style={{
+          background: "#dc262622", border: "1px solid #f87171",
+          borderRadius: 10, padding: "14px 18px", color: "#f87171", fontSize: 13,
+        }}>
+          {error}
+          <button onClick={generarBriefing} style={{
+            background: "none", border: "1px solid #f87171", color: "#f87171",
+            borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: "pointer", marginLeft: 12
+          }}>Reintentar</button>
+        </div>
+      )}
+
+      {/* ── Briefing ─────────────────────────────────────────────────────── */}
+      {briefing && (
+        <>
+          <div style={{
+            background: "#0d1b2e",
+            border: "1px solid #1e3a5f",
+            borderTop: "3px solid #D4AF37",
+            borderRadius: 12,
+            padding: "28px 32px",
+            lineHeight: 1.8,
+          }}>
+            {renderMarkdownGlobal(briefing.texto)}
+          </div>
+
+          {/* ── Acciones rápidas post-briefing ───────────────────────────── */}
+          <div style={{
+            display: "flex", gap: 10, flexWrap: "wrap",
+            padding: "4px 0",
+          }}>
+            <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1, width: "100%", marginBottom: 2 }}>
+              IR A:
+            </div>
+            {[
+              { icon: "📊", label: "Operativo", tab: "operativo" },
+              { icon: "🪜", label: "Funnel", tab: "funnel" },
+              { icon: "🏆", label: "Productividad", tab: "productividad" },
+              { icon: "📦", label: "Inventario", tab: "inventario" },
+              { icon: "🧠", label: "Análisis IA", tab: "analisis" },
+              { icon: "💬", label: "Director Comercial", tab: "chat" },
+            ].map(s => (
+              <button key={s.tab} onClick={() => onIrADetalle(s.tab)} style={{
+                background: "#0f2239", border: "1px solid #1e3a5f",
+                color: "#94a3b8", borderRadius: 8,
+                padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 6,
+              }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor="#3b9eea"; e.currentTarget.style.color="#f1f5f9"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor="#1e3a5f"; e.currentTarget.style.color="#94a3b8"; }}
+              >
+                {s.icon} {s.label}
+              </button>
+            ))}
+            <button onClick={generarBriefing} style={{
+              background: "transparent", border: "1px solid #475569",
+              color: "#475569", borderRadius: 8,
+              padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+              marginLeft: "auto",
+            }}>
+              ↺ Regenerar
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+
   const mesLabel = getMonthLabel(monthKey);
   const mesLabelCap = mesLabel.charAt(0).toUpperCase() + mesLabel.slice(1);
 
@@ -5586,14 +6281,6 @@ function VistaEjecutiva({ data, monthKey, onIrADetalle }) {
           </div>
         </div>
       </div>
-
-      {/* ── Pie de página ────────────────────────────────────────────────── */}
-      <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, paddingTop: 8 }}>
-        Foresight Auto Intelligence · CHESA Changan · {new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
-      </div>
-    </div>
-  );
-}
 
 function Dashboard({ userRole, userAgencia, userEmail }) {
   const [tab, setTab] = useState("resumen"); // resumen | operativo | funnel | ...
@@ -5952,6 +6639,11 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               color: tab === "inventario" ? "#0a1628" : "#94a3b8",
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>📦 Inventario</button>
+            <button onClick={() => setTab("marketShare")} style={{
+              background: tab === "marketShare" ? "#5eead4" : "transparent",
+              color: tab === "marketShare" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>📈 Mercado ADACH</button>
             <button onClick={() => setTab("tendencias")} style={{
               background: tab === "tendencias" ? "#5eead4" : "transparent",
               color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
@@ -6005,7 +6697,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
 
       <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto" }}>
         {tab === "resumen" ? (
-          <VistaEjecutiva data={data} monthKey={viewMonth} onIrADetalle={setTab} />
+          <VistaEjecutiva data={data} monthKey={viewMonth} funnelData={funnelData} onIrADetalle={setTab} />
         ) : tab === "operativo" ? (
           <>
             {!vistaAnualActiva && <KpiBar data={data} monthKey={viewMonth} />}
@@ -6047,6 +6739,8 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           <ProductividadAsesoresSection />
         ) : tab === "inventario" ? (
           <InventarioSection />
+        ) : tab === "marketShare" ? (
+          <MarketShareSection monthKey={viewMonth} />
         ) : tab === "tendencias" ? (
           <TendenciasSection currentMonthKey={currentMonthKey} />
         ) : tab === "analisis" ? (
