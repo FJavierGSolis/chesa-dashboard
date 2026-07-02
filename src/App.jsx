@@ -5370,8 +5370,233 @@ ${detalleMesActual}`;
 }
 
 // ── ROOT ──────────────────────────────────────────────────────────────────────
+// ── VISTA EJECUTIVA — Pantalla de bienvenida con estado del negocio ──────────
+function VistaEjecutiva({ data, monthKey, onIrADetalle }) {
+  const mesLabel = getMonthLabel(monthKey);
+  const mesLabelCap = mesLabel.charAt(0).toUpperCase() + mesLabel.slice(1);
+
+  // ── Calcular todos los indicadores ────────────────────────────────────────
+  const totalFact  = AGENCIAS.reduce((s, a) => s + (data.ventasJunioInterno[a]?.facturado ?? 0), 0);
+  const totalObj   = AGENCIAS.reduce((s, a) => s + (data.ventasJunioInterno[a]?.objetivo  ?? 0), 0);
+  const avanceV    = pct(totalFact, totalObj);
+
+  const totalFactMx = AGENCIAS.reduce((s, a) => s + (data.ventasJunioMexico[a]?.facturado ?? 0), 0);
+  const totalObjMx  = AGENCIAS.reduce((s, a) => s + (data.ventasJunioMexico[a]?.objetivo  ?? 0), 0);
+  const avanceMx    = pct(totalFactMx, totalObjMx);
+
+  const ssiAgencias = Object.keys(data.ssi ?? {});
+  const ssiVals = ssiAgencias.map(a => data.ssi[a]?.ssi ?? 0).filter(v => v > 0);
+  const ssiProm = ssiVals.length > 0 ? ssiVals.reduce((s,v)=>s+v,0)/ssiVals.length : null;
+  const ssiObj  = ssiAgencias.length > 0 ? (data.ssi[ssiAgencias[0]]?.objetivo ?? 0.87)*100 : 87;
+
+  const csiAgencias = Object.keys(data.csi ?? {});
+  const csiVals = csiAgencias.map(a => data.csi[a]?.csi ?? 0).filter(v => v > 0);
+  const csiProm = csiVals.length > 0 ? csiVals.reduce((s,v)=>s+v,0)/csiVals.length : null;
+  const csiObj  = csiAgencias.length > 0 ? (data.csi[csiAgencias[0]]?.objetivo ?? 0.87)*100 : 87;
+
+  const vauOk   = AGENCIAS.filter(a => data.vau[a]).length;
+  const wsReal  = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.real ?? 0), 0);
+  const wsObj   = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.objetivo ?? 0), 0);
+  const vanReal = AGENCIAS.reduce((s, a) => s + (data.van[a]?.real ?? 0), 0);
+  const vanObj  = AGENCIAS.reduce((s, a) => s + (data.van[a]?.objetivo ?? 0), 0);
+
+  const nivel = (avPct, u1=80, u2=50) => avPct >= u1 ? "verde" : avPct >= u2 ? "amarillo" : "rojo";
+
+  const indicadores = [
+    { label: "Ventas vs Objetivo Interno", value: `${avanceV}%`,  sub: `${totalFact}/${totalObj} u`, nivel: nivel(avanceV), detalle: "operativo", urgencia: 10 },
+    { label: "Ventas vs Changan MX",       value: `${avanceMx}%`, sub: `${totalFactMx}/${totalObjMx} u`, nivel: nivel(avanceMx), detalle: "operativo", urgencia: 9 },
+    { label: "VAU Cumplimiento",            value: `${vauOk}/${AGENCIAS.length}`, sub: "agencias", nivel: vauOk===AGENCIAS.length?"verde":vauOk>=3?"amarillo":"rojo", detalle: "operativo", urgencia: 8 },
+    { label: "Wholesale",                   value: wsReal, sub: `de ${wsObj} obj.`, nivel: nivel(pct(wsReal,wsObj)), detalle: "operativo", urgencia: 7 },
+    { label: "VAN",                         value: vanReal, sub: `de ${vanObj} obj.`, nivel: vanObj>0?nivel(pct(vanReal,vanObj)):"verde", detalle: "operativo", urgencia: 6 },
+    { label: "SSI Promedio",                value: ssiProm!==null?`${ssiProm.toFixed(1)}%`:"—", sub: `obj. ${ssiObj}%`, nivel: ssiProm===null?"verde":nivel((ssiProm/ssiObj)*100), detalle: "operativo", urgencia: 5 },
+    { label: "CSI Promedio",                value: csiProm!==null?`${csiProm.toFixed(1)}%`:"—", sub: `obj. ${csiObj}%`, nivel: csiProm===null?"verde":nivel((csiProm/csiObj)*100), detalle: "operativo", urgencia: 4 },
+  ];
+
+  const rojos    = indicadores.filter(i => i.nivel === "rojo");
+  const amarillos = indicadores.filter(i => i.nivel === "amarillo");
+  const verdes   = indicadores.filter(i => i.nivel === "verde");
+
+  const estadoGeneral = rojos.length > 0 ? "rojo" : amarillos.length > 0 ? "amarillo" : "verde";
+  const ESTADO_CFG = {
+    rojo:     { emoji: "🔴", titulo: "Requiere atención inmediata", color: "#ef4444", bgGlow: "rgba(239,68,68,0.08)" },
+    amarillo: { emoji: "🟡", titulo: "Algunos indicadores bajo objetivo", color: "#fbbf24", bgGlow: "rgba(251,191,36,0.08)" },
+    verde:    { emoji: "🟢", titulo: "Todos los indicadores en orden", color: "#4ade80", bgGlow: "rgba(74,222,128,0.08)" },
+  };
+  const ec = ESTADO_CFG[estadoGeneral];
+
+  const NIV_STYLE = {
+    rojo:     { color: "#ef4444", border: "#ef4444", bg: "#ef444418", badge: "CRÍTICO" },
+    amarillo: { color: "#fbbf24", border: "#fbbf24", bg: "#fbbf2418", badge: "ATENCIÓN" },
+    verde:    { color: "#4ade80", border: "#4ade8055", bg: "transparent", badge: "OK" },
+  };
+
+  // Primero rojos (más urgentes), luego amarillos, luego verdes. Dentro de cada grupo por urgencia.
+  const ordenados = [...indicadores].sort((a,b) => {
+    const ord = { rojo:0, amarillo:1, verde:2 };
+    return ord[a.nivel] !== ord[b.nivel] ? ord[a.nivel]-ord[b.nivel] : b.urgencia-a.urgencia;
+  });
+
+  // Ventas por agencia para el desglose
+  const ventasPorAgencia = AGENCIAS.map(ag => ({
+    ag,
+    fact: data.ventasJunioInterno[ag]?.facturado ?? 0,
+    obj:  data.ventasJunioInterno[ag]?.objetivo ?? 0,
+  }));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* ── Banner de estado general ─────────────────────────────────────── */}
+      <div style={{
+        background: `linear-gradient(135deg, #0d1b2e 0%, ${ec.bgGlow} 100%)`,
+        border: `1px solid ${ec.color}44`,
+        borderLeft: `5px solid ${ec.color}`,
+        borderRadius: 14,
+        padding: "28px 32px",
+        display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 20,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+          <span style={{ fontSize: 52, lineHeight: 1 }}>{ec.emoji}</span>
+          <div>
+            <div style={{ color: ec.color, fontSize: 12, fontWeight: 800, letterSpacing: 2, marginBottom: 4 }}>
+              ESTADO OPERATIVO · {mesLabelCap.toUpperCase()}
+            </div>
+            <div style={{ color: "#f1f5f9", fontSize: 30, fontWeight: 900, lineHeight: 1.1, fontFamily: "Georgia, serif" }}>
+              {ec.titulo}
+            </div>
+            <div style={{ color: "#64748b", fontSize: 13, marginTop: 8 }}>
+              {rojos.length > 0 && <span style={{ color: "#ef4444", fontWeight: 700, marginRight: 16 }}>🔴 {rojos.length} crítico{rojos.length!==1?"s":""}</span>}
+              {amarillos.length > 0 && <span style={{ color: "#fbbf24", fontWeight: 700, marginRight: 16 }}>🟡 {amarillos.length} en atención</span>}
+              {verdes.length > 0 && <span style={{ color: "#4ade80", fontWeight: 700 }}>🟢 {verdes.length} en orden</span>}
+            </div>
+          </div>
+        </div>
+        {/* El indicador MÁS CRÍTICO, destacado */}
+        {rojos.length > 0 && (() => {
+          const cr = rojos.sort((a,b)=>b.urgencia-a.urgencia)[0];
+          return (
+            <div style={{ background: "#ef444422", border: "2px solid #ef4444", borderRadius: 12, padding: "16px 24px", textAlign: "center", minWidth: 180 }}>
+              <div style={{ color: "#ef4444", fontSize: 10, fontWeight: 800, letterSpacing: 1.5, marginBottom: 4 }}>⚡ ATENCIÓN URGENTE</div>
+              <div style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{cr.label}</div>
+              <div style={{ color: "#ef4444", fontSize: 38, fontWeight: 900, lineHeight: 1 }}>{cr.value}</div>
+              <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 4 }}>{cr.sub}</div>
+              <button onClick={() => onIrADetalle(cr.detalle)} style={{
+                background: "#ef4444", color: "#fff", border: "none", borderRadius: 6,
+                padding: "6px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer", marginTop: 10
+              }}>Ver detalle →</button>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* ── Grid de todos los indicadores ordenados por urgencia ─────────── */}
+      <div>
+        <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1.5, marginBottom: 12 }}>
+          INDICADORES — ORDENADOS POR PRIORIDAD
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+          {ordenados.map((k, i) => {
+            const ns = NIV_STYLE[k.nivel];
+            const esPrimero = i === 0 && k.nivel === "rojo";
+            return (
+              <div key={k.label} onClick={() => onIrADetalle(k.detalle)}
+                style={{
+                  background: ns.bg || "#0f2239",
+                  border: `1px solid ${ns.border}`,
+                  borderTop: `3px solid ${ns.color}`,
+                  borderRadius: 8, padding: esPrimero ? "16px" : "12px 14px",
+                  cursor: "pointer", transition: "opacity .15s",
+                  boxShadow: esPrimero ? `0 0 20px ${ns.color}22` : "none",
+                }}
+                onMouseEnter={e => e.currentTarget.style.opacity = ".85"}
+                onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                  <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .6 }}>{k.label}</div>
+                  <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 10,
+                    background: `${ns.color}22`, color: ns.color, border: `1px solid ${ns.color}55`,
+                    whiteSpace: "nowrap", letterSpacing: .5 }}>{ns.badge}</span>
+                </div>
+                <div style={{ color: ns.color, fontSize: esPrimero ? 30 : 24, fontWeight: 900, lineHeight: 1, marginBottom: 4 }}>{k.value}</div>
+                <div style={{ color: "#475569", fontSize: 11 }}>{k.sub}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Desglose de ventas por agencia ───────────────────────────────── */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ flex: 2, minWidth: 320 }}>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1.5, marginBottom: 12 }}>
+            VENTAS POR AGENCIA — {mesLabelCap.toUpperCase()}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {ventasPorAgencia.map(({ ag, fact, obj }) => {
+              const avPct = pct(fact, obj);
+              const barColor = avPct >= 80 ? "#4ade80" : avPct >= 50 ? "#fbbf24" : "#ef4444";
+              return (
+                <div key={ag} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                    <span style={{ color: "#f1f5f9", fontSize: 13, fontWeight: 700 }}>{ag}</span>
+                    <span style={{ color: barColor, fontSize: 16, fontWeight: 900 }}>{fact} <span style={{ color: "#475569", fontSize: 12, fontWeight: 400 }}>/ {obj}</span></span>
+                  </div>
+                  <div style={{ background: "#0d1b2e", borderRadius: 4, height: 8, overflow: "hidden" }}>
+                    <div style={{ width: `${Math.min(avPct,100)}%`, height: "100%", background: barColor, borderRadius: 4, transition: "width .4s" }} />
+                  </div>
+                  <div style={{ color: barColor, fontSize: 11, fontWeight: 700, marginTop: 4, textAlign: "right" }}>{avPct}%</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── Acceso rápido a secciones ────────────────────────────────── */}
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ color: "#64748b", fontSize: 11, fontWeight: 700, letterSpacing: 1.5, marginBottom: 12 }}>
+            ACCESO RÁPIDO
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {[
+              { icon: "📊", label: "Operativo", tab: "operativo", desc: "Ventas, SSI, WS, VAN..." },
+              { icon: "🪜", label: "Funnel",    tab: "funnel",    desc: "Leads y conversión" },
+              { icon: "📋", label: "Satisfacción", tab: "satisfaccionCliente", desc: "Ventas · Servicio · Prospección" },
+              { icon: "🏆", label: "Productividad", tab: "productividad", desc: "Ranking de asesores" },
+              { icon: "📦", label: "Inventario", tab: "inventario", desc: "Stock · Plan piso · Compra" },
+              { icon: "🧠", label: "Análisis IA", tab: "analisis",  desc: "Diagnóstico y plan de acción" },
+              { icon: "💬", label: "Director Comercial", tab: "chat", desc: "Pregunta lo que necesites" },
+            ].map(s => (
+              <button key={s.tab} onClick={() => onIrADetalle(s.tab)} style={{
+                background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 8,
+                padding: "10px 14px", textAlign: "left", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 12, width: "100%",
+                transition: "border-color .15s",
+              }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = "#3b9eea"}
+                onMouseLeave={e => e.currentTarget.style.borderColor = "#1e3a5f"}
+              >
+                <span style={{ fontSize: 18 }}>{s.icon}</span>
+                <div>
+                  <div style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700 }}>{s.label}</div>
+                  <div style={{ color: "#475569", fontSize: 10.5 }}>{s.desc}</div>
+                </div>
+                <span style={{ color: "#3b9eea", marginLeft: "auto", fontSize: 14 }}>→</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Pie de página ────────────────────────────────────────────────── */}
+      <div style={{ textAlign: "center", color: "#1e3a5f", fontSize: 11, paddingTop: 8 }}>
+        Foresight Auto Intelligence · CHESA Changan · {new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ userRole, userAgencia, userEmail }) {
-  const [tab, setTab] = useState("operativo"); // operativo | funnel
+  const [tab, setTab] = useState("resumen"); // resumen | operativo | funnel | ...
   const [data, setData] = useState(initialData);
   const [funnelData, setFunnelData] = useState(initialFunnel);
   const [status, setStatus] = useState("conectando"); // conectando | ok | error
@@ -5687,6 +5912,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
             );
           })()}
           <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setTab("resumen")} style={{
+              background: tab === "resumen" ? "#D4AF37" : "transparent",
+              color: tab === "resumen" ? "#0a1628" : "#D4AF37",
+              border: "1px solid #D4AF37", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>⚡ Resumen Ejecutivo</button>
             <button onClick={() => setTab("operativo")} style={{
               background: tab === "operativo" ? "#5eead4" : "transparent",
               color: tab === "operativo" ? "#0a1628" : "#94a3b8",
@@ -5773,7 +6004,9 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
       )}
 
       <div style={{ padding: "20px 24px", maxWidth: 1400, margin: "0 auto" }}>
-        {tab === "operativo" ? (
+        {tab === "resumen" ? (
+          <VistaEjecutiva data={data} monthKey={viewMonth} onIrADetalle={setTab} />
+        ) : tab === "operativo" ? (
           <>
             {!vistaAnualActiva && <KpiBar data={data} monthKey={viewMonth} />}
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
