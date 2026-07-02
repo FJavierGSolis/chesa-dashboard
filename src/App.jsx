@@ -6067,6 +6067,7 @@ ${resumenInventario}`;
 }
 
 
+function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
   const mesLabel = getMonthLabel(monthKey);
   const mesLabelCap = mesLabel.charAt(0).toUpperCase() + mesLabel.slice(1);
 
@@ -6281,6 +6282,9 @@ ${resumenInventario}`;
           </div>
         </div>
       </div>
+    </div>
+  );
+}
 
 function Dashboard({ userRole, userAgencia, userEmail }) {
   const [tab, setTab] = useState("resumen"); // resumen | operativo | funnel | ...
