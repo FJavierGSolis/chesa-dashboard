@@ -464,6 +464,7 @@ function EncuestaDemoPublica() {
   const [calificacion, setCalificacion] = useState("");
   const [legusto, setLegusto] = useState("");
   const [nolegusto, setNolegusto] = useState("");
+  const [ofertas, setOfertas] = useState("");
   const [municipio, setMunicipio] = useState("");
   const [colonia, setColonia] = useState("");
   const [comentario, setComentario] = useState("");
@@ -499,6 +500,7 @@ function EncuestaDemoPublica() {
         agencia, asesorId, asesorNombre, version,
         calificacion: Number(calificacion),
         legusto: legusto.trim(), nolegusto: nolegusto.trim(),
+        ofertas: ofertas || "",
         municipio: municipio.trim(), colonia: colonia.trim(), comentario: comentario.trim(),
         fecha: new Date().toISOString(),
       };
@@ -594,6 +596,23 @@ function EncuestaDemoPublica() {
             <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>¿QUÉ NO TE GUSTÓ O MEJORARÍAS?</label>
             <textarea value={nolegusto} onChange={e => setNolegusto(e.target.value)} rows={2}
               style={{ width: "100%", background: "#0a1830", border: "1px solid #1e3a5f", color: "#f1f5f9", borderRadius: 6, padding: "9px 10px", fontSize: 13, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }} />
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "block", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>
+              ¿EL ASESOR TE COMPARTIÓ LAS GRANDES OFERTAS DEL MES?
+            </label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {["Sí", "No", "No recuerdo"].map(op => (
+                <button type="button" key={op} onClick={() => setOfertas(op)} style={{
+                  flex: 1, minWidth: 90, padding: "9px 10px", borderRadius: 6,
+                  border: `1px solid ${ofertas === op ? "#3b9eea" : "#1e3a5f"}`,
+                  background: ofertas === op ? "#3b9eea" : "#0a1830",
+                  color: ofertas === op ? "#0a1628" : "#94a3b8",
+                  fontSize: 13, fontWeight: 700, cursor: "pointer"
+                }}>{op}</button>
+              ))}
+            </div>
           </div>
 
           <div style={{ marginBottom: 16 }}>
@@ -5847,6 +5866,15 @@ function DemosSection({ monthKey }) {
     return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
   })();
 
+  // % de prospectos a quienes el asesor SÍ compartió las ofertas del mes.
+  // Solo cuenta respuestas explícitas (Sí/No); ignora "No recuerdo" y encuestas viejas sin el campo.
+  const ofertasStats = (() => {
+    const conRespuesta = datosFiltrados.filter(r => r.ofertas === "Sí" || r.ofertas === "No");
+    const siOfertas = datosFiltrados.filter(r => r.ofertas === "Sí").length;
+    const pct = conRespuesta.length > 0 ? (siOfertas / conRespuesta.length) * 100 : null;
+    return { siOfertas, base: conRespuesta.length, pct };
+  })();
+
   const porMunicipio = (() => {
     const map = {};
     datosFiltrados.forEach(r => {
@@ -5888,7 +5916,7 @@ function DemosSection({ monthKey }) {
     setAnalisisIA("");
     try {
       const lineas = datosFiltrados.map(r =>
-        `- Agencia: ${r.agencia} | Asesor: ${r.asesorNombre} | Versión probada: ${r.version || "—"} | Calificación: ${r.calificacion} | Municipio: ${r.municipio} | Le gustó: ${r.legusto || "—"} | No le gustó: ${r.nolegusto || "—"} | Comentario: ${r.comentario || "—"}`
+        `- Agencia: ${r.agencia} | Asesor: ${r.asesorNombre} | Versión probada: ${r.version || "—"} | Calificación: ${r.calificacion} | ¿Le compartieron ofertas del mes?: ${r.ofertas || "Sin dato"} | Municipio: ${r.municipio} | Le gustó: ${r.legusto || "—"} | No le gustó: ${r.nolegusto || "—"} | Comentario: ${r.comentario || "—"}`
       ).join("\n");
 
       const prompt = `Eres un director de marketing y comercial con 20 años de experiencia en grupos automotrices. Analiza estas encuestas de satisfacción de PRUEBAS DE MANEJO (demos) de prospectos de CHESA Changan, correspondientes a ${getMonthLabel(monthKey)}.
@@ -5898,7 +5926,8 @@ Cada línea es una respuesta real de un prospecto justo después de su prueba de
 1. **Patrones de producto** — qué les gusta y qué no les gusta del vehículo, agrupado por tema
 2. **Zonas con mayor interés** — qué municipios/colonias generan más pruebas de manejo, y qué tan bien calificada queda la experiencia ahí (para enfocar inversión publicitaria)
 3. **Calidad de la experiencia por agencia/asesor** — quién está dejando mejor o peor impresión en la demo
-4. **Recomendación de marketing** — 2-3 acciones concretas sobre dónde invertir más presupuesto publicitario y qué mensajes de producto resaltar, basado en los patrones reales encontrados
+4. **Comunicación de ofertas** — qué tan seguido el asesor compartió las grandes ofertas del mes (campo "¿Le compartieron ofertas del mes?"). Señala asesores o agencias donde esto se está omitiendo, porque es una fuga directa de ventas: un prospecto que no conoce la promoción difícilmente cierra.
+5. **Recomendación de marketing** — 2-3 acciones concretas sobre dónde invertir más presupuesto publicitario y qué mensajes de producto resaltar, basado en los patrones reales encontrados
 
 Sé directo y específico. Si los datos son insuficientes para alguna sección, dilo brevemente. Formato markdown con encabezados.
 
@@ -5967,6 +5996,13 @@ ${lineas}`;
               <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #60a5fa", borderRadius: 8, padding: "12px 14px" }}>
                 <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>MUNICIPIOS/ZONAS DISTINTAS</div>
                 <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{porMunicipio.length}</div>
+              </div>
+              <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${ofertasStats.pct === null ? "#1e3a5f" : ofertasStats.pct >= 80 ? "#4ade80" : ofertasStats.pct >= 50 ? "#D4AF37" : "#f87171"}`, borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>LES COMPARTIERON OFERTAS</div>
+                <div style={{ color: ofertasStats.pct === null ? "#f1f5f9" : ofertasStats.pct >= 80 ? "#4ade80" : ofertasStats.pct >= 50 ? "#D4AF37" : "#f87171", fontSize: 22, fontWeight: 800 }}>
+                  {ofertasStats.pct !== null ? `${ofertasStats.pct.toFixed(0)}%` : "—"}
+                </div>
+                <div style={{ color: "#475569", fontSize: 11, marginTop: 3 }}>{ofertasStats.siOfertas} de {ofertasStats.base} respuestas</div>
               </div>
             </div>
 
@@ -6040,6 +6076,17 @@ ${lineas}`;
                     <span style={{ color: "#64748b", fontSize: 11 }}>
                       {r.fecha ? new Date(r.fecha).toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" }) : "—"}
                     </span>
+                    {r.ofertas && (
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10,
+                        background: r.ofertas === "Sí" ? "#4ade8022" : r.ofertas === "No" ? "#f8717122" : "#64748b22",
+                        color: r.ofertas === "Sí" ? "#4ade80" : r.ofertas === "No" ? "#f87171" : "#94a3b8",
+                        border: `1px solid ${r.ofertas === "Sí" ? "#4ade80" : r.ofertas === "No" ? "#f87171" : "#64748b"}55`,
+                        whiteSpace: "nowrap"
+                      }}>
+                        🏷️ Ofertas: {r.ofertas}
+                      </span>
+                    )}
                   </div>
                   <span style={{ fontWeight: 800, fontSize: 14, color: r.calificacion >= 9 ? "#4ade80" : r.calificacion >= 7 ? "#D4AF37" : "#f87171" }}>
                     {r.calificacion}/10
