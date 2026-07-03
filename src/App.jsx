@@ -2957,13 +2957,28 @@ function parseVentasWorkbook(workbook) {
 
   for (const row of rows.slice(7)) {
     const en = row[1];
-    if (!en || String(en).trim() !== "*") continue;
+    const tieneAsterisco = en != null && String(en).trim() === "*";
+
+    // Preparar campos para poder validar la fila aunque le falte el asterisco.
     const fechaRaw = row[11];
     let fecha = null;
     if (fechaRaw instanceof Date) fecha = fechaRaw.toISOString().slice(0, 10);
     else if (typeof fechaRaw === "string" && fechaRaw.includes("-")) fecha = fechaRaw.slice(0, 10);
-    const mes = fecha ? fecha.slice(0, 7) : null;
     const claveRaw = String(row[0] || "").trim();
+    const costoNum = toFloat(row[25]);
+    const modeloRaw = String(row[3] || "").trim();
+
+    // El reporte a veces NO marca el asterisco en ventas de cierre de mes recién capturadas,
+    // aunque la venta sí existe (tiene clave de asesor, fecha, costo y modelo).
+    // Aceptamos la fila si tiene asterisco O si cumple todos los datos de una venta real.
+    // Así evitamos contar subtotales/encabezados (que no tienen costo ni fecha) y a la vez
+    // no perdemos ventas legítimas sin marcar.
+    const esVentaValidaSinAsterisco =
+      claveRaw !== "" && fecha !== null && costoNum > 0 && modeloRaw !== "";
+
+    if (!tieneAsterisco && !esVentaValidaSinAsterisco) continue;
+
+    const mes = fecha ? fecha.slice(0, 7) : null;
     const clave = normalizarClave(claveRaw);
     ventas.push({
       clave,
@@ -2971,9 +2986,9 @@ function parseVentasWorkbook(workbook) {
       agencia: agenciaAsesor(claveRaw),
       fecha,
       mes,
-      modelo: modeloCortoVentas(String(row[3] || "")),
+      modelo: modeloCortoVentas(modeloRaw),
       ventaUnidad: toFloat(row[18]),
-      costo: toFloat(row[25]),
+      costo: costoNum,
       utilidad: toFloat(row[30]),
       utilPct: toFloat(row[31]),
       condicion: String(row[17] || "").trim(),
