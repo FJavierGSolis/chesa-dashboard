@@ -3082,10 +3082,16 @@ function agregarVentasPorMes(ventas) {
         facturado: 0,
         planesPago: Object.fromEntries(PLANES.map(p => [p.key, 0])),
         lineasProducto: Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0])),
+        diario: new Array(31).fill(0), // conteo de ventas por día del mes (índice 0 = día 1)
       };
     }
     const ag = mesObj[v.agencia];
     ag.facturado += 1;
+    // Registrar el día de facturación para el comparativo "a la misma fecha".
+    if (v.fecha && v.fecha.length >= 10) {
+      const dia = parseInt(v.fecha.slice(8, 10), 10);
+      if (dia >= 1 && dia <= 31) ag.diario[dia - 1] += 1;
+    }
     const plan = condicionAPlan(v.condicion);
     if (plan && ag.planesPago[plan] !== undefined) ag.planesPago[plan] += 1;
     // La línea se remapea desde el nombre original de unidad, no desde el modelo corto.
@@ -6873,10 +6879,24 @@ ${resumenMercado}`;
 function RitmoVentasSection({ monthKey }) {
   const [loading, setLoading] = useState(true);
   const [tot, setTot] = useState({ actual: 0, prev: 0, anio: 0, porAgencia: [], prevKey: "", anioKey: "" });
+  const [diaCorte, setDiaCorte] = useState(31);
+  const [esParcial, setEsParcial] = useState(false);
+  const [sinRitmo, setSinRitmo] = useState(false);
 
   const mesAnioAnterior = (mk) => {
     const [y, m] = mk.split("-");
     return `${parseInt(y, 10) - 1}-${m}`;
+  };
+
+  // Normaliza el arreglo diario (Firebase puede devolver objeto disperso en vez de array).
+  const toArr31 = (v) => {
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === "object") {
+      const arr = new Array(31).fill(0);
+      Object.entries(v).forEach(([k, val]) => { const i = parseInt(k, 10); if (i >= 0 && i < 31) arr[i] = val || 0; });
+      return arr;
+    }
+    return new Array(31).fill(0);
   };
 
   useEffect(() => {
@@ -6885,25 +6905,47 @@ function RitmoVentasSection({ monthKey }) {
       setLoading(true);
       const prevKey = getPreviousMonthKey(monthKey);
       const anioKey = mesAnioAnterior(monthKey);
-      const [rawA, rawP, rawY] = await Promise.all([
+
+      // Si el mes en vista es el mes calendario en curso, cortamos al día de hoy.
+      // Si es un mes ya cerrado, usamos el mes completo (día 31).
+      const hoy = new Date();
+      const esMesEnCurso = monthKey === getMonthKey(hoy);
+      const corte = esMesEnCurso ? hoy.getDate() : 31;
+
+      const [ritA, ritP, ritY, rawA, rawP, rawY] = await Promise.all([
+        fbGet(`ventasRitmo/${monthKey}`),
+        fbGet(`ventasRitmo/${prevKey}`),
+        fbGet(`ventasRitmo/${anioKey}`),
         fbGet(`datos/${monthKey}`),
         fbGet(`datos/${prevKey}`),
         fbGet(`datos/${anioKey}`),
       ]);
       if (cancelled) return;
-      const facturadoAg = (raw, ag) => {
+
+      // Facturado por agencia hasta el día "corte". Usa el desglose diario si existe;
+      // si no hay ritmo diario para ese periodo, cae al total mensual de "datos".
+      const facturadoAg = (rit, raw, ag, D) => {
+        const arr = rit ? toArr31(rit[encodeKey(ag)] ?? rit[ag]) : null;
+        if (arr) return arr.slice(0, D).reduce((a, b) => a + (b || 0), 0);
         const merged = decodeFirebaseData(raw?.ventasJunioInterno, initialData.ventasJunioInterno);
         return merged?.[ag]?.facturado ?? 0;
       };
-      const totalDe = (raw) => AGENCIAS.reduce((s, ag) => s + facturadoAg(raw, ag), 0);
+      const totalDe = (rit, raw, D) => AGENCIAS.reduce((s, ag) => s + facturadoAg(rit, raw, ag, D), 0);
+
       const porAgencia = AGENCIAS.map(ag => ({
         ag,
-        actual: facturadoAg(rawA, ag),
-        prev: facturadoAg(rawP, ag),
-        anio: facturadoAg(rawY, ag),
+        actual: facturadoAg(ritA, rawA, ag, corte),
+        prev: facturadoAg(ritP, rawP, ag, corte),
+        anio: facturadoAg(ritY, rawY, ag, corte),
       }));
+
+      setDiaCorte(corte);
+      setEsParcial(esMesEnCurso);
+      setSinRitmo(!ritA); // aviso si el mes en vista no tiene desglose diario cargado
       setTot({
-        actual: totalDe(rawA), prev: totalDe(rawP), anio: totalDe(rawY),
+        actual: totalDe(ritA, rawA, corte),
+        prev: totalDe(ritP, rawP, corte),
+        anio: totalDe(ritY, rawY, corte),
         porAgencia, prevKey, anioKey,
       });
       setLoading(false);
@@ -6916,13 +6958,6 @@ function RitmoVentasSection({ monthKey }) {
     if (b === 0) return { diff: a, pct: a === 0 ? 0 : null };
     return { diff: a - b, pct: ((a - b) / b) * 100 };
   };
-
-  // Proyección a cierre: solo tiene sentido si es el mes calendario en curso.
-  const hoy = new Date();
-  const esMesEnCurso = monthKey === getMonthKey(hoy);
-  const diaHoy = hoy.getDate();
-  const diasDelMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
-  const proyeccion = esMesEnCurso && diaHoy > 0 ? Math.round(tot.actual / diaHoy * diasDelMes) : null;
 
   const dPrev = delta(tot.actual, tot.prev);
   const dAnio = delta(tot.actual, tot.anio);
@@ -6959,18 +6994,24 @@ function RitmoVentasSection({ monthKey }) {
         <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "24px 0" }}>Calculando ritmo…</div>
       ) : (
         <>
+          {esParcial && (
+            <div style={{ background: "#60a5fa11", border: "1px solid #60a5fa33", borderRadius: 8, padding: "8px 14px", color: "#60a5fa", fontSize: 12, marginBottom: 14, fontWeight: 700 }}>
+              📅 Comparación justa: todos los periodos cortados al <b>día {diaCorte}</b> del mes (mismo periodo contra mismo periodo).
+            </div>
+          )}
+          {sinRitmo && (
+            <div style={{ background: "#D4AF3711", border: "1px solid #D4AF3733", borderRadius: 8, padding: "8px 14px", color: "#D4AF37", fontSize: 12, marginBottom: 14 }}>
+              💡 Para el comparativo a la misma fecha, sube el reporte de ventas arriba. Mientras, se muestran totales de mes completo.
+            </div>
+          )}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch", marginBottom: 16 }}>
             {/* Facturado del mes actual */}
             <div style={{ flex: 1, minWidth: 200, background: "#0d1b2e", border: "1px solid #D4AF3755", borderTop: "3px solid #D4AF37", borderRadius: 10, padding: "14px 16px" }}>
-              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .6, marginBottom: 8 }}>FACTURADO ESTE MES</div>
+              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .6, marginBottom: 8 }}>
+                {esParcial ? `FACTURADO AL DÍA ${diaCorte}` : "FACTURADO DEL MES"}
+              </div>
               <div style={{ color: "#D4AF37", fontSize: 34, fontWeight: 900, lineHeight: 1 }}>{tot.actual}</div>
               <div style={{ color: "#475569", fontSize: 11.5, marginTop: 6 }}>unidades · 5 agencias</div>
-              {proyeccion !== null && (
-                <div style={{ color: "#60a5fa", fontSize: 11.5, marginTop: 8, fontWeight: 700 }}>
-                  📈 Proyección a cierre: {proyeccion} uds
-                  <span style={{ color: "#475569", fontWeight: 400 }}> (día {diaHoy}/{diasDelMes})</span>
-                </div>
-              )}
             </div>
             <CompCard titulo="VS MES ANTERIOR" refValor={tot.prev} refLabel={getMonthLabel(tot.prevKey)} d={dPrev} />
             <CompCard titulo="VS MISMO MES AÑO PASADO" refValor={tot.anio} refLabel={getMonthLabel(tot.anioKey)} d={dAnio} />
@@ -7028,8 +7069,9 @@ function RitmoVentasSection({ monthKey }) {
             </tbody>
           </table>
           <div style={{ color: "#475569", fontSize: 10.5, marginTop: 10, textAlign: "center" }}>
-            Compara el facturado del mes en vista contra {getMonthLabel(tot.prevKey)} y {getMonthLabel(tot.anioKey)}.
-            {proyeccion !== null && " La proyección estima el cierre al ritmo actual de venta diaria."}
+            {esParcial
+              ? `Comparación a la misma fecha: ${getMonthLabel(monthKey)} al día ${diaCorte} vs ${getMonthLabel(tot.prevKey)} y ${getMonthLabel(tot.anioKey)}, también al día ${diaCorte}.`
+              : `Compara el mes completo de ${getMonthLabel(monthKey)} contra ${getMonthLabel(tot.prevKey)} y ${getMonthLabel(tot.anioKey)}.`}
           </div>
         </>
       )}
@@ -7292,6 +7334,14 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
         });
 
         await fbSet(`datos/${mk}`, buildFirebaseSafeData(base));
+
+        // Guardar el desglose DIARIO por agencia para el comparativo "a la misma fecha".
+        const ritmoMes = {};
+        AGENCIAS.forEach(ag => {
+          ritmoMes[encodeKey(ag)] = porMes[mk][ag]?.diario ?? new Array(31).fill(0);
+        });
+        await fbSet(`ventasRitmo/${mk}`, ritmoMes);
+
         mesesActualizados++;
 
         // Si el mes procesado es el que se está viendo ahora, refrescar la vista.
