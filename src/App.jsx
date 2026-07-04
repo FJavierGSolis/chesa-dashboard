@@ -6866,6 +6866,177 @@ ${resumenMercado}`;
   );
 }
 
+// ── SECCIÓN: Ritmo de ventas facturadas (comparativos) ────────────────────────
+// Compara el facturado del mes en vista contra el mes anterior y contra el mismo
+// mes del año pasado. Lee el facturado que ya está en Firebase (alimentado por el
+// reporte de ventas), así siempre está actualizado sin re-subir nada.
+function RitmoVentasSection({ monthKey }) {
+  const [loading, setLoading] = useState(true);
+  const [tot, setTot] = useState({ actual: 0, prev: 0, anio: 0, porAgencia: [], prevKey: "", anioKey: "" });
+
+  const mesAnioAnterior = (mk) => {
+    const [y, m] = mk.split("-");
+    return `${parseInt(y, 10) - 1}-${m}`;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const prevKey = getPreviousMonthKey(monthKey);
+      const anioKey = mesAnioAnterior(monthKey);
+      const [rawA, rawP, rawY] = await Promise.all([
+        fbGet(`datos/${monthKey}`),
+        fbGet(`datos/${prevKey}`),
+        fbGet(`datos/${anioKey}`),
+      ]);
+      if (cancelled) return;
+      const facturadoAg = (raw, ag) => {
+        const merged = decodeFirebaseData(raw?.ventasJunioInterno, initialData.ventasJunioInterno);
+        return merged?.[ag]?.facturado ?? 0;
+      };
+      const totalDe = (raw) => AGENCIAS.reduce((s, ag) => s + facturadoAg(raw, ag), 0);
+      const porAgencia = AGENCIAS.map(ag => ({
+        ag,
+        actual: facturadoAg(rawA, ag),
+        prev: facturadoAg(rawP, ag),
+        anio: facturadoAg(rawY, ag),
+      }));
+      setTot({
+        actual: totalDe(rawA), prev: totalDe(rawP), anio: totalDe(rawY),
+        porAgencia, prevKey, anioKey,
+      });
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [monthKey]);
+
+  // Δ y % de variación entre dos valores
+  const delta = (a, b) => {
+    if (b === 0) return { diff: a, pct: a === 0 ? 0 : null };
+    return { diff: a - b, pct: ((a - b) / b) * 100 };
+  };
+
+  // Proyección a cierre: solo tiene sentido si es el mes calendario en curso.
+  const hoy = new Date();
+  const esMesEnCurso = monthKey === getMonthKey(hoy);
+  const diaHoy = hoy.getDate();
+  const diasDelMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
+  const proyeccion = esMesEnCurso && diaHoy > 0 ? Math.round(tot.actual / diaHoy * diasDelMes) : null;
+
+  const dPrev = delta(tot.actual, tot.prev);
+  const dAnio = delta(tot.actual, tot.anio);
+
+  // Tarjeta de comparación reutilizable
+  const CompCard = ({ titulo, refValor, refLabel, d }) => {
+    const sube = d.diff > 0, baja = d.diff < 0;
+    const color = sube ? "#4ade80" : baja ? "#f87171" : "#64748b";
+    const flecha = sube ? "▲" : baja ? "▼" : "—";
+    return (
+      <div style={{ flex: 1, minWidth: 200, background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 10, padding: "14px 16px" }}>
+        <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .6, marginBottom: 8 }}>{titulo}</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          <span style={{ color, fontSize: 26, fontWeight: 900 }}>
+            {flecha} {d.diff > 0 ? "+" : ""}{d.diff}
+          </span>
+          {d.pct !== null && (
+            <span style={{ color, fontSize: 14, fontWeight: 700 }}>
+              {d.pct > 0 ? "+" : ""}{d.pct.toFixed(0)}%
+            </span>
+          )}
+        </div>
+        <div style={{ color: "#475569", fontSize: 11.5, marginTop: 6 }}>
+          {refLabel}: <b style={{ color: "#94a3b8" }}>{refValor}</b> unidades
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <Card>
+      <SectionHeader title={`RITMO DE VENTAS FACTURADAS — ${getMonthLabel(monthKey).toUpperCase()}`} icon="🚀" />
+      {loading ? (
+        <div style={{ color: "#64748b", fontSize: 13, textAlign: "center", padding: "24px 0" }}>Calculando ritmo…</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch", marginBottom: 16 }}>
+            {/* Facturado del mes actual */}
+            <div style={{ flex: 1, minWidth: 200, background: "#0d1b2e", border: "1px solid #D4AF3755", borderTop: "3px solid #D4AF37", borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .6, marginBottom: 8 }}>FACTURADO ESTE MES</div>
+              <div style={{ color: "#D4AF37", fontSize: 34, fontWeight: 900, lineHeight: 1 }}>{tot.actual}</div>
+              <div style={{ color: "#475569", fontSize: 11.5, marginTop: 6 }}>unidades · 5 agencias</div>
+              {proyeccion !== null && (
+                <div style={{ color: "#60a5fa", fontSize: 11.5, marginTop: 8, fontWeight: 700 }}>
+                  📈 Proyección a cierre: {proyeccion} uds
+                  <span style={{ color: "#475569", fontWeight: 400 }}> (día {diaHoy}/{diasDelMes})</span>
+                </div>
+              )}
+            </div>
+            <CompCard titulo="VS MES ANTERIOR" refValor={tot.prev} refLabel={getMonthLabel(tot.prevKey)} d={dPrev} />
+            <CompCard titulo="VS MISMO MES AÑO PASADO" refValor={tot.anio} refLabel={getMonthLabel(tot.anioKey)} d={dAnio} />
+          </div>
+
+          {/* Desglose por agencia */}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ color: "#64748b", fontSize: 11 }}>
+                <th style={{ textAlign: "left", paddingBottom: 6 }}>AGENCIA</th>
+                <th style={{ textAlign: "center" }}>ESTE MES</th>
+                <th style={{ textAlign: "center" }}>MES ANT.</th>
+                <th style={{ textAlign: "center" }}>vs MES ANT.</th>
+                <th style={{ textAlign: "center" }}>AÑO PAS.</th>
+                <th style={{ textAlign: "center" }}>vs AÑO PAS.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tot.porAgencia.map(r => {
+                const dp = delta(r.actual, r.prev);
+                const da = delta(r.actual, r.anio);
+                const chip = (d) => {
+                  const color = d.diff > 0 ? "#4ade80" : d.diff < 0 ? "#f87171" : "#64748b";
+                  const flecha = d.diff > 0 ? "▲" : d.diff < 0 ? "▼" : "—";
+                  return (
+                    <span style={{ color, fontWeight: 700, fontSize: 12 }}>
+                      {flecha} {d.diff > 0 ? "+" : ""}{d.diff}
+                      {d.pct !== null && <span style={{ fontSize: 10.5 }}> ({d.pct > 0 ? "+" : ""}{d.pct.toFixed(0)}%)</span>}
+                    </span>
+                  );
+                };
+                return (
+                  <tr key={r.ag} style={{ borderTop: "1px solid #1e3a5f" }}>
+                    <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{r.ag}</td>
+                    <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{r.actual}</td>
+                    <td style={{ textAlign: "center", color: "#64748b" }}>{r.prev}</td>
+                    <td style={{ textAlign: "center" }}>{chip(dp)}</td>
+                    <td style={{ textAlign: "center", color: "#64748b" }}>{r.anio}</td>
+                    <td style={{ textAlign: "center" }}>{chip(da)}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ borderTop: "2px solid #D4AF3755" }}>
+                <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
+                <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 800 }}>{tot.actual}</td>
+                <td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>{tot.prev}</td>
+                <td style={{ textAlign: "center", color: dPrev.diff > 0 ? "#4ade80" : dPrev.diff < 0 ? "#f87171" : "#64748b", fontWeight: 800, fontSize: 12 }}>
+                  {dPrev.diff > 0 ? "▲ +" : dPrev.diff < 0 ? "▼ " : "— "}{dPrev.diff}
+                </td>
+                <td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>{tot.anio}</td>
+                <td style={{ textAlign: "center", color: dAnio.diff > 0 ? "#4ade80" : dAnio.diff < 0 ? "#f87171" : "#64748b", fontWeight: 800, fontSize: 12 }}>
+                  {dAnio.diff > 0 ? "▲ +" : dAnio.diff < 0 ? "▼ " : "— "}{dAnio.diff}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div style={{ color: "#475569", fontSize: 10.5, marginTop: 10, textAlign: "center" }}>
+            Compara el facturado del mes en vista contra {getMonthLabel(tot.prevKey)} y {getMonthLabel(tot.anioKey)}.
+            {proyeccion !== null && " La proyección estima el cierre al ritmo actual de venta diaria."}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function Dashboard({ userRole, userAgencia, userEmail }) {
   const [tab, setTab] = useState("resumen"); // resumen | operativo | funnel | ...
   const [data, setData] = useState(initialData);
@@ -7450,6 +7621,8 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
                       </div>
                     )}
                   </Card>
+
+                  <RitmoVentasSection monthKey={viewMonth} />
 
                   <VentasSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
                   <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
