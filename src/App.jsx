@@ -6882,6 +6882,8 @@ function RitmoVentasSection({ monthKey }) {
   const [diaCorte, setDiaCorte] = useState(31);
   const [esParcial, setEsParcial] = useState(false);
   const [sinRitmo, setSinRitmo] = useState(false);
+  const [prevSinDato, setPrevSinDato] = useState(false);
+  const [anioSinDato, setAnioSinDato] = useState(false);
 
   const mesAnioAnterior = (mk) => {
     const [y, m] = mk.split("-");
@@ -6922,30 +6924,44 @@ function RitmoVentasSection({ monthKey }) {
       ]);
       if (cancelled) return;
 
-      // Facturado por agencia hasta el día "corte". Usa el desglose diario si existe;
-      // si no hay ritmo diario para ese periodo, cae al total mensual de "datos".
-      const facturadoAg = (rit, raw, ag, D) => {
+      // Facturado por agencia hasta el día "corte", usando el desglose diario.
+      // IMPORTANTE: en modo "a la misma fecha" (mes en curso), NO caemos al total
+      // mensual si falta el desglose diario — eso compararía días contra mes completo
+      // y daría variaciones falsas. Devolvemos null para marcar "sin dato comparable".
+      const facturadoAg = (rit, raw, ag, D, permitirTotalMensual) => {
         const arr = rit ? toArr31(rit[encodeKey(ag)] ?? rit[ag]) : null;
         if (arr) return arr.slice(0, D).reduce((a, b) => a + (b || 0), 0);
+        if (!permitirTotalMensual) return null; // sin desglose diario y no se permite fallback
         const merged = decodeFirebaseData(raw?.ventasJunioInterno, initialData.ventasJunioInterno);
         return merged?.[ag]?.facturado ?? 0;
       };
-      const totalDe = (rit, raw, D) => AGENCIAS.reduce((s, ag) => s + facturadoAg(rit, raw, ag, D), 0);
+      // El mes actual siempre tiene desglose (se acaba de importar). Los de referencia
+      // solo permiten fallback al total mensual cuando NO estamos cortando por fecha.
+      const permitirFallback = !esMesEnCurso;
+      const totalDe = (rit, raw, D, permitir) => AGENCIAS.reduce((s, ag) => {
+        const v = facturadoAg(rit, raw, ag, D, permitir);
+        return s + (v ?? 0);
+      }, 0);
+      // ¿El periodo de referencia tiene desglose diario para poder comparar a la misma fecha?
+      const tieneRitmo = (rit) => !!rit;
 
       const porAgencia = AGENCIAS.map(ag => ({
         ag,
-        actual: facturadoAg(ritA, rawA, ag, corte),
-        prev: facturadoAg(ritP, rawP, ag, corte),
-        anio: facturadoAg(ritY, rawY, ag, corte),
+        actual: facturadoAg(ritA, rawA, ag, corte, true) ?? 0,
+        prev: facturadoAg(ritP, rawP, ag, corte, permitirFallback),
+        anio: facturadoAg(ritY, rawY, ag, corte, permitirFallback),
       }));
 
       setDiaCorte(corte);
       setEsParcial(esMesEnCurso);
-      setSinRitmo(!ritA); // aviso si el mes en vista no tiene desglose diario cargado
+      // Avisamos si falta desglose para el comparativo justo (mes actual, o meses de referencia).
+      setSinRitmo(esMesEnCurso && (!ritA || !ritP || !ritY));
+      setPrevSinDato(esMesEnCurso && !ritP);
+      setAnioSinDato(esMesEnCurso && !ritY);
       setTot({
-        actual: totalDe(ritA, rawA, corte),
-        prev: totalDe(ritP, rawP, corte),
-        anio: totalDe(ritY, rawY, corte),
+        actual: totalDe(ritA, rawA, corte, true),
+        prev: tieneRitmo(ritP) || permitirFallback ? totalDe(ritP, rawP, corte, permitirFallback) : null,
+        anio: tieneRitmo(ritY) || permitirFallback ? totalDe(ritY, rawY, corte, permitirFallback) : null,
         porAgencia, prevKey, anioKey,
       });
       setLoading(false);
@@ -6953,8 +6969,10 @@ function RitmoVentasSection({ monthKey }) {
     return () => { cancelled = true; };
   }, [monthKey]);
 
-  // Δ y % de variación entre dos valores
+  // Δ y % de variación entre dos valores. Si el valor de referencia es null
+  // (no hay desglose diario para comparar a la misma fecha), devolvemos sinDato.
   const delta = (a, b) => {
+    if (b === null || b === undefined) return { sinDato: true };
     if (b === 0) return { diff: a, pct: a === 0 ? 0 : null };
     return { diff: a - b, pct: ((a - b) / b) * 100 };
   };
@@ -6964,6 +6982,17 @@ function RitmoVentasSection({ monthKey }) {
 
   // Tarjeta de comparación reutilizable
   const CompCard = ({ titulo, refValor, refLabel, d }) => {
+    if (d.sinDato) {
+      return (
+        <div style={{ flex: 1, minWidth: 200, background: "#0f2239", border: "1px solid #1e3a5f", borderRadius: 10, padding: "14px 16px" }}>
+          <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .6, marginBottom: 8 }}>{titulo}</div>
+          <div style={{ color: "#64748b", fontSize: 15, fontWeight: 700 }}>Sin dato comparable</div>
+          <div style={{ color: "#475569", fontSize: 11, marginTop: 6, lineHeight: 1.4 }}>
+            Sube el reporte de ventas para tener el detalle diario de {refLabel} y comparar a la misma fecha.
+          </div>
+        </div>
+      );
+    }
     const sube = d.diff > 0, baja = d.diff < 0;
     const color = sube ? "#4ade80" : baja ? "#f87171" : "#64748b";
     const flecha = sube ? "▲" : baja ? "▼" : "—";
@@ -7001,7 +7030,7 @@ function RitmoVentasSection({ monthKey }) {
           )}
           {sinRitmo && (
             <div style={{ background: "#D4AF3711", border: "1px solid #D4AF3733", borderRadius: 8, padding: "8px 14px", color: "#D4AF37", fontSize: 12, marginBottom: 14 }}>
-              💡 Para el comparativo a la misma fecha, sube el reporte de ventas arriba. Mientras, se muestran totales de mes completo.
+              💡 Para comparar a la misma fecha necesito el detalle diario de {prevSinDato && anioSinDato ? "los meses de referencia" : prevSinDato ? getMonthLabel(tot.prevKey) : getMonthLabel(tot.anioKey)}. Sube un reporte de ventas que incluya el histórico (mayo 2024 a la fecha) y se generará automáticamente.
             </div>
           )}
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "stretch", marginBottom: 16 }}>
@@ -7034,6 +7063,7 @@ function RitmoVentasSection({ monthKey }) {
                 const dp = delta(r.actual, r.prev);
                 const da = delta(r.actual, r.anio);
                 const chip = (d) => {
+                  if (d.sinDato) return <span style={{ color: "#475569", fontSize: 11.5 }}>—</span>;
                   const color = d.diff > 0 ? "#4ade80" : d.diff < 0 ? "#f87171" : "#64748b";
                   const flecha = d.diff > 0 ? "▲" : d.diff < 0 ? "▼" : "—";
                   return (
@@ -7047,9 +7077,9 @@ function RitmoVentasSection({ monthKey }) {
                   <tr key={r.ag} style={{ borderTop: "1px solid #1e3a5f" }}>
                     <td style={{ padding: "6px 0", color: "#cbd5e1", fontSize: 12 }}>{r.ag}</td>
                     <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 700 }}>{r.actual}</td>
-                    <td style={{ textAlign: "center", color: "#64748b" }}>{r.prev}</td>
+                    <td style={{ textAlign: "center", color: "#64748b" }}>{r.prev === null ? "—" : r.prev}</td>
                     <td style={{ textAlign: "center" }}>{chip(dp)}</td>
-                    <td style={{ textAlign: "center", color: "#64748b" }}>{r.anio}</td>
+                    <td style={{ textAlign: "center", color: "#64748b" }}>{r.anio === null ? "—" : r.anio}</td>
                     <td style={{ textAlign: "center" }}>{chip(da)}</td>
                   </tr>
                 );
@@ -7057,13 +7087,13 @@ function RitmoVentasSection({ monthKey }) {
               <tr style={{ borderTop: "2px solid #D4AF3755" }}>
                 <td style={{ color: "#D4AF37", fontWeight: 700, padding: "6px 0", fontSize: 12 }}>TOTAL</td>
                 <td style={{ textAlign: "center", color: "#D4AF37", fontWeight: 800 }}>{tot.actual}</td>
-                <td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>{tot.prev}</td>
-                <td style={{ textAlign: "center", color: dPrev.diff > 0 ? "#4ade80" : dPrev.diff < 0 ? "#f87171" : "#64748b", fontWeight: 800, fontSize: 12 }}>
-                  {dPrev.diff > 0 ? "▲ +" : dPrev.diff < 0 ? "▼ " : "— "}{dPrev.diff}
+                <td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>{tot.prev === null ? "—" : tot.prev}</td>
+                <td style={{ textAlign: "center", color: dPrev.sinDato ? "#475569" : dPrev.diff > 0 ? "#4ade80" : dPrev.diff < 0 ? "#f87171" : "#64748b", fontWeight: 800, fontSize: 12 }}>
+                  {dPrev.sinDato ? "—" : `${dPrev.diff > 0 ? "▲ +" : dPrev.diff < 0 ? "▼ " : "— "}${dPrev.diff}`}
                 </td>
-                <td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>{tot.anio}</td>
-                <td style={{ textAlign: "center", color: dAnio.diff > 0 ? "#4ade80" : dAnio.diff < 0 ? "#f87171" : "#64748b", fontWeight: 800, fontSize: 12 }}>
-                  {dAnio.diff > 0 ? "▲ +" : dAnio.diff < 0 ? "▼ " : "— "}{dAnio.diff}
+                <td style={{ textAlign: "center", color: "#94a3b8", fontWeight: 700 }}>{tot.anio === null ? "—" : tot.anio}</td>
+                <td style={{ textAlign: "center", color: dAnio.sinDato ? "#475569" : dAnio.diff > 0 ? "#4ade80" : dAnio.diff < 0 ? "#f87171" : "#64748b", fontWeight: 800, fontSize: 12 }}>
+                  {dAnio.sinDato ? "—" : `${dAnio.diff > 0 ? "▲ +" : dAnio.diff < 0 ? "▼ " : "— "}${dAnio.diff}`}
                 </td>
               </tr>
             </tbody>
