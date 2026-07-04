@@ -6908,8 +6908,10 @@ function RitmoVentasSection({ monthKey }) {
       const prevKey = getPreviousMonthKey(monthKey);
       const anioKey = mesAnioAnterior(monthKey);
 
-      // Si el mes en vista es el mes calendario en curso, cortamos al día de hoy.
-      // Si es un mes ya cerrado, usamos el mes completo (día 31).
+      // Si el mes en vista es el mes calendario en curso, cortamos al día de hoy
+      // usando el desglose diario. Si es un mes YA CERRADO, comparamos meses completos
+      // usando el total mensual confiable de "datos" (nunca el desglose diario, que
+      // podría estar incompleto si se subió un reporte de ventana parcial).
       const hoy = new Date();
       const esMesEnCurso = monthKey === getMonthKey(hoy);
       const corte = esMesEnCurso ? hoy.getDate() : 31;
@@ -6924,44 +6926,57 @@ function RitmoVentasSection({ monthKey }) {
       ]);
       if (cancelled) return;
 
-      // Facturado por agencia hasta el día "corte", usando el desglose diario.
-      // IMPORTANTE: en modo "a la misma fecha" (mes en curso), NO caemos al total
-      // mensual si falta el desglose diario — eso compararía días contra mes completo
-      // y daría variaciones falsas. Devolvemos null para marcar "sin dato comparable".
-      const facturadoAg = (rit, raw, ag, D, permitirTotalMensual) => {
-        const arr = rit ? toArr31(rit[encodeKey(ag)] ?? rit[ag]) : null;
-        if (arr) return arr.slice(0, D).reduce((a, b) => a + (b || 0), 0);
-        if (!permitirTotalMensual) return null; // sin desglose diario y no se permite fallback
+      // Total mensual completo desde "datos" (fuente autoritativa del facturado).
+      const totalMensualAg = (raw, ag) => {
         const merged = decodeFirebaseData(raw?.ventasJunioInterno, initialData.ventasJunioInterno);
         return merged?.[ag]?.facturado ?? 0;
       };
-      // El mes actual siempre tiene desglose (se acaba de importar). Los de referencia
-      // solo permiten fallback al total mensual cuando NO estamos cortando por fecha.
-      const permitirFallback = !esMesEnCurso;
-      const totalDe = (rit, raw, D, permitir) => AGENCIAS.reduce((s, ag) => {
-        const v = facturadoAg(rit, raw, ag, D, permitir);
-        return s + (v ?? 0);
-      }, 0);
-      // ¿El periodo de referencia tiene desglose diario para poder comparar a la misma fecha?
-      const tieneRitmo = (rit) => !!rit;
+      // Facturado por agencia hasta el día "corte" usando el desglose diario.
+      // Devuelve null si no hay desglose diario (para marcar "sin dato comparable").
+      const diarioAg = (rit, ag, D) => {
+        const arr = rit ? toArr31(rit[encodeKey(ag)] ?? rit[ag]) : null;
+        if (!arr) return null;
+        return arr.slice(0, D).reduce((a, b) => a + (b || 0), 0);
+      };
 
-      const porAgencia = AGENCIAS.map(ag => ({
-        ag,
-        actual: facturadoAg(ritA, rawA, ag, corte, true) ?? 0,
-        prev: facturadoAg(ritP, rawP, ag, corte, permitirFallback),
-        anio: facturadoAg(ritY, rawY, ag, corte, permitirFallback),
-      }));
+      let porAgencia, totalActual, totalPrev, totalAnio;
+
+      if (esMesEnCurso) {
+        // MES EN CURSO: comparación a la misma fecha (día de hoy) con el desglose diario.
+        porAgencia = AGENCIAS.map(ag => ({
+          ag,
+          actual: diarioAg(ritA, ag, corte) ?? 0,
+          prev: diarioAg(ritP, ag, corte),   // null si falta desglose de ese mes
+          anio: diarioAg(ritY, ag, corte),
+        }));
+        totalActual = AGENCIAS.reduce((s, ag) => s + (diarioAg(ritA, ag, corte) ?? 0), 0);
+        totalPrev = ritP ? AGENCIAS.reduce((s, ag) => s + (diarioAg(ritP, ag, corte) ?? 0), 0) : null;
+        totalAnio = ritY ? AGENCIAS.reduce((s, ag) => s + (diarioAg(ritY, ag, corte) ?? 0), 0) : null;
+        setPrevSinDato(!ritP);
+        setAnioSinDato(!ritY);
+        setSinRitmo(!ritA || !ritP || !ritY);
+      } else {
+        // MES CERRADO: mes completo contra mes completo, con el total mensual confiable.
+        porAgencia = AGENCIAS.map(ag => ({
+          ag,
+          actual: totalMensualAg(rawA, ag),
+          prev: totalMensualAg(rawP, ag),
+          anio: totalMensualAg(rawY, ag),
+        }));
+        totalActual = AGENCIAS.reduce((s, ag) => s + totalMensualAg(rawA, ag), 0);
+        totalPrev = AGENCIAS.reduce((s, ag) => s + totalMensualAg(rawP, ag), 0);
+        totalAnio = AGENCIAS.reduce((s, ag) => s + totalMensualAg(rawY, ag), 0);
+        setPrevSinDato(false);
+        setAnioSinDato(false);
+        setSinRitmo(false);
+      }
 
       setDiaCorte(corte);
       setEsParcial(esMesEnCurso);
-      // Avisamos si falta desglose para el comparativo justo (mes actual, o meses de referencia).
-      setSinRitmo(esMesEnCurso && (!ritA || !ritP || !ritY));
-      setPrevSinDato(esMesEnCurso && !ritP);
-      setAnioSinDato(esMesEnCurso && !ritY);
       setTot({
-        actual: totalDe(ritA, rawA, corte, true),
-        prev: tieneRitmo(ritP) || permitirFallback ? totalDe(ritP, rawP, corte, permitirFallback) : null,
-        anio: tieneRitmo(ritY) || permitirFallback ? totalDe(ritY, rawY, corte, permitirFallback) : null,
+        actual: totalActual,
+        prev: totalPrev,
+        anio: totalAnio,
         porAgencia, prevKey, anioKey,
       });
       setLoading(false);
