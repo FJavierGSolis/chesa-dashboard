@@ -7098,9 +7098,14 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
         AGENCIAS.forEach(ag => {
           const datosAg = porMes[mk][ag];
           if (datosAg) {
-            // Facturado del objetivo interno
+            // El facturado (unidades vendidas) es el mismo para ambos bloques:
+            // solo cambia el objetivo contra el que se compara (interno vs Changan MX).
             base.ventasJunioInterno[ag] = {
               ...base.ventasJunioInterno[ag],
+              facturado: datosAg.facturado,
+            };
+            base.ventasJunioMexico[ag] = {
+              ...base.ventasJunioMexico[ag],
               facturado: datosAg.facturado,
             };
             // Planes y líneas: reemplazo completo con lo del reporte
@@ -7109,6 +7114,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           } else {
             // Agencia sin ventas ese mes: facturado en 0, planes y líneas en cero
             base.ventasJunioInterno[ag] = { ...base.ventasJunioInterno[ag], facturado: 0 };
+            base.ventasJunioMexico[ag] = { ...base.ventasJunioMexico[ag], facturado: 0 };
             base.planesPago[ag] = Object.fromEntries(PLANES.map(p => [p.key, 0]));
             base.lineasProducto[ag] = Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0]));
           }
