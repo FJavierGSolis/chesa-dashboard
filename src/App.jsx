@@ -1768,13 +1768,13 @@ function KpiBar({ data, monthKey }) {
   const csiObj = csiAgencias.length > 0 ? ((data.csi[csiAgencias[0]]?.objetivo ?? 0.87) * 100) : 87;
 
   const vauOk  = AGENCIAS.filter(a => data.vau[a]).length;
-  // Participación de BBVA sobre el total de ventas FINANCIADAS (excluye CONTADO).
-  // Objetivo estratégico: BBVA ≥ 50% del mix de financiamiento.
+  // Participación de BBVA sobre el TOTAL de ventas del mes.
+  // Objetivo estratégico: BBVA ≥ 50% del total.
   const bbvaUnidades = AGENCIAS.reduce((s, a) => s + (data.planesPago[a]?.["BBVA"] ?? 0), 0);
-  const financiadasTotal = AGENCIAS.reduce((s, a) => {
-    return s + PLANES.reduce((acc, p) => acc + (p.key === "CONTADO" ? 0 : (data.planesPago[a]?.[p.key] ?? 0)), 0);
+  const ventasTotalPlanes = AGENCIAS.reduce((s, a) => {
+    return s + PLANES.reduce((acc, p) => acc + (data.planesPago[a]?.[p.key] ?? 0), 0);
   }, 0);
-  const bbvaPct = financiadasTotal > 0 ? (bbvaUnidades / financiadasTotal) * 100 : null;
+  const bbvaPct = ventasTotalPlanes > 0 ? (bbvaUnidades / ventasTotalPlanes) * 100 : null;
   const vanReal = AGENCIAS.reduce((s, a) => s + (data.van[a]?.real ?? 0), 0);
   const vanObj  = AGENCIAS.reduce((s, a) => s + (data.van[a]?.objetivo ?? 0), 0);
 
@@ -1811,7 +1811,7 @@ function KpiBar({ data, monthKey }) {
     {
       label: `BBVA — Participación`,
       value: bbvaPct !== null ? `${bbvaPct.toFixed(0)}%` : "—",
-      sub: bbvaPct !== null ? `${bbvaUnidades} de ${financiadasTotal} financiadas · obj. 50%` : "sin ventas financiadas",
+      sub: bbvaPct !== null ? `${bbvaUnidades} de ${ventasTotalPlanes} ventas · obj. 50%` : "sin ventas capturadas",
       // Objetivo 50%: verde si lo alcanza, ámbar si está cerca (40-50%), rojo si por debajo de 40%.
       nivel: bbvaPct === null ? "verde" : bbvaPct >= 50 ? "verde" : bbvaPct >= 40 ? "amarillo" : "rojo",
       peso: 7,
@@ -3012,6 +3012,7 @@ function parseVentasWorkbook(workbook) {
       fecha,
       mes,
       modelo: modeloCortoVentas(modeloRaw),
+      modeloRaw,
       ventaUnidad: toFloat(row[18]),
       costo: costoNum,
       utilidad: toFloat(row[30]),
@@ -3020,6 +3021,78 @@ function parseVentasWorkbook(workbook) {
     });
   }
   return ventas;
+}
+
+// Mapea la "Condición" del Excel al plan de pago del dashboard (claves de PLANES).
+function condicionAPlan(cond) {
+  const c = (cond || "").toUpperCase().trim();
+  if (c.includes("BANCOMER") || c.includes("BBVA")) return "BBVA";
+  if (c.includes("BANORTE")) return "BANORTE";
+  if (c.includes("BANJERCI") || c.includes("BANJÉRCITO") || c.includes("BANJERCITO")) return "BANJÉRCITO";
+  if (c.includes("SANTANDE")) return "SANTANDER";
+  if (c.includes("SCOTIABA")) return "SCOTIABANK";
+  if (c.includes("CI BANCO") || c.includes("CIBANCO")) return "CI BANCO";
+  if (c.includes("KUNA")) return "KUNA";
+  if (c.includes("CONTADO")) return "CONTADO";
+  // "VENDO FA" (Vendo Factura) = CAFI, la financiera de casa.
+  if (c.includes("VENDO FA") || c.includes("CAFI")) return "CAFI";
+  return null; // condición no reconocida
+}
+
+// Mapea el nombre de unidad del Excel a la LÍNEA base del dashboard (claves de LINEAS_PRODUCTO).
+// Agrupa variantes: "Alsvin Plus" → ALSVIN, "CS35 Max" → CS35, etc.
+function modeloALineaBase(nombre) {
+  const n = (nombre || "").toUpperCase().trim();
+  const reglas = [
+    ["CS55 PLUS IDD", "CS55 IDD"], ["CS55 IDD", "CS55 IDD"],
+    ["EADO PLUS IDD", "EADO IDD"], ["EADO IDD", "EADO IDD"],
+    ["CS75 PRO", "CS75 PRO"], ["CS75", "CS75 PRO"],
+    ["EADO PLUS", "EADO PLUS"], ["EADO", "EADO PLUS"],
+    ["ALSVIN", "ALSVIN"],
+    ["CS35", "CS35"],
+    ["CS95", "CS95"],
+    ["CS55", "CS55"],
+    ["HONOR", "HONOR"],
+    ["HUNTER WORK", "HUNTER WORK"],
+    ["HUNTER CHASIS", "HUNTER CHASIS"],
+    ["HUNTER E", "HUNTER E"],
+    ["HUNTER PLUS", "HUNTER PLUS"], ["HUNTER", "HUNTER PLUS"],
+    ["NEW STAR TRUCK", "STAR TRUCK"], ["STAR TRUCK", "STAR TRUCK"],
+    ["UNI-K", "UNIK"], ["UNIK", "UNIK"],
+    ["S05", "S05 REEV"],
+    ["S07 BEV", "S07 BEV"], ["S07", "S07 REEV"],
+    ["G318", "G318"],
+  ];
+  for (const [k, linea] of reglas) {
+    if (n.includes(k)) return linea;
+  }
+  return null;
+}
+
+// Toma las ventas parseadas y las agrupa por MES → { agencia → {facturado, planesPago, lineasProducto} }.
+// Esto alimenta la automatización del panel Operativo por fecha de facturación.
+function agregarVentasPorMes(ventas) {
+  const porMes = {};
+  ventas.forEach(v => {
+    if (!v.mes || v.agencia === "—") return;
+    if (!porMes[v.mes]) porMes[v.mes] = {};
+    const mesObj = porMes[v.mes];
+    if (!mesObj[v.agencia]) {
+      mesObj[v.agencia] = {
+        facturado: 0,
+        planesPago: Object.fromEntries(PLANES.map(p => [p.key, 0])),
+        lineasProducto: Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0])),
+      };
+    }
+    const ag = mesObj[v.agencia];
+    ag.facturado += 1;
+    const plan = condicionAPlan(v.condicion);
+    if (plan && ag.planesPago[plan] !== undefined) ag.planesPago[plan] += 1;
+    // La línea se remapea desde el nombre original de unidad, no desde el modelo corto.
+    const linea = modeloALineaBase(v.modeloRaw || v.modelo);
+    if (linea && ag.lineasProducto[linea] !== undefined) ag.lineasProducto[linea] += 1;
+  });
+  return porMes;
 }
 
 // Calcula el último trimestre completo relativo a la fecha de corte del reporte
@@ -6983,6 +7056,86 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
     return safe;
   }
 
+  // ── Importación automática del reporte de ventas ─────────────────────────────
+  const [importandoVentas, setImportandoVentas] = useState(false);
+  const [importResultado, setImportResultado] = useState(null); // { meses, total } | { error }
+  const ventasFileRef = useRef(null);
+
+  const handleImportarVentas = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportandoVentas(true);
+    setImportResultado(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const ventas = parseVentasWorkbook(wb);
+      if (ventas.length === 0) {
+        setImportResultado({ error: "No se encontraron ventas. Verifica que sea el reporte 'Hoja de Costos y Utilidad'." });
+        setImportandoVentas(false);
+        if (ventasFileRef.current) ventasFileRef.current.value = "";
+        return;
+      }
+      const porMes = agregarVentasPorMes(ventas);
+      const meses = Object.keys(porMes).sort();
+
+      // Para cada mes, hacemos merge sobre lo que ya existe en Firebase:
+      // sobreescribimos SOLO ventasJunioInterno.facturado, planesPago y lineasProducto.
+      // Conservamos objetivos y todos los demás indicadores capturados a mano.
+      let mesesActualizados = 0;
+      for (const mk of meses) {
+        const rawExistente = await fbGet(`datos/${mk}`);
+        let base;
+        if (rawExistente && typeof rawExistente === "object" && Object.keys(rawExistente).length > 0) {
+          base = {};
+          Object.keys(initialData).forEach(section => {
+            base[section] = decodeFirebaseData(rawExistente[section], initialData[section]);
+          });
+        } else {
+          base = JSON.parse(JSON.stringify(initialData));
+        }
+
+        AGENCIAS.forEach(ag => {
+          const datosAg = porMes[mk][ag];
+          if (datosAg) {
+            // Facturado del objetivo interno
+            base.ventasJunioInterno[ag] = {
+              ...base.ventasJunioInterno[ag],
+              facturado: datosAg.facturado,
+            };
+            // Planes y líneas: reemplazo completo con lo del reporte
+            base.planesPago[ag] = { ...datosAg.planesPago };
+            base.lineasProducto[ag] = { ...datosAg.lineasProducto };
+          } else {
+            // Agencia sin ventas ese mes: facturado en 0, planes y líneas en cero
+            base.ventasJunioInterno[ag] = { ...base.ventasJunioInterno[ag], facturado: 0 };
+            base.planesPago[ag] = Object.fromEntries(PLANES.map(p => [p.key, 0]));
+            base.lineasProducto[ag] = Object.fromEntries(LINEAS_PRODUCTO.map(l => [l.key, 0]));
+          }
+        });
+
+        await fbSet(`datos/${mk}`, buildFirebaseSafeData(base));
+        mesesActualizados++;
+
+        // Si el mes procesado es el que se está viendo ahora, refrescar la vista.
+        if (mk === viewMonthRef.current) setData(base);
+
+        // Asegurar que el mes aparezca en el índice de meses disponibles.
+        setAvailableMonths(prev => Array.from(new Set([...prev, mk])).sort().reverse());
+      }
+
+      const totalVentas = meses.reduce((s, mk) =>
+        s + AGENCIAS.reduce((sa, ag) => sa + (porMes[mk][ag]?.facturado ?? 0), 0), 0);
+      setImportResultado({ meses: mesesActualizados, total: totalVentas, rango: `${meses[0]} → ${meses[meses.length - 1]}` });
+    } catch (err) {
+      console.error(err);
+      setImportResultado({ error: "No se pudo procesar el archivo. Verifica que sea un Excel válido del reporte de ventas." });
+    } finally {
+      setImportandoVentas(false);
+      if (ventasFileRef.current) ventasFileRef.current.value = "";
+    }
+  };
+
   // ── Guardar a Firebase con debounce 800ms ────────────────────────────────────
   const scheduleSave = (newData, targetMonth) => {
     setStatus("guardando");
@@ -7253,6 +7406,45 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
                 <VistaAnualSection anio={getYearFromKey(viewMonth)} />
               ) : (
                 <>
+                  {/* ── Importación automática del reporte de ventas ─────────── */}
+                  <Card style={{ borderLeft: "4px solid #D4AF37" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                      <div style={{ flex: 1, minWidth: 260 }}>
+                        <div style={{ color: "#D4AF37", fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+                          ⚡ Automatizar ventas, planes y línea
+                        </div>
+                        <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>
+                          Sube el reporte "Hoja de Costos y Utilidad" y se llenan automáticamente el facturado, el tipo de plan y la línea de producto de cada mes, según su fecha de facturación. Los objetivos y demás indicadores no se tocan.
+                        </div>
+                      </div>
+                      <div>
+                        <input ref={ventasFileRef} type="file" accept=".xlsx,.xls" onChange={handleImportarVentas} style={{ display: "none" }} id="file-importar-ventas" />
+                        <label htmlFor="file-importar-ventas" style={{
+                          background: importandoVentas ? "#1e3a5f" : "#D4AF37", color: importandoVentas ? "#64748b" : "#0a1628",
+                          border: "none", borderRadius: 8, padding: "11px 22px", fontSize: 13, fontWeight: 700,
+                          cursor: importandoVentas ? "default" : "pointer", display: "inline-block", whiteSpace: "nowrap"
+                        }}>
+                          {importandoVentas ? "Procesando…" : "📤 Subir reporte de ventas"}
+                        </label>
+                      </div>
+                    </div>
+                    {importandoVentas && (
+                      <div style={{ color: "#94a3b8", fontSize: 12.5, marginTop: 12 }}>
+                        Procesando y distribuyendo las ventas por mes y agencia… no cierres esta pestaña.
+                      </div>
+                    )}
+                    {importResultado?.error && (
+                      <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginTop: 12 }}>
+                        {importResultado.error}
+                      </div>
+                    )}
+                    {importResultado && !importResultado.error && (
+                      <div style={{ background: "#14532d22", border: "1px solid #4ade80", borderRadius: 8, padding: "10px 14px", color: "#4ade80", fontSize: 13, marginTop: 12 }}>
+                        ✅ Listo: {importResultado.total} ventas distribuidas en {importResultado.meses} meses ({importResultado.rango}). El mes en vista ya se actualizó.
+                      </div>
+                    )}
+                  </Card>
+
                   <VentasSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
                   <PlanesPagoSection data={data} onFieldChange={onFieldChange} />
                   <LineasProductoSection data={data} onLineaChange={onLineaChange} />
