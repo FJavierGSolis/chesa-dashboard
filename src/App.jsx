@@ -6594,9 +6594,31 @@ function VistaEjecutiva({ data, monthKey, funnelData, onIrADetalle }) {
       const hoy = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
       const prompt = `${CONTEXTO_CHESA}
 
-Hoy es ${hoy}. Escríbele a Javier García un briefing ejecutivo conversacional — como su asesor de confianza que ya analizó todo.
+Hoy es ${hoy}. Eres el asesor de confianza de Javier García, Director de Marca de CHESA. Ya analizaste todos los datos. Tu trabajo NO es reportar métricas — es decirle QUÉ DECIDIR hoy.
 
-REGLAS: habla en segunda persona, sé específico con números reales, prioriza acciones sobre diagnósticos, máximo 5 situaciones de riesgo ordenadas por urgencia, máximo 3 acciones concretas para hoy con impacto estimado, cierra con proyección del mes. Párrafos cortos, markdown solo para negritas y encabezados ##. Integra satisfacción, demos, productividad y mercado ADACH cuando sean relevantes.
+Principio rector: "se mide mucho, pero se decide poco". No describas el estado del negocio; traduce los datos en decisiones. Cada punto que menciones debe responder implícitamente: qué significa, qué hacer, y qué se pierde si no se actúa.
+
+FORMATO OBLIGATORIO (respétalo al pie de la letra, sé breve):
+
+## Lo esencial hoy
+Una sola frase (máximo 2 líneas) con el titular del día: lo más importante que Javier debe saber ahora mismo.
+
+## Decisiones que requieren tu atención
+Máximo 3 decisiones (idealmente 2). Para CADA una, exactamente 3 renglones con este formato:
+**[Título de la decisión en 4-6 palabras]**
+→ Qué pasa: [el dato duro, un número concreto, una frase]
+→ Qué decidir: [la acción concreta, con responsable si aplica]
+→ Riesgo de no actuar: [qué se pierde en $ o unidades o ventas si no se hace]
+
+## Si todo lo demás va bien
+Una línea mencionando lo que está en orden y no requiere decisión hoy (para que no pierda tiempo ahí).
+
+REGLAS ESTRICTAS:
+- Segunda persona ("tienes", "te conviene"). Números reales, nunca genéricos.
+- Prioriza por impacto en las prioridades reales del negocio (cierre de ventas, contactación de leads, inventario crítico, BBVA, satisfacción). No inventes urgencias donde no las hay.
+- Si un dato no amerita decisión, NO lo menciones. Silencio es mejor que ruido.
+- Prohibido: párrafos largos, listas de métricas, explicaciones de qué es cada indicador. Solo decisiones.
+- Markdown: solo negritas y encabezados ##. Nada más.
 
 DATOS OPERATIVOS:
 ${resumenMes}
@@ -6644,8 +6666,8 @@ ${resumenMercado}`;
         </h1>
         <p style={{ color: "#64748b", fontSize: 14, marginTop: 8 }}>
           {briefing
-            ? `Briefing generado hoy a las ${briefing.generadoEn} · ${getMonthLabel(monthKey)}`
-            : `Tu resumen ejecutivo de ${getMonthLabel(monthKey)} está listo para generarse.`}
+            ? `Generado hoy a las ${briefing.generadoEn} · ${getMonthLabel(monthKey)}`
+            : `Convierte los datos de ${getMonthLabel(monthKey)} en las decisiones de hoy.`}
         </p>
       </div>
 
@@ -6660,10 +6682,10 @@ ${resumenMercado}`;
         }}>
           <div>
             <div style={{ color: "#D4AF37", fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
-              ⚡ Briefing Ejecutivo con IA
+              ⚡ Tus decisiones del día
             </div>
             <div style={{ color: "#94a3b8", fontSize: 13, lineHeight: 1.6, maxWidth: 480 }}>
-            Analiza el mes actual, histórico completo, funnel, inventario, satisfacción cliente, demos, productividad de asesores y contexto de mercado ADACH para decirte qué requiere atención y qué acciones tomar hoy.
+              No es un reporte más. Cruza todos tus indicadores y te devuelve solo lo que exige una decisión hoy: qué pasa, qué hacer, y qué pierdes si no actúas.
             </div>
           </div>
           <button onClick={generarBriefing} style={{
@@ -6673,7 +6695,7 @@ ${resumenMercado}`;
             cursor: "pointer", whiteSpace: "nowrap",
             boxShadow: "0 4px 20px rgba(212,175,55,0.3)",
           }}>
-            Generar briefing del día
+            Ver mis decisiones de hoy
           </button>
         </div>
       )}
@@ -6686,11 +6708,10 @@ ${resumenMercado}`;
         }}>
           <div style={{ fontSize: 28, marginBottom: 12 }}>🧠</div>
           <div style={{ color: "#f1f5f9", fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
-            Analizando tu negocio…
+            Cruzando tus datos para encontrar las decisiones…
           </div>
           <div style={{ color: "#64748b", fontSize: 13 }}>
-            Consolidando operativo, funnel, inventario, satisfacción, demos, productividad y mercado ADACH.
-            Esto toma ~20-30 segundos.
+            Operativo, funnel, inventario, satisfacción, demos, productividad y mercado. Esto toma ~20-30 segundos.
           </div>
         </div>
       )}
