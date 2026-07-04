@@ -1768,8 +1768,13 @@ function KpiBar({ data, monthKey }) {
   const csiObj = csiAgencias.length > 0 ? ((data.csi[csiAgencias[0]]?.objetivo ?? 0.87) * 100) : 87;
 
   const vauOk  = AGENCIAS.filter(a => data.vau[a]).length;
-  const wsReal = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.real ?? 0), 0);
-  const wsObj  = AGENCIAS.reduce((s, a) => s + (data.ws[a]?.objetivo ?? 0), 0);
+  // Participación de BBVA sobre el total de ventas FINANCIADAS (excluye CONTADO).
+  // Objetivo estratégico: BBVA ≥ 50% del mix de financiamiento.
+  const bbvaUnidades = AGENCIAS.reduce((s, a) => s + (data.planesPago[a]?.["BBVA"] ?? 0), 0);
+  const financiadasTotal = AGENCIAS.reduce((s, a) => {
+    return s + PLANES.reduce((acc, p) => acc + (p.key === "CONTADO" ? 0 : (data.planesPago[a]?.[p.key] ?? 0)), 0);
+  }, 0);
+  const bbvaPct = financiadasTotal > 0 ? (bbvaUnidades / financiadasTotal) * 100 : null;
   const vanReal = AGENCIAS.reduce((s, a) => s + (data.van[a]?.real ?? 0), 0);
   const vanObj  = AGENCIAS.reduce((s, a) => s + (data.van[a]?.objetivo ?? 0), 0);
 
@@ -1804,10 +1809,11 @@ function KpiBar({ data, monthKey }) {
       peso: 8,
     },
     {
-      label: `WS Total ${mesAbrevCap}`,
-      value: wsReal,
-      sub: `de ${wsObj} objetivo`,
-      nivel: calcNivel(pct(wsReal, wsObj)),
+      label: `BBVA — Participación`,
+      value: bbvaPct !== null ? `${bbvaPct.toFixed(0)}%` : "—",
+      sub: bbvaPct !== null ? `${bbvaUnidades} de ${financiadasTotal} financiadas · obj. 50%` : "sin ventas financiadas",
+      // Objetivo 50%: verde si lo alcanza, ámbar si está cerca (40-50%), rojo si por debajo de 40%.
+      nivel: bbvaPct === null ? "verde" : bbvaPct >= 50 ? "verde" : bbvaPct >= 40 ? "amarillo" : "rojo",
       peso: 7,
     },
     {
