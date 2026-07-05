@@ -4257,48 +4257,59 @@ const ADACH_PATH = "adachReportes"; // adachReportes/{mesKey} = { datos, analisi
 
 // Prompt para que la IA extraiga datos estructurados del PDF de ADACH
 function buildPromptExtraccionADACH(mesLabel) {
-  return `Eres un extractor de datos estructurados. Se te proporciona el reporte mensual de ADACH (Asociación de Distribuidores de Automóviles de Chiapas) correspondiente a ${mesLabel}.
+  return `Eres un extractor de datos estructurados experto. Se te proporciona el reporte mensual de ADACH (Asociación de Distribuidores de Automóviles de Chiapas), una presentación en PDF, correspondiente a ${mesLabel}.
 
-Extrae EXACTAMENTE los siguientes datos del PDF y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, sin explicaciones:
+Este reporte tiene una estructura conocida. Guíate por estas láminas para encontrar cada dato:
+- Lámina "Comparativo uds ... Vs ...": contiene el TOTAL del mes (fila del año actual), el % de crecimiento vs mismo mes año anterior, el % de tendencia al cierre del año y la proyección de unidades. En el recuadro azul de la izquierda viene el crecimiento del mes en texto.
+- Lámina "Detalle: unidades venta" (tabla marca × ciudad): es la fuente MÁS confiable de unidades por marca y por ciudad. Las columnas de ciudad son: Arriaga, Comitán, Ocosingo, Palenque, San Cristóbal, Tapachula, Tuxtla Ote, Tuxtla Pte. La columna "Total general" por marca da las unidades del mes de esa marca. La fila "Total general" al fondo da el total del mercado.
+- Tabla "Venta del mes por ciudad, categoría y % de contribución": da unidades y % por ciudad (Tuxtla suele agrupar Ote+Pte).
+- Lámina "Marcas emergentes": da el total de unidades de marcas emergentes/chinas del mes y su % de contribución al mercado.
+
+Extrae los siguientes datos y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown:
 
 {
-  "mes": "<el mes y año que REALMENTE cubre este reporte, en formato YYYY-MM. Léelo directamente del PDF (portada, título o encabezado). NO lo asumas ni lo inventes>",
-  "mercadoTotal": <número de unidades vendidas en el mes>,
-  "mercadoTotalAnterior": <número de unidades mismo mes año anterior>,
-  "variacionVsMesAnterior": <porcentaje de variación vs mes anterior (número, puede ser negativo)>,
-  "variacionVsAnioAnterior": <porcentaje vs mismo mes año anterior (número)>,
-  "proyeccionCierreAnio": <número proyectado de unidades al cierre del año>,
-  "tendenciaAnio": <porcentaje de tendencia al cierre (número, puede ser negativo)>,
-  "changanUnidades": <unidades vendidas por Changan en el mes>,
-  "changanShare": <porcentaje de market share de Changan (número)>,
-  "marcasEmergentesTotal": <total unidades segmento marcas emergentes/chinas>,
-  "marcasEmergentesShare": <porcentaje del mercado total (número)>,
+  "mes": "<mes y año que cubre el reporte, formato YYYY-MM. Léelo de la portada. NO lo inventes>",
+  "mercadoTotal": <unidades totales vendidas en el mes en Chiapas (fila Total general de la tabla de detalle, o el total del comparativo)>,
+  "mercadoTotalAnterior": <unidades del mismo mes del año anterior, de la lámina Comparativo>,
+  "variacionVsMesAnterior": <% de variación vs mes inmediato anterior (número, puede ser negativo)>,
+  "variacionVsAnioAnterior": <% vs mismo mes año anterior (número, puede ser negativo)>,
+  "proyeccionCierreAnio": <unidades proyectadas al cierre del año>,
+  "tendenciaAnio": <% de tendencia al cierre del año (número, puede ser negativo)>,
+  "changanUnidades": <unidades de CHANGAN en el mes (búscalo en la tabla de detalle, columna Total general de la fila CHANGAN)>,
+  "changanShare": <% de participación de Changan sobre el mercado total del mes (calcúlalo: changanUnidades / mercadoTotal * 100, redondeado a 1 decimal)>,
+  "marcasEmergentesTotal": <unidades del segmento marcas emergentes/chinas en el mes>,
+  "marcasEmergentesShare": <% de contribución de marcas emergentes al mercado total>,
   "topMarcas": [
-    {"marca": "NISSAN", "unidades": <número>, "share": <número>},
-    {"marca": "VOLKSWAGEN", "unidades": <número>, "share": <número>},
-    {"marca": "GM", "unidades": <número>, "share": <número>},
-    {"marca": "TOYOTA", "unidades": <número>, "share": <número>},
-    {"marca": "STELLANTIS", "unidades": <número>, "share": <número>}
+    {"marca": "<NOMBRE>", "unidades": <número>, "share": <% sobre mercado total del mes, 1 decimal>}
   ],
   "competidoresChinos": [
+    {"marca": "CHANGAN", "unidades": <número>},
     {"marca": "MG", "unidades": <número>},
     {"marca": "JAC", "unidades": <número>},
     {"marca": "CHIREY", "unidades": <número>},
     {"marca": "JETOUR", "unidades": <número>},
-    {"marca": "CHANGAN", "unidades": <número>},
-    {"marca": "GWM", "unidades": <número>}
+    {"marca": "GWM", "unidades": <número>},
+    {"marca": "BYD", "unidades": <número>},
+    {"marca": "GAC", "unidades": <número>}
   ],
   "ventasPorCiudad": [
-    {"ciudad": "Tuxtla", "unidades": <número>, "pct": <número>},
+    {"ciudad": "Tuxtla", "unidades": <Tuxtla Ote + Tuxtla Pte>, "pct": <número>},
     {"ciudad": "Tapachula", "unidades": <número>, "pct": <número>},
     {"ciudad": "San Cristóbal", "unidades": <número>, "pct": <número>},
     {"ciudad": "Comitán", "unidades": <número>, "pct": <número>},
-    {"ciudad": "Ocosingo", "unidades": <número>, "pct": <número>}
+    {"ciudad": "Palenque", "unidades": <número>, "pct": <número>},
+    {"ciudad": "Ocosingo", "unidades": <número>, "pct": <número>},
+    {"ciudad": "Arriaga", "unidades": <número>, "pct": <número>}
   ]
 }
 
-Si algún dato no aparece en el PDF, usa null. No uses comas en los números. No incluyas texto fuera del JSON.
-El campo "mes" es CRÍTICO: identifica en el PDF a qué mes y año corresponde el reporte y devuélvelo como YYYY-MM. Ejemplo: si el reporte es de julio 2026, devuelve "2026-07". Si no logras determinar el mes con certeza, devuelve null en ese campo.`;
+INSTRUCCIONES:
+- En "topMarcas" incluye las 12-15 marcas principales por unidades del mes (Nissan, Volkswagen, GM, Toyota, KIA, Mazda, Stellantis, Renault, Honda, Hyundai, Ford, Mitsubishi, Changan, etc.), ordenadas de mayor a menor. Usa las unidades de la columna "Total general" de la tabla de detalle.
+- SIEMPRE incluye a Changan tanto en "topMarcas" como en "competidoresChinos".
+- Prioriza SIEMPRE los números de las TABLAS sobre los de las gráficas o treemaps (las gráficas son aproximadas; las tablas son exactas).
+- Si un dato no aparece con claridad, usa null en vez de adivinar. Mejor un null honesto que un número inventado.
+- No uses comas de miles en los números (escribe 2568, no 2,568). No incluyas texto fuera del JSON.
+- El campo "mes" es CRÍTICO: si no lo determinas con certeza, devuelve null.`;
 }
 
 function buildPromptAnalisisADACH(datos, mesLabel) {
@@ -5250,6 +5261,77 @@ function MercadoADACHSection({ monthKey }) {
               </div>
             </Card>
           )}
+
+          {/* ── Evolución de Changan en Chiapas (gráfica) ─────────────────────── */}
+          {mesesDisponibles.length > 1 && (() => {
+            // Ordenar cronológicamente (ascendente) los meses válidos con dato de Changan.
+            const mesesCrono = [...mesesDisponibles].sort();
+            const puntos = mesesCrono
+              .map(m => ({ m, d: reportesMes[m]?.datos }))
+              .filter(x => x.d && x.d.changanUnidades != null);
+            if (puntos.length < 2) return null;
+
+            const etiqueta = (m) => {
+              const num = getMonthNumFromKey(m);
+              return `${MES_NOMBRES[num - 1].slice(0, 3)} ${getYearFromKey(m).slice(2)}`;
+            };
+            const serieUnidades = [{
+              label: "Unidades Changan", color: "#D4AF37",
+              points: puntos.map(x => ({ x: etiqueta(x.m), y: x.d.changanUnidades })),
+            }];
+            const serieShare = [{
+              label: "Share Changan", color: "#3b9eea",
+              points: puntos.map(x => ({ x: etiqueta(x.m), y: x.d.changanShare ?? 0 })),
+            }];
+
+            // Métricas de resumen: primer vs último mes
+            const primero = puntos[0], ultimo = puntos[puntos.length - 1];
+            const crecUnidades = primero.d.changanUnidades > 0
+              ? ((ultimo.d.changanUnidades - primero.d.changanUnidades) / primero.d.changanUnidades * 100)
+              : null;
+            const maxUnidades = Math.max(...puntos.map(x => x.d.changanUnidades));
+            const mesMax = puntos.find(x => x.d.changanUnidades === maxUnidades);
+
+            return (
+              <Card>
+                <SectionHeader title="EVOLUCIÓN DE CHANGAN EN CHIAPAS" icon="📈" />
+                <div style={{ color: "#475569", fontSize: 11.5, marginBottom: 16 }}>
+                  Trayectoria de CHESA (único distribuidor Changan en el estado) según los reportes ADACH cargados · {etiqueta(primero.m)} → {etiqueta(ultimo.m)}
+                </div>
+
+                {/* KPIs de resumen */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
+                  <div style={{ background: "#0d1b2e", border: "1px solid #D4AF3755", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .6 }}>ÚLTIMO MES</div>
+                    <div style={{ color: "#D4AF37", fontSize: 22, fontWeight: 900, marginTop: 4 }}>{fmt(ultimo.d.changanUnidades)} uds</div>
+                    <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 3 }}>{fmtPct(ultimo.d.changanShare, false)} share · {etiqueta(ultimo.m)}</div>
+                  </div>
+                  {crecUnidades != null && (
+                    <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderTop: `3px solid ${crecUnidades >= 0 ? "#4ade80" : "#f87171"}`, borderRadius: 8, padding: "12px 14px" }}>
+                      <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .6 }}>CRECIMIENTO EN EL PERIODO</div>
+                      <div style={{ color: crecUnidades >= 0 ? "#4ade80" : "#f87171", fontSize: 22, fontWeight: 900, marginTop: 4 }}>
+                        {crecUnidades > 0 ? "+" : ""}{crecUnidades.toFixed(0)}%
+                      </div>
+                      <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 3 }}>desde {etiqueta(primero.m)}</div>
+                    </div>
+                  )}
+                  <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderTop: "3px solid #3b9eea", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .6 }}>MEJOR MES</div>
+                    <div style={{ color: "#3b9eea", fontSize: 22, fontWeight: 900, marginTop: 4 }}>{fmt(maxUnidades)} uds</div>
+                    <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 3 }}>{mesMax ? etiqueta(mesMax.m) : "—"}</div>
+                  </div>
+                </div>
+
+                {/* Gráfica de unidades */}
+                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 6, letterSpacing: .6 }}>UNIDADES CHANGAN POR MES</p>
+                <LineChart series={serieUnidades} />
+
+                {/* Gráfica de share */}
+                <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, margin: "18px 0 6px", letterSpacing: .6 }}>PARTICIPACIÓN DE MERCADO CHANGAN (%)</p>
+                <LineChart series={serieShare} suffix="%" />
+              </Card>
+            );
+          })()}
         </>
       )}
     </div>
