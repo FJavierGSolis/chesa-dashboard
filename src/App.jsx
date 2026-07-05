@@ -4388,6 +4388,7 @@ Responde con markdown. Sé directo y ejecutivo. Estructura:
 // Fuente: RAIAVL INEGI + AMIA/AMDA reporte mensual
 const DATOS_NACIONALES = {
   "2026-06": {
+    mesDetectado: "2026-06",
     mercadoTotal: 126778,
     mercadoTotalMesAnterior: 127107,
     variacionVs2025: 7.6,
@@ -4436,9 +4437,9 @@ function MercadoADACHSection({ monthKey }) {
       const raw = await fbGet(ADACH_PATH);
       if (raw && typeof raw === "object") {
         setReportesMes(raw);
-        // Seleccionar el mes más reciente disponible
-        const meses = Object.keys(raw).sort().reverse();
-        if (meses.length > 0) setMesVista(meses[0]);
+        // Seleccionar el mes válido más reciente (cuyo dato realmente corresponde al mes).
+        const mesesValidos = Object.keys(raw).filter(m => raw[m]?.datos?.mes === m).sort().reverse();
+        if (mesesValidos.length > 0) setMesVista(mesesValidos[0]);
       }
       setLoadingDatos(false);
     })();
@@ -4630,9 +4631,19 @@ function MercadoADACHSection({ monthKey }) {
     }
   };
 
-  const mesesDisponibles = Object.keys(reportesMes).sort().reverse();
-  const reporte = mesVista ? reportesMes[mesVista] : null;
+  // ── BARRIDO DE VALIDACIÓN (ADACH) ──────────────────────────────────────────
+  // Un reporte guardado es válido para un mes M solo si el mes que la IA detectó
+  // dentro del reporte (datos.mes) coincide con M. Así, datos viejos que quedaron
+  // bajo un mes equivocado se tratan como "sin datos" en lugar de mostrarse mal.
+  const reporteCuadra = (m) => {
+    const d = reportesMes[m]?.datos;
+    return !!d && d.mes === m;
+  };
+  const mesesDisponibles = Object.keys(reportesMes).filter(reporteCuadra).sort().reverse();
+  const reporte = mesVista && reporteCuadra(mesVista) ? reportesMes[mesVista] : null;
   const datos = reporte?.datos;
+  // ¿El mes en vista tiene un reporte guardado pero que NO cuadra? (para avisar)
+  const mesVistaDescuadrado = mesVista && reportesMes[mesVista] && !reporteCuadra(mesVista);
 
   const fmt = (n) => n != null ? Number(n).toLocaleString("es-MX") : "—";
   const fmtPct = (n, signo = true) => n != null ? `${signo && n > 0 ? "+" : ""}${Number(n).toFixed(1)}%` : "—";
@@ -4658,18 +4669,28 @@ function MercadoADACHSection({ monthKey }) {
   if (loadingDatos) return <Card><div style={{ color: "#64748b", textAlign: "center", padding: "40px 0" }}>Cargando datos…</div></Card>;
 
   // ── Vista Nacional ────────────────────────────────────────────────────────
-  const mesesNacional = Object.keys(datosNacionales).sort().reverse();
-  const mesNacVista = mesNacionalSel && datosNacionales[mesNacionalSel]
+  // BARRIDO DE VALIDACIÓN: un dato nacional es válido para el mes M solo si el mes
+  // que la IA detectó (mesDetectado) coincide con M. Datos viejos bajo mes equivocado
+  // se tratan como "sin datos".
+  const nacionalCuadra = (m) => {
+    const d = datosNacionales[m];
+    return !!d && d.mesDetectado === m;
+  };
+  const mesesNacional = Object.keys(datosNacionales).filter(nacionalCuadra).sort().reverse();
+  const mesNacVista = mesNacionalSel && nacionalCuadra(mesNacionalSel)
     ? mesNacionalSel
-    : (mesesNacional[0] || "2026-06");
-  const dnac = datosNacionales[mesNacVista];
+    : (mesesNacional[0] || null);
+  const dnac = mesNacVista ? datosNacionales[mesNacVista] : null;
+  // ¿El mes elegido tiene dato guardado pero que NO cuadra?
+  const nacVistaDescuadrado = mesNacionalSel && datosNacionales[mesNacionalSel] && !nacionalCuadra(mesNacionalSel);
 
-  // Etiquetas dinámicas según el mes en vista (ya no hardcodeado a junio)
-  const nacMesNum = getMonthNumFromKey(mesNacVista);
+  // Etiquetas dinámicas según el mes en vista (usa el mes seleccionado, o el actual del dashboard si no hay ninguno válido)
+  const mesNacEtiqueta = mesNacVista || monthKey;
+  const nacMesNum = getMonthNumFromKey(mesNacEtiqueta);
   const nacMesNombre = MES_NOMBRES[nacMesNum - 1] || "";
   const nacMesAbrev = nacMesNombre.slice(0, 3);
   const nacMesCap = nacMesNombre.charAt(0).toUpperCase() + nacMesNombre.slice(1);
-  const nacAnio = getYearFromKey(mesNacVista);
+  const nacAnio = getYearFromKey(mesNacEtiqueta);
   const nacAnioPrev = String(parseInt(nacAnio, 10) - 1);
   // Lee el valor del mes de una marca/objeto, tolerando la clave nombrada o la genérica "mes",
   // y "junio" para los datos hardcodeados originales.
@@ -4726,6 +4747,17 @@ function MercadoADACHSection({ monthKey }) {
 
       <Card>
         <SectionHeader title={`MERCADO NACIONAL — ${nacMesCap.toUpperCase()} ${nacAnio}`} icon="🇲🇽" />
+        {!dnac ? (
+          <div style={{ textAlign: "center", padding: "32px 16px", color: "#64748b" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>Sin datos para este mes</div>
+            <div style={{ fontSize: 12.5, lineHeight: 1.6, maxWidth: 460, margin: "0 auto" }}>
+              {nacVistaDescuadrado
+                ? "El reporte que estaba guardado para este mes no correspondía al periodo, así que se descartó. Sube el PDF nacional (AMIA/INEGI) correcto de este mes con el botón de arriba."
+                : "Aún no se ha cargado el reporte nacional de este mes. Selecciona el mes arriba en el dashboard y sube el PDF de AMIA/INEGI."}
+            </div>
+          </div>
+        ) : (
+        <>
         <div style={{ color: "#475569", fontSize: 11, marginBottom: 14 }}>
           Fuente: {dnac?.fuente || "INEGI RAIAVL + AMIA/AMDA"}
         </div>
@@ -4791,6 +4823,8 @@ function MercadoADACHSection({ monthKey }) {
             CHESA representa el <b style={{ color: "#D4AF37" }}>100% de las ventas Changan en Chiapas</b>.
           </div>
         </div>
+        </>
+        )}
       </Card>
 
       {/* ── Análisis narrativo nacional ──────────────────────────────────── */}
@@ -4879,8 +4913,16 @@ function MercadoADACHSection({ monthKey }) {
 
       {!datos && !cargando && (
         <Card>
-          <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: "40px 0" }}>
-            Sube el reporte mensual de ADACH para visualizar los indicadores del mercado automotriz de Chiapas.
+          <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: "40px 0", lineHeight: 1.6 }}>
+            {mesVistaDescuadrado ? (
+              <>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>Sin datos para este mes</div>
+                El reporte que estaba guardado no correspondía a este periodo, así que se descartó.<br />
+                Selecciona el mes correcto arriba en el dashboard y sube el PDF de ADACH de ese mes.
+              </>
+            ) : (
+              "Sube el reporte mensual de ADACH para visualizar los indicadores del mercado automotriz de Chiapas."
+            )}
           </div>
         </Card>
       )}
