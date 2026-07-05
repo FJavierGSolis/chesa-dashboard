@@ -4262,7 +4262,7 @@ function buildPromptExtraccionADACH(mesLabel) {
 Extrae EXACTAMENTE los siguientes datos del PDF y responde ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, sin explicaciones:
 
 {
-  "mes": "YYYY-MM",
+  "mes": "<el mes y año que REALMENTE cubre este reporte, en formato YYYY-MM. Léelo directamente del PDF (portada, título o encabezado). NO lo asumas ni lo inventes>",
   "mercadoTotal": <número de unidades vendidas en el mes>,
   "mercadoTotalAnterior": <número de unidades mismo mes año anterior>,
   "variacionVsMesAnterior": <porcentaje de variación vs mes anterior (número, puede ser negativo)>,
@@ -4297,7 +4297,8 @@ Extrae EXACTAMENTE los siguientes datos del PDF y responde ÚNICAMENTE con un ob
   ]
 }
 
-Si algún dato no aparece en el PDF, usa null. No uses comas en los números. No incluyas texto fuera del JSON.`;
+Si algún dato no aparece en el PDF, usa null. No uses comas en los números. No incluyas texto fuera del JSON.
+El campo "mes" es CRÍTICO: identifica en el PDF a qué mes y año corresponde el reporte y devuélvelo como YYYY-MM. Ejemplo: si el reporte es de julio 2026, devuelve "2026-07". Si no logras determinar el mes con certeza, devuelve null en ese campo.`;
 }
 
 function buildPromptAnalisisADACH(datos, mesLabel) {
@@ -4428,7 +4429,6 @@ function MercadoADACHSection({ monthKey }) {
   const [cargandoNacional, setCargandoNacional] = useState(false);
   const [errorCargaNacional, setErrorCargaNacional] = useState("");
   const [mesNacionalSel, setMesNacionalSel] = useState(null); // mes elegido para ver en la vista nacional
-  const [mesCargaNacional, setMesCargaNacional] = useState(null); // mes al que se asignará el PDF que se suba (opcional; si null, se detecta del PDF)
 
   useEffect(() => {
     (async () => {
@@ -4482,20 +4482,43 @@ function MercadoADACHSection({ monthKey }) {
       texto = texto.replace(/```json|```/g, "").trim();
       const datos = JSON.parse(texto);
 
+      // Determinar el mes REAL del reporte a partir de lo que la IA leyó del PDF.
+      const mesDetectado = (datos.mes || "").trim();
+      const mesDetectadoValido = /^\d{4}-\d{2}$/.test(mesDetectado);
+
+      // VALIDACIÓN: si el mes del PDF no cuadra con el mes seleccionado en el dashboard,
+      // NO guardamos datos incorrectos. Preferimos que quede sin datos y avisar.
+      if (!mesDetectadoValido) {
+        setErrorCarga("No se pudo determinar con certeza el mes del reporte ADACH. No se guardó nada para evitar datos incorrectos. Verifica que el PDF sea el correcto.");
+        setCargando(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+      if (mesDetectado !== mesKey) {
+        setErrorCarga(`El PDF corresponde a ${getMonthLabel(mesDetectado)}, pero tienes seleccionado ${getMonthLabel(mesKey)}. No se guardó nada. Selecciona ${getMonthLabel(mesDetectado)} en el dashboard y vuelve a subirlo, o sube el PDF correcto de ${getMonthLabel(mesKey)}.`);
+        setCargando(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+
+      // A partir de aquí, el mes del PDF coincide con el esperado.
+      const mesKeyFinal = mesDetectado;
+      const mesLabelFinal = getMonthLabel(mesKeyFinal);
+
       // Paso 2: Generar análisis narrativo
       const analisisResponse = await fetch("/api/analisis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: buildPromptAnalisisADACH(datos, mesLabel) }),
+        body: JSON.stringify({ prompt: buildPromptAnalisisADACH(datos, mesLabelFinal) }),
       });
       const analisisData = await analisisResponse.json();
       const analisis = analisisData.text || "";
 
-      // Guardar en Firebase
+      // Guardar en Firebase bajo el mes real del reporte
       const payload = { datos, analisis, fechaCarga: new Date().toISOString() };
-      await fbSet(`${ADACH_PATH}/${mesKey}`, payload);
-      setReportesMes(prev => ({ ...prev, [mesKey]: payload }));
-      setMesVista(mesKey);
+      await fbSet(`${ADACH_PATH}/${mesKeyFinal}`, payload);
+      setReportesMes(prev => ({ ...prev, [mesKeyFinal]: payload }));
+      setMesVista(mesKeyFinal);
     } catch (err) {
       console.error(err);
       setErrorCarga(`Error procesando el PDF: ${err.message}. Verifica que sea un reporte ADACH válido.`);
@@ -4542,23 +4565,32 @@ function MercadoADACHSection({ monthKey }) {
       texto = texto.replace(/```json|```/g, "").trim();
       const datosNac = JSON.parse(texto);
 
-      // Determinar el mes REAL del reporte. Prioridad:
-      // 1) el mes que el usuario forzó manualmente en el selector de carga
-      // 2) el mes que la IA detectó del PDF
-      // 3) el mes seleccionado en el dashboard (respaldo)
-      let mesKeyFinal = mesCargaNacional || mesKey;
-      if (!mesCargaNacional) {
-        const det = (datosNac.mesDetectado || "").trim();
-        if (/^\d{4}-\d{2}$/.test(det)) {
-          mesKeyFinal = det;
-        }
+      // Determinar el mes REAL del reporte a partir de lo que la IA leyó del PDF.
+      const mesDetectado = (datosNac.mesDetectado || "").trim();
+      const mesDetectadoValido = /^\d{4}-\d{2}$/.test(mesDetectado);
+
+      // VALIDACIÓN ESTRICTA: si el mes del PDF no cuadra con el mes seleccionado en el
+      // dashboard, NO guardamos datos incorrectos. Preferimos que quede sin datos y avisar.
+      if (!mesDetectadoValido) {
+        setErrorCargaNacional("No se pudo determinar con certeza el mes del reporte nacional. No se guardó nada para evitar datos incorrectos. Verifica que el PDF sea el correcto.");
+        setCargandoNacional(false);
+        if (fileInputNacionalRef.current) fileInputNacionalRef.current.value = "";
+        return;
       }
+      if (mesDetectado !== mesKey) {
+        setErrorCargaNacional(`El PDF corresponde a ${getMonthLabel(mesDetectado)}, pero tienes seleccionado ${getMonthLabel(mesKey)}. No se guardó nada. Selecciona ${getMonthLabel(mesDetectado)} en el dashboard y vuelve a subirlo, o sube el PDF correcto de ${getMonthLabel(mesKey)}.`);
+        setCargandoNacional(false);
+        if (fileInputNacionalRef.current) fileInputNacionalRef.current.value = "";
+        return;
+      }
+
+      // A partir de aquí, el mes del PDF coincide con el esperado.
+      const mesKeyFinal = mesDetectado;
       const mesNumFinal = getMonthNumFromKey(mesKeyFinal);
       const mesNombreFinal = MES_NOMBRES[mesNumFinal - 1];
       const mesLabelFinal = getMonthLabel(mesKeyFinal);
 
-      // Normalizar la clave del mes a "mes" genérico, para que la UI funcione
-      // con cualquier mes. Usamos el nombre del mes REAL detectado.
+      // Normalizar la clave del mes a "mes" genérico, para que la UI funcione con cualquier mes.
       if (datosNac.changan) {
         datosNac.changan.mes = datosNac.changan[mesNombreFinal] ?? datosNac.changan[mesNombre] ?? datosNac.changan.mes ?? null;
       }
@@ -4659,31 +4691,7 @@ function MercadoADACHSection({ monthKey }) {
               {cargandoNacional ? "📊 Procesando PDF con IA…" : "📤 Subir reporte nacional (.pdf)"}
             </label>
             <div style={{ color: "#475569", fontSize: 11, marginTop: 6 }}>
-              {mesCargaNacional
-                ? <>El PDF se guardará como <b style={{ color: "#3b9eea" }}>{getMonthLabel(mesCargaNacional)}</b> (mes forzado manualmente).</>
-                : "La IA detecta automáticamente el mes del PDF. Puedes forzarlo abajo si prefieres."}
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <span style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginRight: 8 }}>ASIGNAR A MES:</span>
-              <select
-                value={mesCargaNacional || "AUTO"}
-                onChange={e => setMesCargaNacional(e.target.value === "AUTO" ? null : e.target.value)}
-                style={{ background: "#0d1b2e", border: "1px solid #2a3f5f", color: mesCargaNacional ? "#3b9eea" : "#94a3b8", borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-              >
-                <option value="AUTO">🔍 Detectar del PDF (automático)</option>
-                {(() => {
-                  // Ofrecer los últimos 18 meses hasta el mes seleccionado en el dashboard
-                  const opciones = [];
-                  let [y, m] = monthKey.split("-").map(Number);
-                  for (let i = 0; i < 18; i++) {
-                    opciones.push(`${y}-${String(m).padStart(2, "0")}`);
-                    m--; if (m < 1) { m = 12; y--; }
-                  }
-                  return opciones.map(mk => (
-                    <option key={mk} value={mk}>{getMonthLabel(mk)}</option>
-                  ));
-                })()}
-              </select>
+              El PDF debe corresponder a <b style={{ color: "#3b9eea" }}>{getMonthLabel(monthKey)}</b> (mes seleccionado arriba). Si no cuadra, no se guardará nada.
             </div>
           </div>
 
@@ -4835,7 +4843,7 @@ function MercadoADACHSection({ monthKey }) {
               {cargando ? "📊 Procesando PDF con IA…" : "📤 Subir reporte ADACH (.pdf)"}
             </label>
             <div style={{ color: "#475569", fontSize: 11, marginTop: 6 }}>
-              La IA extraerá automáticamente los datos del mes seleccionado arriba ({getMonthLabel(monthKey)})
+              El PDF debe corresponder a <b style={{ color: "#D4AF37" }}>{getMonthLabel(monthKey)}</b> (mes seleccionado arriba). Si no cuadra, no se guardará nada.
             </div>
           </div>
 
