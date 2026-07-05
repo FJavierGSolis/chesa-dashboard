@@ -4342,12 +4342,14 @@ Extrae EXACTAMENTE los siguientes datos del PDF y responde ÚNICAMENTE con un ob
   "topMarcas": [
     {"marca": "Nissan", "${mesNombre}": <número>, "acumulado": <número>, "share": <porcentaje del acumulado, número>}
   ],
+  "mesDetectado": "<el mes y año que realmente cubre este reporte, en formato YYYY-MM. Léelo del propio PDF, no lo asumas>",
   "fuente": "INEGI RAIAVL + AMIA/AMDA · ${mesLabel}"
 }
 
 INSTRUCCIONES IMPORTANTES:
 - En "topMarcas" incluye TODAS las marcas principales que aparezcan en el reporte (Nissan, General Motors, Volkswagen, Toyota, KIA, Mazda, Stellantis, MG Motor, Hyundai, Ford, Changan, JAC, Geely, Renault y cualquier otra relevante).
 - IMPORTANTE: cada objeto de marca DEBE usar la clave literal "${mesNombre}" para las ventas del mes (no "mes" ni "ventas").
+- "mesDetectado" es CRÍTICO: identifica en el PDF a qué mes y año corresponden las cifras del mes (no el acumulado) y devuélvelo como YYYY-MM. Ejemplo: si el reporte es de julio 2026, devuelve "2026-07".
 - Incluye siempre a Changan tanto en el objeto "changan" como dentro de "topMarcas".
 - Si algún dato no aparece, usa null. No uses comas en los números. No incluyas texto fuera del JSON.`;
 }
@@ -4426,6 +4428,7 @@ function MercadoADACHSection({ monthKey }) {
   const [cargandoNacional, setCargandoNacional] = useState(false);
   const [errorCargaNacional, setErrorCargaNacional] = useState("");
   const [mesNacionalSel, setMesNacionalSel] = useState(null); // mes elegido para ver en la vista nacional
+  const [mesCargaNacional, setMesCargaNacional] = useState(null); // mes al que se asignará el PDF que se suba (opcional; si null, se detecta del PDF)
 
   useEffect(() => {
     (async () => {
@@ -4539,24 +4542,39 @@ function MercadoADACHSection({ monthKey }) {
       texto = texto.replace(/```json|```/g, "").trim();
       const datosNac = JSON.parse(texto);
 
+      // Determinar el mes REAL del reporte. Prioridad:
+      // 1) el mes que el usuario forzó manualmente en el selector de carga
+      // 2) el mes que la IA detectó del PDF
+      // 3) el mes seleccionado en el dashboard (respaldo)
+      let mesKeyFinal = mesCargaNacional || mesKey;
+      if (!mesCargaNacional) {
+        const det = (datosNac.mesDetectado || "").trim();
+        if (/^\d{4}-\d{2}$/.test(det)) {
+          mesKeyFinal = det;
+        }
+      }
+      const mesNumFinal = getMonthNumFromKey(mesKeyFinal);
+      const mesNombreFinal = MES_NOMBRES[mesNumFinal - 1];
+      const mesLabelFinal = getMonthLabel(mesKeyFinal);
+
       // Normalizar la clave del mes a "mes" genérico, para que la UI funcione
-      // con cualquier mes (no solo junio). Conservamos también la clave original.
+      // con cualquier mes. Usamos el nombre del mes REAL detectado.
       if (datosNac.changan) {
-        datosNac.changan.mes = datosNac.changan[mesNombre] ?? datosNac.changan.mes ?? datosNac.changan.junio ?? null;
+        datosNac.changan.mes = datosNac.changan[mesNombreFinal] ?? datosNac.changan[mesNombre] ?? datosNac.changan.mes ?? null;
       }
       if (Array.isArray(datosNac.topMarcas)) {
         datosNac.topMarcas.forEach(m => {
-          m.mes = m[mesNombre] ?? m.mes ?? m.junio ?? null;
+          m.mes = m[mesNombreFinal] ?? m[mesNombre] ?? m.mes ?? null;
         });
       }
-      if (!datosNac.fuente) datosNac.fuente = `INEGI RAIAVL + AMIA/AMDA · ${mesLabel}`;
+      if (!datosNac.fuente) datosNac.fuente = `INEGI RAIAVL + AMIA/AMDA · ${mesLabelFinal}`;
 
       // Paso 2: generar análisis narrativo y guardarlo dentro del mismo objeto.
       try {
         const analisisResponse = await fetch("/api/analisis", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: buildPromptAnalisisNacional(datosNac, mesLabel, mesNombre) }),
+          body: JSON.stringify({ prompt: buildPromptAnalisisNacional(datosNac, mesLabelFinal, mesNombreFinal) }),
         });
         const analisisData = await analisisResponse.json();
         if (analisisResponse.ok) {
@@ -4568,9 +4586,9 @@ function MercadoADACHSection({ monthKey }) {
         // El análisis es opcional: si falla, se guardan los datos igual.
       }
 
-      await fbSet(`${NACIONAL_PATH}/${mesKey}`, datosNac);
-      setDatosNacionales(prev => ({ ...prev, [mesKey]: datosNac }));
-      setMesNacionalSel(mesKey);
+      await fbSet(`${NACIONAL_PATH}/${mesKeyFinal}`, datosNac);
+      setDatosNacionales(prev => ({ ...prev, [mesKeyFinal]: datosNac }));
+      setMesNacionalSel(mesKeyFinal);
     } catch (err) {
       console.error(err);
       setErrorCargaNacional(`Error procesando el PDF nacional: ${err.message}. Verifica que sea un reporte AMIA/INEGI válido.`);
@@ -4641,7 +4659,31 @@ function MercadoADACHSection({ monthKey }) {
               {cargandoNacional ? "📊 Procesando PDF con IA…" : "📤 Subir reporte nacional (.pdf)"}
             </label>
             <div style={{ color: "#475569", fontSize: 11, marginTop: 6 }}>
-              La IA extraerá automáticamente los datos del mes seleccionado arriba ({getMonthLabel(monthKey)})
+              {mesCargaNacional
+                ? <>El PDF se guardará como <b style={{ color: "#3b9eea" }}>{getMonthLabel(mesCargaNacional)}</b> (mes forzado manualmente).</>
+                : "La IA detecta automáticamente el mes del PDF. Puedes forzarlo abajo si prefieres."}
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <span style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginRight: 8 }}>ASIGNAR A MES:</span>
+              <select
+                value={mesCargaNacional || "AUTO"}
+                onChange={e => setMesCargaNacional(e.target.value === "AUTO" ? null : e.target.value)}
+                style={{ background: "#0d1b2e", border: "1px solid #2a3f5f", color: mesCargaNacional ? "#3b9eea" : "#94a3b8", borderRadius: 6, padding: "5px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                <option value="AUTO">🔍 Detectar del PDF (automático)</option>
+                {(() => {
+                  // Ofrecer los últimos 18 meses hasta el mes seleccionado en el dashboard
+                  const opciones = [];
+                  let [y, m] = monthKey.split("-").map(Number);
+                  for (let i = 0; i < 18; i++) {
+                    opciones.push(`${y}-${String(m).padStart(2, "0")}`);
+                    m--; if (m < 1) { m = 12; y--; }
+                  }
+                  return opciones.map(mk => (
+                    <option key={mk} value={mk}>{getMonthLabel(mk)}</option>
+                  ));
+                })()}
+              </select>
             </div>
           </div>
 
