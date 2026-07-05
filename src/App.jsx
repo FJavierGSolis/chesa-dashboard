@@ -4423,13 +4423,11 @@ function MercadoADACHSection({ monthKey }) {
   const [loadingDatos, setLoadingDatos] = useState(true);
   const [errorCarga, setErrorCarga] = useState("");
   const [reportesMes, setReportesMes] = useState({}); // { mesKey: { datos, analisis, fechaCarga } }
-  const [mesVista, setMesVista] = useState(null);
   const [vistaActiva, setVistaActiva] = useState("chiapas"); // chiapas | nacional
   const fileInputRef = useRef(null);
   const fileInputNacionalRef = useRef(null);
   const [cargandoNacional, setCargandoNacional] = useState(false);
   const [errorCargaNacional, setErrorCargaNacional] = useState("");
-  const [mesNacionalSel, setMesNacionalSel] = useState(null); // mes elegido para ver en la vista nacional
   const [generandoAnalisis, setGenerandoAnalisis] = useState(false); // análisis ADACH a demanda
   const [generandoAnalisisNac, setGenerandoAnalisisNac] = useState(false); // análisis nacional a demanda
   const [borrandoTodo, setBorrandoTodo] = useState(false); // borrado masivo de ambas vistas
@@ -4440,9 +4438,6 @@ function MercadoADACHSection({ monthKey }) {
       const raw = await fbGet(ADACH_PATH);
       if (raw && typeof raw === "object") {
         setReportesMes(raw);
-        // Seleccionar el mes válido más reciente (cuyo dato realmente corresponde al mes).
-        const mesesValidos = Object.keys(raw).filter(m => raw[m]?.datos?.mes === m).sort().reverse();
-        if (mesesValidos.length > 0) setMesVista(mesesValidos[0]);
       }
       setLoadingDatos(false);
     })();
@@ -4513,7 +4508,6 @@ function MercadoADACHSection({ monthKey }) {
       const payload = { datos, analisis: "", fechaCarga: new Date().toISOString() };
       await fbSet(`${ADACH_PATH}/${mesKeyFinal}`, payload);
       setReportesMes(prev => ({ ...prev, [mesKeyFinal]: payload }));
-      setMesVista(mesKeyFinal);
     } catch (err) {
       console.error(err);
       setErrorCarga(`Error procesando el PDF: ${err.message}. Verifica que sea un reporte ADACH válido.`);
@@ -4558,7 +4552,6 @@ function MercadoADACHSection({ monthKey }) {
         delete copia[mes];
         return copia;
       });
-      setMesVista(null);
     } catch (err) {
       console.error(err);
       setErrorCarga(`No se pudo borrar el mes: ${err.message}`);
@@ -4643,7 +4636,6 @@ function MercadoADACHSection({ monthKey }) {
 
       await fbSet(`${NACIONAL_PATH}/${mesKeyFinal}`, datosNac);
       setDatosNacionales(prev => ({ ...prev, [mesKeyFinal]: datosNac }));
-      setMesNacionalSel(mesKeyFinal);
     } catch (err) {
       console.error(err);
       setErrorCargaNacional(`Error procesando el PDF nacional: ${err.message}. Verifica que sea un reporte AMIA/INEGI válido.`);
@@ -4688,7 +4680,6 @@ function MercadoADACHSection({ monthKey }) {
         delete copia[mes];
         return copia;
       });
-      setMesNacionalSel(null);
     } catch (err) {
       console.error(err);
       setErrorCargaNacional(`No se pudo borrar el mes: ${err.message}`);
@@ -4708,9 +4699,7 @@ function MercadoADACHSection({ monthKey }) {
       // Resetear el estado local. El nacional vuelve al objeto base hardcodeado (junio),
       // pero como ese nodo de Firebase quedó vacío, no reaparece nada más.
       setReportesMes({});
-      setMesVista(null);
       setDatosNacionales({});
-      setMesNacionalSel(null);
       setErrorCarga("");
       setErrorCargaNacional("");
     } catch (err) {
@@ -4729,11 +4718,14 @@ function MercadoADACHSection({ monthKey }) {
     const d = reportesMes[m]?.datos;
     return !!d && d.mes === m;
   };
+  // La vista sigue el mes seleccionado ARRIBA en el dashboard (monthKey), igual que
+  // el resto del tablero. Cada mes muestra solo su propio reporte, o "sin datos".
   const mesesDisponibles = Object.keys(reportesMes).filter(reporteCuadra).sort().reverse();
-  const reporte = mesVista && reporteCuadra(mesVista) ? reportesMes[mesVista] : null;
+  const mesVista = monthKey;
+  const reporte = reporteCuadra(monthKey) ? reportesMes[monthKey] : null;
   const datos = reporte?.datos;
   // ¿El mes en vista tiene un reporte guardado pero que NO cuadra? (para avisar)
-  const mesVistaDescuadrado = mesVista && reportesMes[mesVista] && !reporteCuadra(mesVista);
+  const mesVistaDescuadrado = reportesMes[monthKey] && !reporteCuadra(monthKey);
 
   const fmt = (n) => n != null ? Number(n).toLocaleString("es-MX") : "—";
   const fmtPct = (n, signo = true) => n != null ? `${signo && n > 0 ? "+" : ""}${Number(n).toFixed(1)}%` : "—";
@@ -4766,16 +4758,15 @@ function MercadoADACHSection({ monthKey }) {
     const d = datosNacionales[m];
     return !!d && d.mesDetectado === m;
   };
+  // La vista sigue el mes seleccionado ARRIBA en el dashboard (monthKey).
   const mesesNacional = Object.keys(datosNacionales).filter(nacionalCuadra).sort().reverse();
-  const mesNacVista = mesNacionalSel && nacionalCuadra(mesNacionalSel)
-    ? mesNacionalSel
-    : (mesesNacional[0] || null);
-  const dnac = mesNacVista ? datosNacionales[mesNacVista] : null;
-  // ¿El mes elegido tiene dato guardado pero que NO cuadra?
-  const nacVistaDescuadrado = mesNacionalSel && datosNacionales[mesNacionalSel] && !nacionalCuadra(mesNacionalSel);
+  const mesNacVista = monthKey;
+  const dnac = nacionalCuadra(monthKey) ? datosNacionales[monthKey] : null;
+  // ¿El mes en vista tiene dato guardado pero que NO cuadra?
+  const nacVistaDescuadrado = datosNacionales[monthKey] && !nacionalCuadra(monthKey);
 
-  // Etiquetas dinámicas según el mes en vista (usa el mes seleccionado, o el actual del dashboard si no hay ninguno válido)
-  const mesNacEtiqueta = mesNacVista || monthKey;
+  // Etiquetas dinámicas según el mes en vista (el seleccionado arriba en el dashboard)
+  const mesNacEtiqueta = monthKey;
   const nacMesNum = getMonthNumFromKey(mesNacEtiqueta);
   const nacMesNombre = MES_NOMBRES[nacMesNum - 1] || "";
   const nacMesAbrev = nacMesNombre.slice(0, 3);
@@ -4808,21 +4799,21 @@ function MercadoADACHSection({ monthKey }) {
 
           {mesesNacional.length > 0 && (
             <div>
-              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>MES EN VISTA</div>
+              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>MESES CON REPORTE</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 {mesesNacional.map(m => (
-                  <button key={m} onClick={() => setMesNacionalSel(m)} style={{
-                    background: mesNacVista === m ? "#3b9eea" : "#0f2239",
-                    color: mesNacVista === m ? "#0a1628" : "#94a3b8",
-                    border: `1px solid ${mesNacVista === m ? "#3b9eea" : "#1e3a5f"}`,
-                    borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-                  }}>{getMonthLabel(m)}</button>
+                  <span key={m} style={{
+                    background: monthKey === m ? "#3b9eea" : "#0f2239",
+                    color: monthKey === m ? "#0a1628" : "#94a3b8",
+                    border: `1px solid ${monthKey === m ? "#3b9eea" : "#1e3a5f"}`,
+                    borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 700
+                  }}>{getMonthLabel(m)}</span>
                 ))}
-                {mesNacVista && dnac && (
-                  <button onClick={() => borrarMesNacional(mesNacVista)} title={`Borrar datos de ${getMonthLabel(mesNacVista)}`} style={{
+                {dnac && (
+                  <button onClick={() => borrarMesNacional(monthKey)} title={`Borrar datos de ${getMonthLabel(monthKey)}`} style={{
                     background: "transparent", color: "#f87171", border: "1px solid #f8717155",
                     borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
-                  }}>🗑️ Borrar {getMonthLabel(mesNacVista)}</button>
+                  }}>🗑️ Borrar {getMonthLabel(monthKey)}</button>
                 )}
               </div>
             </div>
@@ -5008,24 +4999,24 @@ function MercadoADACHSection({ monthKey }) {
             </div>
           </div>
 
-          {/* Selector de mes disponible */}
+          {/* Meses con reporte cargado (el mes en vista lo controla el selector de arriba) */}
           {mesesDisponibles.length > 0 && (
             <div>
-              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>MES EN VISTA</div>
+              <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>MESES CON REPORTE</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 {mesesDisponibles.map(m => (
-                  <button key={m} onClick={() => setMesVista(m)} style={{
-                    background: mesVista === m ? "#3b9eea" : "#0f2239",
-                    color: mesVista === m ? "#0a1628" : "#94a3b8",
-                    border: `1px solid ${mesVista === m ? "#3b9eea" : "#1e3a5f"}`,
-                    borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-                  }}>{getMonthLabel(m)}</button>
+                  <span key={m} style={{
+                    background: monthKey === m ? "#3b9eea" : "#0f2239",
+                    color: monthKey === m ? "#0a1628" : "#94a3b8",
+                    border: `1px solid ${monthKey === m ? "#3b9eea" : "#1e3a5f"}`,
+                    borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 700
+                  }}>{getMonthLabel(m)}</span>
                 ))}
-                {mesVista && datos && (
-                  <button onClick={() => borrarMesADACH(mesVista)} title={`Borrar datos de ${getMonthLabel(mesVista)}`} style={{
+                {datos && (
+                  <button onClick={() => borrarMesADACH(monthKey)} title={`Borrar datos de ${getMonthLabel(monthKey)}`} style={{
                     background: "transparent", color: "#f87171", border: "1px solid #f8717155",
                     borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
-                  }}>🗑️ Borrar {getMonthLabel(mesVista)}</button>
+                  }}>🗑️ Borrar {getMonthLabel(monthKey)}</button>
                 )}
               </div>
             </div>
