@@ -4430,6 +4430,9 @@ function MercadoADACHSection({ monthKey }) {
   const [cargandoNacional, setCargandoNacional] = useState(false);
   const [errorCargaNacional, setErrorCargaNacional] = useState("");
   const [mesNacionalSel, setMesNacionalSel] = useState(null); // mes elegido para ver en la vista nacional
+  const [generandoAnalisis, setGenerandoAnalisis] = useState(false); // análisis ADACH a demanda
+  const [generandoAnalisisNac, setGenerandoAnalisisNac] = useState(false); // análisis nacional a demanda
+  const [borrandoTodo, setBorrandoTodo] = useState(false); // borrado masivo de ambas vistas
 
   useEffect(() => {
     (async () => {
@@ -4504,19 +4507,10 @@ function MercadoADACHSection({ monthKey }) {
 
       // A partir de aquí, el mes del PDF coincide con el esperado.
       const mesKeyFinal = mesDetectado;
-      const mesLabelFinal = getMonthLabel(mesKeyFinal);
 
-      // Paso 2: Generar análisis narrativo
-      const analisisResponse = await fetch("/api/analisis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: buildPromptAnalisisADACH(datos, mesLabelFinal) }),
-      });
-      const analisisData = await analisisResponse.json();
-      const analisis = analisisData.text || "";
-
-      // Guardar en Firebase bajo el mes real del reporte
-      const payload = { datos, analisis, fechaCarga: new Date().toISOString() };
+      // Guardar solo los DATOS. El análisis con IA ya no se genera automáticamente:
+      // el usuario lo dispara con un botón cuando lo necesite (analisis queda vacío).
+      const payload = { datos, analisis: "", fechaCarga: new Date().toISOString() };
       await fbSet(`${ADACH_PATH}/${mesKeyFinal}`, payload);
       setReportesMes(prev => ({ ...prev, [mesKeyFinal]: payload }));
       setMesVista(mesKeyFinal);
@@ -4526,6 +4520,48 @@ function MercadoADACHSection({ monthKey }) {
     } finally {
       setCargando(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // Generar el análisis narrativo con IA a demanda (ADACH), para el mes en vista.
+  const generarAnalisisADACH = async (mes, datosMes) => {
+    if (!datosMes) return;
+    setGenerandoAnalisis(true);
+    try {
+      const resp = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: buildPromptAnalisisADACH(datosMes, getMonthLabel(mes)) }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Error al generar análisis");
+      const analisis = data.text || "";
+      const prev = reportesMes[mes] || {};
+      const payload = { ...prev, datos: datosMes, analisis };
+      await fbSet(`${ADACH_PATH}/${mes}`, payload);
+      setReportesMes(p => ({ ...p, [mes]: payload }));
+    } catch (err) {
+      console.error(err);
+      setErrorCarga(`No se pudo generar el análisis: ${err.message}`);
+    } finally {
+      setGenerandoAnalisis(false);
+    }
+  };
+
+  // Borrar los datos de un mes (ADACH). Deja ese mes en "sin datos".
+  const borrarMesADACH = async (mes) => {
+    if (!window.confirm(`¿Borrar los datos de ADACH de ${getMonthLabel(mes)}? Esta acción no se puede deshacer.`)) return;
+    try {
+      await fbSet(`${ADACH_PATH}/${mes}`, null);
+      setReportesMes(prev => {
+        const copia = { ...prev };
+        delete copia[mes];
+        return copia;
+      });
+      setMesVista(null);
+    } catch (err) {
+      console.error(err);
+      setErrorCarga(`No se pudo borrar el mes: ${err.message}`);
     }
   };
 
@@ -4602,22 +4638,8 @@ function MercadoADACHSection({ monthKey }) {
       }
       if (!datosNac.fuente) datosNac.fuente = `INEGI RAIAVL + AMIA/AMDA · ${mesLabelFinal}`;
 
-      // Paso 2: generar análisis narrativo y guardarlo dentro del mismo objeto.
-      try {
-        const analisisResponse = await fetch("/api/analisis", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: buildPromptAnalisisNacional(datosNac, mesLabelFinal, mesNombreFinal) }),
-        });
-        const analisisData = await analisisResponse.json();
-        if (analisisResponse.ok) {
-          datosNac._analisis = analisisData.text || "";
-          datosNac._analisisFecha = new Date().toISOString();
-        }
-      } catch (errAnalisis) {
-        console.error("No se pudo generar el análisis nacional:", errAnalisis);
-        // El análisis es opcional: si falla, se guardan los datos igual.
-      }
+      // El análisis con IA ya no se genera automáticamente: el usuario lo dispara
+      // con un botón cuando lo necesite (_analisis queda vacío al cargar).
 
       await fbSet(`${NACIONAL_PATH}/${mesKeyFinal}`, datosNac);
       setDatosNacionales(prev => ({ ...prev, [mesKeyFinal]: datosNac }));
@@ -4628,6 +4650,74 @@ function MercadoADACHSection({ monthKey }) {
     } finally {
       setCargandoNacional(false);
       if (fileInputNacionalRef.current) fileInputNacionalRef.current.value = "";
+    }
+  };
+
+  // Generar el análisis narrativo con IA a demanda (nacional), para el mes en vista.
+  const generarAnalisisNacional = async (mes, datosMes) => {
+    if (!datosMes) return;
+    setGenerandoAnalisisNac(true);
+    try {
+      const mesNum = getMonthNumFromKey(mes);
+      const mesNombre = MES_NOMBRES[mesNum - 1];
+      const resp = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: buildPromptAnalisisNacional(datosMes, getMonthLabel(mes), mesNombre) }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Error al generar análisis");
+      const actualizado = { ...datosMes, _analisis: data.text || "", _analisisFecha: new Date().toISOString() };
+      await fbSet(`${NACIONAL_PATH}/${mes}`, actualizado);
+      setDatosNacionales(p => ({ ...p, [mes]: actualizado }));
+    } catch (err) {
+      console.error(err);
+      setErrorCargaNacional(`No se pudo generar el análisis: ${err.message}`);
+    } finally {
+      setGenerandoAnalisisNac(false);
+    }
+  };
+
+  // Borrar los datos de un mes (nacional). Deja ese mes en "sin datos".
+  const borrarMesNacional = async (mes) => {
+    if (!window.confirm(`¿Borrar los datos nacionales de ${getMonthLabel(mes)}? Esta acción no se puede deshacer.`)) return;
+    try {
+      await fbSet(`${NACIONAL_PATH}/${mes}`, null);
+      setDatosNacionales(prev => {
+        const copia = { ...prev };
+        delete copia[mes];
+        return copia;
+      });
+      setMesNacionalSel(null);
+    } catch (err) {
+      console.error(err);
+      setErrorCargaNacional(`No se pudo borrar el mes: ${err.message}`);
+    }
+  };
+
+  // Borrar TODOS los datos de Mercado Automotriz (ADACH + Nacional, 2024 a la fecha).
+  // Requiere doble confirmación por ser una acción destructiva total.
+  const borrarTodo = async () => {
+    if (!window.confirm("¿Borrar TODOS los datos de Mercado Automotriz (Chiapas ADACH + Nacional, de 2024 a la fecha)? Esta acción no se puede deshacer.")) return;
+    if (!window.confirm("Confirmación final: se eliminarán TODOS los reportes de ambas vistas. ¿Continuar?")) return;
+    setBorrandoTodo(true);
+    try {
+      // Vaciar ambos nodos completos en Firebase de un solo tiro.
+      await fbSet(ADACH_PATH, null);
+      await fbSet(NACIONAL_PATH, null);
+      // Resetear el estado local. El nacional vuelve al objeto base hardcodeado (junio),
+      // pero como ese nodo de Firebase quedó vacío, no reaparece nada más.
+      setReportesMes({});
+      setMesVista(null);
+      setDatosNacionales({});
+      setMesNacionalSel(null);
+      setErrorCarga("");
+      setErrorCargaNacional("");
+    } catch (err) {
+      console.error(err);
+      setErrorCarga(`No se pudo borrar todo: ${err.message}`);
+    } finally {
+      setBorrandoTodo(false);
     }
   };
 
@@ -4719,7 +4809,7 @@ function MercadoADACHSection({ monthKey }) {
           {mesesNacional.length > 0 && (
             <div>
               <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>MES EN VISTA</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 {mesesNacional.map(m => (
                   <button key={m} onClick={() => setMesNacionalSel(m)} style={{
                     background: mesNacVista === m ? "#3b9eea" : "#0f2239",
@@ -4728,6 +4818,12 @@ function MercadoADACHSection({ monthKey }) {
                     borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer"
                   }}>{getMonthLabel(m)}</button>
                 ))}
+                {mesNacVista && dnac && (
+                  <button onClick={() => borrarMesNacional(mesNacVista)} title={`Borrar datos de ${getMonthLabel(mesNacVista)}`} style={{
+                    background: "transparent", color: "#f87171", border: "1px solid #f8717155",
+                    borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+                  }}>🗑️ Borrar {getMonthLabel(mesNacVista)}</button>
+                )}
               </div>
             </div>
           )}
@@ -4827,17 +4923,41 @@ function MercadoADACHSection({ monthKey }) {
         )}
       </Card>
 
-      {/* ── Análisis narrativo nacional ──────────────────────────────────── */}
-      {dnac?._analisis && (
+      {/* ── Análisis narrativo nacional (a demanda) ──────────────────────── */}
+      {dnac && (
         <Card>
           <SectionHeader title="ANÁLISIS NACIONAL — CONTEXTO PARA CHESA" icon="🧠" />
-          <div style={{ color: "#475569", fontSize: 11, marginBottom: 14 }}>
-            Generado por IA · Fuente: Reporte AMIA/INEGI {getMonthLabel(mesNacVista)}
-            {dnac._analisisFecha ? ` · Cargado: ${new Date(dnac._analisisFecha).toLocaleDateString("es-MX")}` : ""}
-          </div>
-          <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px" }}>
-            {renderMarkdownGlobal(dnac._analisis)}
-          </div>
+          {dnac._analisis ? (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                <span style={{ color: "#475569", fontSize: 11 }}>
+                  Generado por IA · Reporte AMIA/INEGI {getMonthLabel(mesNacVista)}
+                  {dnac._analisisFecha ? ` · ${new Date(dnac._analisisFecha).toLocaleDateString("es-MX")}` : ""}
+                </span>
+                <button onClick={() => generarAnalisisNacional(mesNacVista, dnac)} disabled={generandoAnalisisNac} style={{
+                  background: "transparent", color: "#3b9eea", border: "1px solid #3b9eea55",
+                  borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: generandoAnalisisNac ? "default" : "pointer"
+                }}>
+                  {generandoAnalisisNac ? "Regenerando…" : "🔄 Regenerar análisis"}
+                </button>
+              </div>
+              <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px" }}>
+                {renderMarkdownGlobal(dnac._analisis)}
+              </div>
+            </>
+          ) : (
+            <div style={{ textAlign: "center", padding: "24px 16px" }}>
+              <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 14, lineHeight: 1.6 }}>
+                Los datos de {getMonthLabel(mesNacVista)} ya están cargados. Genera el análisis ejecutivo con IA cuando lo necesites.
+              </div>
+              <button onClick={() => generarAnalisisNacional(mesNacVista, dnac)} disabled={generandoAnalisisNac} style={{
+                background: generandoAnalisisNac ? "#1e3a5f" : "#D4AF37", color: generandoAnalisisNac ? "#64748b" : "#0a1628",
+                border: "none", borderRadius: 8, padding: "11px 24px", fontSize: 13, fontWeight: 800, cursor: generandoAnalisisNac ? "default" : "pointer"
+              }}>
+                {generandoAnalisisNac ? "🧠 Generando análisis…" : "🧠 Generar análisis con IA"}
+              </button>
+            </div>
+          )}
         </Card>
       )}
     </div>
@@ -4847,7 +4967,7 @@ function MercadoADACHSection({ monthKey }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
       {/* ── Selector de vista ─────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         {[
           { key: "chiapas",  label: "🗺️ Mercado Chiapas (ADACH)" },
           { key: "nacional", label: "🇲🇽 Mercado Nacional (AMIA/INEGI)" },
@@ -4859,6 +4979,13 @@ function MercadoADACHSection({ monthKey }) {
             borderRadius: 8, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer"
           }}>{v.label}</button>
         ))}
+        <button onClick={borrarTodo} disabled={borrandoTodo} title="Borra todos los datos de ambas vistas (2024 a la fecha)" style={{
+          marginLeft: "auto", background: "transparent", color: "#f87171",
+          border: "1px solid #f8717155", borderRadius: 8, padding: "8px 16px",
+          fontSize: 12.5, fontWeight: 700, cursor: borrandoTodo ? "default" : "pointer"
+        }}>
+          {borrandoTodo ? "Borrando…" : "🗑️ Borrar TODO"}
+        </button>
       </div>
 
       {vistaActiva === "nacional" ? <VistaAnualNacional /> : (
@@ -4885,7 +5012,7 @@ function MercadoADACHSection({ monthKey }) {
           {mesesDisponibles.length > 0 && (
             <div>
               <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, marginBottom: 6 }}>MES EN VISTA</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 {mesesDisponibles.map(m => (
                   <button key={m} onClick={() => setMesVista(m)} style={{
                     background: mesVista === m ? "#3b9eea" : "#0f2239",
@@ -4894,6 +5021,12 @@ function MercadoADACHSection({ monthKey }) {
                     borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer"
                   }}>{getMonthLabel(m)}</button>
                 ))}
+                {mesVista && datos && (
+                  <button onClick={() => borrarMesADACH(mesVista)} title={`Borrar datos de ${getMonthLabel(mesVista)}`} style={{
+                    background: "transparent", color: "#f87171", border: "1px solid #f8717155",
+                    borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+                  }}>🗑️ Borrar {getMonthLabel(mesVista)}</button>
+                )}
               </div>
             </div>
           )}
@@ -5045,16 +5178,40 @@ function MercadoADACHSection({ monthKey }) {
             </Card>
           )}
 
-          {/* ── Análisis narrativo ───────────────────────────────────────────── */}
-          {reporte?.analisis && (
+          {/* ── Análisis narrativo (a demanda) ────────────────────────────────── */}
+          {datos && (
             <Card>
               <SectionHeader title="ANÁLISIS COMPETITIVO — CONTEXTO PARA CHESA" icon="🧠" />
-              <div style={{ color: "#475569", fontSize: 11, marginBottom: 14 }}>
-                Generado por IA · Fuente: Reporte ADACH {getMonthLabel(mesVista)} · Cargado: {reporte.fechaCarga ? new Date(reporte.fechaCarga).toLocaleDateString("es-MX") : "—"}
-              </div>
-              <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px" }}>
-                {renderMarkdownGlobal(reporte.analisis)}
-              </div>
+              {reporte?.analisis ? (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 14 }}>
+                    <span style={{ color: "#475569", fontSize: 11 }}>
+                      Generado por IA · Reporte ADACH {getMonthLabel(mesVista)}
+                    </span>
+                    <button onClick={() => generarAnalisisADACH(mesVista, datos)} disabled={generandoAnalisis} style={{
+                      background: "transparent", color: "#3b9eea", border: "1px solid #3b9eea55",
+                      borderRadius: 6, padding: "5px 12px", fontSize: 11.5, fontWeight: 700, cursor: generandoAnalisis ? "default" : "pointer"
+                    }}>
+                      {generandoAnalisis ? "Regenerando…" : "🔄 Regenerar análisis"}
+                    </button>
+                  </div>
+                  <div style={{ background: "#0d1b2e", border: "1px solid #1e3a5f", borderRadius: 8, padding: "18px 20px" }}>
+                    {renderMarkdownGlobal(reporte.analisis)}
+                  </div>
+                </>
+              ) : (
+                <div style={{ textAlign: "center", padding: "24px 16px" }}>
+                  <div style={{ color: "#94a3b8", fontSize: 13, marginBottom: 14, lineHeight: 1.6 }}>
+                    Los datos de {getMonthLabel(mesVista)} ya están cargados. Genera el análisis ejecutivo con IA cuando lo necesites.
+                  </div>
+                  <button onClick={() => generarAnalisisADACH(mesVista, datos)} disabled={generandoAnalisis} style={{
+                    background: generandoAnalisis ? "#1e3a5f" : "#D4AF37", color: generandoAnalisis ? "#64748b" : "#0a1628",
+                    border: "none", borderRadius: 8, padding: "11px 24px", fontSize: 13, fontWeight: 800, cursor: generandoAnalisis ? "default" : "pointer"
+                  }}>
+                    {generandoAnalisis ? "🧠 Generando análisis…" : "🧠 Generar análisis con IA"}
+                  </button>
+                </div>
+              )}
             </Card>
           )}
 
