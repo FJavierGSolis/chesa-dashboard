@@ -1666,6 +1666,127 @@ function MarketShareSection({ data, onFieldChange, monthKey }) {
 }
 
 // ── SECCIÓN: Rotación (de personal) ───────────────────────────────────────────
+// ── Lectura del Excel de Rotación (hoja CHANGAN, bloque ADMIN+APV'S = plantilla total) ──
+// Estructura del archivo: la hoja "CHANGAN" tiene 3 bloques apilados
+// (ADMIN+APV'S = total, ADMON = admin, APV'S = post-venta). Usamos el primero
+// (total) porque el dashboard maneja una sola rotación por agencia.
+// Cada bloque tiene 6 sub-tablas: MEGAMOTRIZ (consolidado del grupo) + las 5 agencias.
+function parseRotacionWorkbook(workbook, monthKey) {
+  // Buscar la hoja de la marca (CHANGAN), tolerante a mayúsculas/espacios.
+  const sheetName = workbook.SheetNames.find(n => n.toUpperCase().replace(/\s/g, "").includes("CHANGAN"));
+  if (!sheetName) throw new Error('No se encontró la pestaña "CHANGAN" en el archivo.');
+  const ws = workbook.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+  // El primer bloque (ADMIN+APV'S) termina donde empieza el bloque "ADMON".
+  let boundary = rows.length;
+  for (let i = 0; i < rows.length; i++) {
+    const a = rows[i]?.[0];
+    if (a && String(a).toUpperCase().includes("ADMON")) { boundary = i; break; }
+  }
+
+  const num = parseInt(monthKey.split("-")[1], 10);
+  const nombreMes = (MES_NOMBRES[num - 1] || "").toUpperCase();
+
+  // La columna B (índice 1) tiene el MES en el bloque total.
+  let fila = null;
+  for (let i = 0; i < boundary; i++) {
+    const b = rows[i]?.[1];
+    if (b && String(b).trim().toUpperCase() === nombreMes) { fila = rows[i]; break; }
+  }
+  if (!fila) throw new Error(`No se encontró el mes "${nombreMes}" en el bloque de plantilla total.`);
+
+  // Columnas por agencia (0-based): [# inicio, altas, bajas]
+  const COLS = {
+    "COMITÁN":        [11, 12, 13],
+    "OCOSINGO":       [20, 21, 22],
+    "SAN CRISTÓBAL":  [29, 30, 31],
+    "TAPACHULA":      [38, 39, 40],
+    "TUXTLA":         [47, 48, 49],
+  };
+  const num0 = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };
+  const out = {};
+  Object.entries(COLS).forEach(([ag, [ci, ca, cb]]) => {
+    out[ag] = {
+      plantillaInicial: num0(fila[ci]),
+      altas: num0(fila[ca]),
+      bajas: num0(fila[cb]),
+    };
+  });
+  return out;
+}
+
+// ── Carga del Excel de Rotación → llena plantilla/altas/bajas del mes por agencia ──
+function ImportarRotacion({ onFieldChange, monthKey }) {
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [resultado, setResultado] = useState(null); // { aplicados: [...] }
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!/\.(xlsx|xls)$/i.test(file.name)) {
+      setError("Sube el Excel de Rotación (.xlsx).");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    setCargando(true); setError(""); setResultado(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const datos = parseRotacionWorkbook(wb, monthKey);
+      const aplicados = [];
+      Object.entries(datos).forEach(([ag, d]) => {
+        onFieldChange("rotacion", ag, "plantillaInicial", d.plantillaInicial);
+        onFieldChange("rotacion", ag, "altas", d.altas);
+        onFieldChange("rotacion", ag, "bajas", d.bajas);
+        aplicados.push(`${ag}: plantilla ${d.plantillaInicial}, altas ${d.altas}, bajas ${d.bajas}`);
+      });
+      setResultado({ aplicados });
+    } catch (err) {
+      console.error(err);
+      setError(`No se pudo procesar el Excel: ${err.message}`);
+    } finally {
+      setCargando(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  return (
+    <Card style={{ borderLeft: "4px solid #3b9eea", marginBottom: 16 }}>
+      <div style={{ color: "#3b9eea", fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+        ⚡ Automatizar Rotación
+      </div>
+      <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
+        Sube el Excel oficial de Rotación. Toma la hoja <b style={{ color: "#cbd5e1" }}>CHANGAN</b> (bloque de plantilla total ADMIN+APV'S) y llena plantilla inicial, altas y bajas de las 5 agencias para {getMonthLabel(monthKey)}. El % de rotación y el cumplimiento se recalculan solos.
+      </div>
+      <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-rotacion" />
+      <label htmlFor="file-rotacion" style={{
+        background: cargando ? "#1e3a5f" : "#3b9eea", color: cargando ? "#64748b" : "#0a1628",
+        border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 12.5, fontWeight: 700,
+        cursor: cargando ? "default" : "pointer", display: "inline-block", whiteSpace: "nowrap"
+      }}>
+        {cargando ? "Procesando…" : "📤 Subir Excel de Rotación (.xlsx)"}
+      </label>
+
+      {error && (
+        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 12.5, marginTop: 12 }}>
+          {error}
+        </div>
+      )}
+      {resultado && (
+        <div style={{ background: "#14532d22", border: "1px solid #4ade80", borderRadius: 8, padding: "10px 14px", color: "#4ade80", fontSize: 12.5, marginTop: 12 }}>
+          ✅ Aplicado a {getMonthLabel(monthKey)}:
+          <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>
+            {resultado.aplicados.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a}</li>)}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function RotacionSection({ data, onFieldChange }) {
   const totales = AGENCIAS.reduce((acc, ag) => {
     const row = data.rotacion[ag] ?? { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 };
@@ -8211,6 +8332,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
                       <MarketShareSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
                     </div>
                     <div style={{ flex: 1, minWidth: 280 }}>
+                      <ImportarRotacion onFieldChange={onFieldChange} monthKey={viewMonth} />
                       <RotacionSection data={data} onFieldChange={onFieldChange} />
                     </div>
                   </div>
