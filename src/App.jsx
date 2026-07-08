@@ -5798,6 +5798,17 @@ function parseProspeccionWorkbook(workbook) {
     const iComentario = findCol(["Algún comentario"]);
     const iProspecto = findCol(["NOMBRE DEL PROSPECTO"]);
     const iAtencion  = findCol(["atención adecuada"]);
+    // "¿Por qué medio se enteró de nosotros?" — el encabezado varía en redacción y acentos,
+    // así que buscamos de forma tolerante (sin acentos, varias frases posibles).
+    const normH = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const iMedio = headers.findIndex(h => {
+      const c = normH(h);
+      return (c.includes("medio") && (c.includes("entero") || c.includes("enteraste") || c.includes("conocio") || c.includes("nosotros")))
+          || (c.includes("como") && (c.includes("entero") || c.includes("conocio")))
+          || c.includes("se entero de nosotros")
+          || c.includes("como nos conocio")
+          || c.includes("por que medio");
+    });
 
     for (let r = 2; r < rows.length; r++) {
       const row = rows[r];
@@ -5827,6 +5838,7 @@ function parseProspeccionWorkbook(workbook) {
         origen,
         calificacion: califNum,
         atencionAdecuada: iAtencion >= 0 && row[iAtencion] ? String(row[iAtencion]).trim() : "",
+        medioEntero: iMedio >= 0 && row[iMedio] ? String(row[iMedio]).trim() : "",
         queja:       iQueja >= 0 && row[iQueja] ? String(row[iQueja]).trim() : "",
         faltaPara10: iFalta >= 0 && row[iFalta] ? String(row[iFalta]).trim() : "",
         comentario:  iComentario >= 0 && row[iComentario] ? String(row[iComentario]).trim() : "",
@@ -6152,6 +6164,61 @@ ${lineas}`;
                 });
               })()}
             </div>
+
+            {/* Indicador: ¿por qué medio se enteró de nosotros? (solo Prospección) */}
+            {tipoActivo === "prospeccion" && (() => {
+              const conteo = {};
+              datos.forEach(r => {
+                const raw = (r.medioEntero || "").trim();
+                const key = raw === "" ? "Sin especificar" : raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+                conteo[key] = (conteo[key] || 0) + 1;
+              });
+              const totalConDato = datos.filter(r => (r.medioEntero || "").trim() !== "").length;
+              if (totalConDato === 0) {
+                return (
+                  <div style={{ background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 8, padding: "10px 14px", color: "#64748b", fontSize: 12, marginBottom: 18 }}>
+                    📣 El reporte de {getMonthLabel(monthKey)} no trae la columna "¿Por qué medio se enteró de nosotros?" (o viene vacía). Si sí la incluye, mándame el encabezado exacto y afino la detección.
+                  </div>
+                );
+              }
+              const entries = Object.entries(conteo).sort((a, b) => b[1] - a[1]);
+              const datosPie = entries.map(([label, value]) => ({ label, value }));
+              const colores = ["#3b9eea", "#D4AF37", "#4ade80", "#c084fc", "#fb923c", "#f472b6", "#60a5fa", "#fbbf24", "#94a3b8", "#34d399", "#f87171", "#a78bfa"];
+              return (
+                <Card style={{ marginBottom: 18 }}>
+                  <SectionHeader title="¿POR QUÉ MEDIO SE ENTERÓ DE NOSOTROS?" icon="📣" />
+                  <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+                    <PieChartLeyenda datos={datosPie} colores={colores} size={180} />
+                    <div style={{ flex: 1, minWidth: 280 }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <thead>
+                          <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                            <th style={{ textAlign: "left", padding: "5px 8px" }}>MEDIO</th>
+                            <th style={{ textAlign: "center", padding: "5px 8px" }}>PROSPECTOS</th>
+                            <th style={{ textAlign: "right", padding: "5px 8px" }}>%</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {entries.map(([label, value], i) => (
+                            <tr key={label} style={{ borderBottom: "1px solid #0f2239" }}>
+                              <td style={{ padding: "5px 8px", color: "#f1f5f9" }}>
+                                <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: colores[i % colores.length], marginRight: 8 }} />
+                                {label}
+                              </td>
+                              <td style={{ textAlign: "center", padding: "5px 8px", color: "#D4AF37", fontWeight: 700 }}>{value}</td>
+                              <td style={{ textAlign: "right", padding: "5px 8px", color: "#64748b" }}>{(value / datos.length * 100).toFixed(1)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <div style={{ color: "#475569", fontSize: 10.5, marginTop: 8 }}>
+                        Sobre {datos.length} prospectos contactados{totalConDato < datos.length ? ` · ${datos.length - totalConDato} sin dato de medio` : ""}.
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              );
+            })()}
 
             <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>
               {tipoActivo === "prospeccion" ? "CALIFICACIÓN POR ASESOR (PROSPECTOS CONTACTADOS)" : "CALIFICACIÓN POR ASESOR"}
