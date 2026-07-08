@@ -4395,6 +4395,39 @@ Responde con markdown. Sé directo y ejecutivo. Estructura:
 (máximo 3 párrafos cortos en total, conectando siempre la tendencia nacional de Changan con la operación local de CHESA)`;
 }
 
+// ── Prompt de extracción SSI/CSI desde los reportes "24 HRS" (Efectividad + Satisfacción) ──
+// Un mismo botón detecta si el PDF es de VENTAS (→ SSI) o de SERVICIOS (→ CSI).
+function buildPromptExtraccion24hrs(mesLabel) {
+  return `Eres un extractor de datos estructurados. Se te da un PDF con reportes "24 HRS" de CHESA Changan (${mesLabel}). Puede ser de VENTAS (alimenta SSI) o de SERVICIOS (alimenta CSI).
+
+El PDF trae varias tablas. Identifica el tipo y usa SOLO la variante combinada:
+- VENTAS  → tablas cuyo encabezado dice "= NUEVO + USADO" (ignora "= NUEVO" y "= USADO" por separado).
+- SERVICIOS → tablas cuyo encabezado dice "= SERVICIO + HYP" (ignora "= SERVICIO" y "= HYP" por separado).
+
+De la variante combinada toma dos filas:
+1. "REPORTE DE EFECTIVIDAD 24 HRS ..." → fila "EFECTIVIDAD 2026" = % de contactabilidad (lo llamamos CBD).
+2. "REPORTE DE SATISFACCIÓN 24 HRS ..." → fila "SATISFACCIÓN" = % de satisfacción.
+
+Columnas por sucursal: CHANGAN TUXTLA, CHANGAN TAPACHULA, CHANGAN OCOSINGO.
+
+Responde ÚNICAMENTE con JSON válido, sin texto ni markdown:
+
+{
+  "tipo": "<ventas | servicios>",
+  "sucursales": {
+    "TUXTLA":    { "cbd": <número>, "satisfaccion": <número> },
+    "TAPACHULA": { "cbd": <número>, "satisfaccion": <número> },
+    "OCOSINGO":  { "cbd": <número>, "satisfaccion": <número> }
+  }
+}
+
+REGLAS:
+- Números sin el signo % (ej. 85.71, 100, 37.5).
+- Si una sucursal tiene TOTAL DE BASE DE DATOS = 0 (sin encuestas), usa null en sus dos campos.
+- "tipo" es crítico: "ventas" si los encabezados dicen VENTAS, "servicios" si dicen SERVICIOS.
+- No agregues texto fuera del JSON.`;
+}
+
 // Datos nacionales AMIA/INEGI hardcodeados — se actualizan manualmente cada mes
 // Fuente: RAIAVL INEGI + AMIA/AMDA reporte mensual
 const DATOS_NACIONALES = {
@@ -7446,6 +7479,122 @@ function RitmoVentasSection({ monthKey }) {
   );
 }
 
+// ── Carga de reporte "24 HRS" (PDF) → automatiza SSI / CSI en Operativo ──
+function ImportarSatisfaccion24hrs({ onFieldChange, monthKey }) {
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [resultado, setResultado] = useState(null); // { tipo, aplicados: [...] }
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setError("Sube el PDF del reporte 24 hrs (Ventas o Servicios).");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    setCargando(true); setError(""); setResultado(null);
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result.split(",")[1]);
+        reader.onerror = rej;
+        reader.readAsDataURL(file);
+      });
+
+      const resp = await fetch("/api/analisis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: buildPromptExtraccion24hrs(getMonthLabel(monthKey)), pdf: base64 }),
+      });
+      const dataResp = await resp.json();
+      if (!resp.ok) throw new Error(dataResp.error || "Error al extraer datos");
+
+      let texto = (dataResp.text || "").replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(texto);
+      const tipo = (parsed.tipo || "").toLowerCase();
+      const suc = parsed.sucursales || {};
+      const aplicados = [];
+
+      if (tipo === "ventas") {
+        // SSI: Tuxtla, Tapachula, Ocosingo
+        ["TUXTLA", "TAPACHULA", "OCOSINGO"].forEach(ag => {
+          const d = suc[ag]; if (!d) return;
+          const partes = [];
+          if (d.cbd != null)          { onFieldChange("ssi", ag, "cbd", Number(d.cbd)); partes.push(`CBD ${d.cbd}%`); }
+          if (d.satisfaccion != null) { onFieldChange("ssi", ag, "ssi", Number(d.satisfaccion)); partes.push(`SSI ${d.satisfaccion}%`); }
+          if (partes.length) aplicados.push(`${ag} — ${partes.join(" · ")}`);
+        });
+      } else if (tipo === "servicios") {
+        // CSI: solo Tuxtla y Tapachula (Ocosingo se ignora por indicación)
+        ["TUXTLA", "TAPACHULA"].forEach(ag => {
+          const d = suc[ag]; if (!d) return;
+          const partes = [];
+          if (d.cbd != null)          { onFieldChange("csi", ag, "cbd", Number(d.cbd)); partes.push(`CBD ${d.cbd}%`); }
+          if (d.satisfaccion != null) { onFieldChange("csi", ag, "csi", Number(d.satisfaccion)); partes.push(`CSI ${d.satisfaccion}%`); }
+          if (partes.length) aplicados.push(`${ag} — ${partes.join(" · ")}`);
+        });
+      } else {
+        throw new Error("No se pudo determinar si el reporte es de Ventas o de Servicios.");
+      }
+
+      if (aplicados.length === 0) throw new Error("No se encontraron datos válidos para aplicar.");
+      setResultado({ tipo, aplicados });
+    } catch (err) {
+      console.error(err);
+      setError(`No se pudo procesar el PDF: ${err.message}. Verifica que sea el reporte 24 hrs correcto.`);
+    } finally {
+      setCargando(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  return (
+    <Card style={{ borderLeft: "4px solid #3b9eea" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <div style={{ color: "#3b9eea", fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+            ⚡ Automatizar SSI / CSI
+          </div>
+          <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>
+            Sube el PDF del reporte "24 HRS". Si es de <b style={{ color: "#cbd5e1" }}>Ventas</b> llena el SSI (Tuxtla, Tapachula, Ocosingo); si es de <b style={{ color: "#cbd5e1" }}>Servicios</b> llena el CSI (Tuxtla, Tapachula). Usa la variante combinada (NUEVO + USADO / SERVICIO + HYP) y actualiza CBD y satisfacción de {getMonthLabel(monthKey)}.
+          </div>
+        </div>
+        <div>
+          <input ref={fileRef} type="file" accept=".pdf" onChange={handleFile} style={{ display: "none" }} id="file-24hrs-satisfaccion" />
+          <label htmlFor="file-24hrs-satisfaccion" style={{
+            background: cargando ? "#1e3a5f" : "#3b9eea", color: cargando ? "#64748b" : "#0a1628",
+            border: "none", borderRadius: 8, padding: "11px 22px", fontSize: 13, fontWeight: 700,
+            cursor: cargando ? "default" : "pointer", display: "inline-block", whiteSpace: "nowrap"
+          }}>
+            {cargando ? "🧠 Leyendo PDF…" : "📤 Subir reporte 24 hrs (.pdf)"}
+          </label>
+        </div>
+      </div>
+
+      {cargando && (
+        <div style={{ color: "#94a3b8", fontSize: 12.5, marginTop: 12 }}>
+          La IA está leyendo el PDF y extrayendo efectividad y satisfacción… ~10-15 segundos.
+        </div>
+      )}
+      {error && (
+        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginTop: 12 }}>
+          {error}
+        </div>
+      )}
+      {resultado && (
+        <div style={{ background: "#14532d22", border: "1px solid #4ade80", borderRadius: 8, padding: "10px 14px", color: "#4ade80", fontSize: 13, marginTop: 12 }}>
+          ✅ Detectado: reporte de <b>{resultado.tipo === "ventas" ? "Ventas → SSI" : "Servicios → CSI"}</b>. Aplicado a {getMonthLabel(monthKey)}:
+          <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>
+            {resultado.aplicados.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a}</li>)}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Dashboard({ userRole, userAgencia, userEmail }) {
   const [tab, setTab] = useState("resumen"); // resumen | operativo | funnel | ...
   const [data, setData] = useState(initialData);
@@ -8055,6 +8204,7 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
                       <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} monthKey={viewMonth} />
                     </div>
                   </div>
+                  <ImportarSatisfaccion24hrs onFieldChange={onFieldChange} monthKey={viewMonth} />
                   <SatisfaccionSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                     <div style={{ flex: 1, minWidth: 280 }}>
