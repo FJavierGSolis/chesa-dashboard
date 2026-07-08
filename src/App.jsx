@@ -1735,7 +1735,11 @@ function ImportarRotacion({ onFieldChange, monthKey }) {
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
-      const datos = parseRotacionWorkbook(wb, monthKey);
+      // La rotación se reporta cerrada: estando en el mes en curso, aplican las
+      // cifras del mes anterior. Por eso LEEMOS la fila del mes pasado, pero
+      // ESCRIBIMOS en el mes activo (onFieldChange guarda en el mes en vista).
+      const sourceMonthKey = getPreviousMonthKey(monthKey);
+      const datos = parseRotacionWorkbook(wb, sourceMonthKey);
       const aplicados = [];
       Object.entries(datos).forEach(([ag, d]) => {
         onFieldChange("rotacion", ag, "plantillaInicial", d.plantillaInicial);
@@ -1759,7 +1763,7 @@ function ImportarRotacion({ onFieldChange, monthKey }) {
         ⚡ Automatizar Rotación
       </div>
       <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
-        Sube el Excel oficial de Rotación. Toma la hoja <b style={{ color: "#cbd5e1" }}>CHANGAN</b> (bloque de plantilla total ADMIN+APV'S) y llena plantilla inicial, altas y bajas de las 5 agencias para {getMonthLabel(monthKey)}. El % de rotación y el cumplimiento se recalculan solos.
+        Sube el Excel oficial de Rotación. Toma la hoja <b style={{ color: "#cbd5e1" }}>CHANGAN</b> (bloque de plantilla total ADMIN+APV'S). Como la rotación se reporta cerrada, aplica al mes en curso ({getMonthLabel(monthKey)}) las cifras del mes anterior (<b style={{ color: "#cbd5e1" }}>{getMonthLabel(getPreviousMonthKey(monthKey))}</b>): plantilla inicial, altas y bajas de las 5 agencias. El % de rotación y el cumplimiento se recalculan solos.
       </div>
       <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-rotacion" />
       <label htmlFor="file-rotacion" style={{
@@ -1777,7 +1781,7 @@ function ImportarRotacion({ onFieldChange, monthKey }) {
       )}
       {resultado && (
         <div style={{ background: "#14532d22", border: "1px solid #4ade80", borderRadius: 8, padding: "10px 14px", color: "#4ade80", fontSize: 12.5, marginTop: 12 }}>
-          ✅ Aplicado a {getMonthLabel(monthKey)}:
+          ✅ Cifras de {getMonthLabel(getPreviousMonthKey(monthKey))} aplicadas al mes en curso ({getMonthLabel(monthKey)}):
           <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>
             {resultado.aplicados.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a}</li>)}
           </ul>
