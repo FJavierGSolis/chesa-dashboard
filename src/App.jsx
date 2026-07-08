@@ -5788,19 +5788,24 @@ function parseProspeccionWorkbook(workbook) {
       h && keywords.every(k => String(h).toLowerCase().includes(k.toLowerCase()))
     );
 
+    // Normaliza encabezados (sin acentos) para búsquedas tolerantes.
+    const normH = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
     const iAsesor    = findCol(["NOMBRE DEL ASESOR"]);
     const iSucursal  = findCol(["SUCURSAL"]);
     const iVehiculo  = findCol(["VEHICULO"]);
     const iEstatus   = findCol(["ESTATUS DEL INTENTO"]);
-    const iCalif     = findCol(["escala del 0 al 10"]);
-    const iQueja     = findCol(["Motivo de la queja"]);
+    // Calificación: en Teléfono dice "escala del 0 al 10", en WhatsApp "escala de 0 a 10".
+    // Basta con que el encabezado contenga "escala" y "10".
+    const iCalif     = headers.findIndex(h => { const c = normH(h); return c.includes("escala") && c.includes("10"); });
+    // Queja: Teléfono "Motivo de la queja"; WhatsApp "cuál fue la falla de nuestra atención".
+    const iQueja     = headers.findIndex(h => { const c = normH(h); return c.includes("queja") || c.includes("falla"); });
     const iFalta     = findCol(["hace falta"]);
     const iComentario = findCol(["Algún comentario"]);
     const iProspecto = findCol(["NOMBRE DEL PROSPECTO"]);
     const iAtencion  = findCol(["atención adecuada"]);
     // "¿Por qué medio se enteró de nosotros?" — el encabezado varía en redacción y acentos,
-    // así que buscamos de forma tolerante (sin acentos, varias frases posibles).
-    const normH = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    // así que buscamos de forma tolerante (varias frases posibles).
     const iMedio = headers.findIndex(h => {
       const c = normH(h);
       return (c.includes("medio") && (c.includes("entero") || c.includes("enteraste") || c.includes("conocio") || c.includes("nosotros")))
