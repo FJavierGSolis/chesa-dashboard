@@ -2395,6 +2395,23 @@ function PieChartLeyenda({ datos, colores, size = 170, prevDatos = null, prevMes
       </span>
     );
   };
+  // Columna de ancho fijo (m / a). Si no hay dato del periodo, muestra "s/d" atenuado.
+  const slot = (actual, ant, sufijo, titulo) => {
+    const hay = ant != null && ant > 0;
+    const diff = hay ? ((actual - ant) / ant * 100) : 0;
+    const color = !hay ? "#475569" : diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
+    return (
+      <span title={titulo} style={{
+        fontSize: 9.5, fontWeight: 700, padding: "1px 4px", borderRadius: 8,
+        background: hay ? `${color}22` : "transparent",
+        color, border: `1px solid ${hay ? color + "44" : "#1e3a5f"}`,
+        whiteSpace: "nowrap", textAlign: "center", minWidth: 46,
+        display: "inline-block", opacity: hay ? 1 : 0.5, flexShrink: 0,
+      }}>
+        {hay ? `${diff > 0 ? "+" : ""}${diff.toFixed(0)}%${sufijo}` : `s/d ${sufijo}`}
+      </span>
+    );
+  };
   return (
     <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
       <PieChart entries={entries} size={size} />
@@ -2404,12 +2421,12 @@ function PieChartLeyenda({ datos, colores, size = 170, prevDatos = null, prevMes
           return (
             <div key={e.label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, fontSize: 12 }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: e.color, flexShrink: 0 }} />
-              <span style={{ color: "#cbd5e1", flex: 1 }}>{e.label}</span>
-              <span style={{ color: "#94a3b8", fontWeight: 700 }}>{e.value}</span>
-              <span style={{ color: "#64748b", fontSize: 11, minWidth: 38, textAlign: "right" }}>{pct.toFixed(0)}%</span>
+              <span style={{ color: "#cbd5e1", flex: 1, minWidth: 90 }}>{e.label}</span>
+              <span style={{ color: "#94a3b8", fontWeight: 700, minWidth: 28, textAlign: "right" }}>{e.value}</span>
+              <span style={{ color: "#64748b", fontSize: 11, minWidth: 34, textAlign: "right" }}>{pct.toFixed(0)}%</span>
               {prevDatos != null && badge(e.value, lookup(prevDatos, e.label), "", "vs periodo anterior")}
-              {prevMesDatos != null && badge(e.value, lookup(prevMesDatos, e.label), "m", "vs mes anterior (mismo día)")}
-              {prevAnioDatos != null && badge(e.value, lookup(prevAnioDatos, e.label), "a", "vs mismo mes del año anterior (mismo día)")}
+              {prevMesDatos != null && slot(e.value, lookup(prevMesDatos, e.label), "m", "vs mes anterior (mismo día)")}
+              {prevAnioDatos != null && slot(e.value, lookup(prevAnioDatos, e.label), "a", "vs mismo mes del año anterior (mismo día)")}
             </div>
           );
         })}
@@ -2800,8 +2817,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             <PieChartLeyenda
               datos={datosFuentePie}
               colores={coloresFuente}
-              prevMesDatos={baseMes ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, baseMes.porFuente[f.key] ?? 0])) : null}
-              prevAnioDatos={baseAnio ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, baseAnio.porFuente[f.key] ?? 0])) : null}
+              prevMesDatos={baseMes ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, baseMes.porFuente[f.key] ?? 0])) : {}}
+              prevAnioDatos={baseAnio ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, baseAnio.porFuente[f.key] ?? 0])) : {}}
             />
           </Card>
 
@@ -2813,8 +2830,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                   datos={datosEstatusPie}
                   colores={coloresEstatus}
                   size={150}
-                  prevMesDatos={baseMes ? baseMes.porEstatus : null}
-                  prevAnioDatos={baseAnio ? baseAnio.porEstatus : null}
+                  prevMesDatos={baseMes ? baseMes.porEstatus : {}}
+                  prevAnioDatos={baseAnio ? baseAnio.porEstatus : {}}
                 />
               </Card>
             </div>
@@ -2825,8 +2842,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                   datos={datosTemperaturaPie}
                   colores={coloresTemperatura}
                   size={150}
-                  prevMesDatos={baseMes ? baseMes.porTemperatura : null}
-                  prevAnioDatos={baseAnio ? baseAnio.porTemperatura : null}
+                  prevMesDatos={baseMes ? baseMes.porTemperatura : {}}
+                  prevAnioDatos={baseAnio ? baseAnio.porTemperatura : {}}
                 />
               </Card>
             </div>
@@ -2837,8 +2854,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             <PieChartLeyenda
               datos={datosProductoPie}
               colores={coloresProducto}
-              prevMesDatos={baseMes ? baseMes.porProducto : null}
-              prevAnioDatos={baseAnio ? baseAnio.porProducto : null}
+              prevMesDatos={baseMes ? baseMes.porProducto : {}}
+              prevAnioDatos={baseAnio ? baseAnio.porProducto : {}}
             />
           </Card>
 
@@ -2854,8 +2871,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                 <PieChartLeyenda
                   datos={subcampPie}
                   colores={coloresSub}
-                  prevMesDatos={baseMes?.porSubcampania ?? null}
-                  prevAnioDatos={baseAnio?.porSubcampania ?? null}
+                  prevMesDatos={baseMes?.porSubcampania ?? {}}
+                  prevAnioDatos={baseAnio?.porSubcampania ?? {}}
                 />
               </Card>
             );
