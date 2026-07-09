@@ -2405,17 +2405,28 @@ function PieChartLeyenda({ datos, colores, size = 170, prevDatos = null, prevMes
         fontSize: 9.5, fontWeight: 700, padding: "1px 4px", borderRadius: 8,
         background: hay ? `${color}22` : "transparent",
         color, border: `1px solid ${hay ? color + "44" : "#1e3a5f"}`,
-        whiteSpace: "nowrap", textAlign: "center", minWidth: 46,
+        whiteSpace: "nowrap", textAlign: "center", minWidth: 50,
         display: "inline-block", opacity: hay ? 1 : 0.5, flexShrink: 0,
       }}>
-        {hay ? `${diff > 0 ? "+" : ""}${diff.toFixed(0)}%${sufijo}` : `s/d ${sufijo}`}
+        {hay ? `${diff > 0 ? "+" : ""}${diff.toFixed(0)}%` : "s/d"}
       </span>
     );
   };
+  const hayComparativo = prevMesDatos != null || prevAnioDatos != null;
   return (
     <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
       <PieChart entries={entries} size={size} />
       <div style={{ flex: 1, minWidth: 180 }}>
+        {hayComparativo && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5, fontSize: 9, color: "#475569", fontWeight: 700, letterSpacing: .3 }}>
+            <span style={{ width: 9, flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 90 }} />
+            <span style={{ minWidth: 28 }} />
+            <span style={{ minWidth: 34 }} />
+            {prevMesDatos != null && <span style={{ minWidth: 50, textAlign: "center" }}>vs M-1</span>}
+            {prevAnioDatos != null && <span style={{ minWidth: 50, textAlign: "center" }}>vs A-1</span>}
+          </div>
+        )}
         {entries.filter(e => e.value > 0).sort((a, b) => b.value - a.value).map(e => {
           const pct = total > 0 ? (e.value / total * 100) : 0;
           return (
@@ -2809,7 +2820,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             </div>
           ) : (
             <div style={{ color: "#64748b", fontSize: 11.5 }}>
-              Variaciones con <b style={{ color: "#94a3b8" }}>corte al día {diaCorte}</b>: <b style={{ color: "#94a3b8" }}>m</b> = vs {getMonthLabel(baseMesKey)} (mes anterior){baseMes ? "" : " — sin datos"} · <b style={{ color: "#94a3b8" }}>a</b> = vs {getMonthLabel(baseAnioKey)} (año anterior){baseAnio ? "" : " — sin datos"}. Pasa el cursor sobre cada porcentaje para el detalle.
+              Variaciones con <b style={{ color: "#94a3b8" }}>corte al día {diaCorte}</b>: <b style={{ color: "#94a3b8" }}>vs M-1</b> = contra {getMonthLabel(baseMesKey)} (mes anterior){baseMes ? "" : " — sin datos"} · <b style={{ color: "#94a3b8" }}>vs A-1</b> = contra {getMonthLabel(baseAnioKey)} (año anterior){baseAnio ? "" : " — sin datos"}. Pasa el cursor sobre cada porcentaje para el detalle.
             </div>
           )}
           <Card>
