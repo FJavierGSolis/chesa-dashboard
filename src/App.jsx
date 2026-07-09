@@ -317,6 +317,12 @@ function getPreviousMonthKey(monthKey) {
   return getMonthKey(d);
 }
 
+// Mismo mes del año anterior (ej. "2026-06" -> "2025-06").
+function getSameMonthLastYearKey(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  return `${y - 1}-${String(m).padStart(2, "0")}`;
+}
+
 // Genera todos los monthKey desde INICIO_OPERACIONES hasta el mes operativo actual (inclusive).
 const INICIO_OPERACIONES = "2024-05"; // mayo 2024, cuando CHESA inició operaciones
 function getAllMonthsRange(hastaKey) {
@@ -2219,6 +2225,73 @@ function agregarFuentesLeads(registros) {
   };
 }
 
+// ── Utilidades para el comparativo con corte al día ──────────────────────────
+// Limpia una llave para Firebase (sin . $ # [ ] / + ni espacios).
+function limpiarClaveFB(k) {
+  return String(k).replace(/[.$#[\]/+\s]/g, "_").replace(/_+/g, "_").trim() || "x";
+}
+
+// Día del mes (1-31) desde la "Fecha de Alta" (Date, serial de Excel o texto dd/mm/aaaa | aaaa-mm-dd).
+function diaDeFecha(fecha) {
+  if (fecha == null) return null;
+  if (fecha instanceof Date) return isNaN(fecha) ? null : fecha.getDate();
+  if (typeof fecha === "number") {
+    if (XLSX.SSF && typeof XLSX.SSF.parse_date_code === "function") {
+      const d = XLSX.SSF.parse_date_code(fecha);
+      if (d && d.d) return d.d;
+    }
+    const dd = new Date(Math.round((fecha - 25569) * 86400 * 1000));
+    return isNaN(dd) ? null : dd.getUTCDate();
+  }
+  const s = String(fecha).trim();
+  let m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/); // dd/mm/aaaa
+  if (m) { const d = parseInt(m[1], 10); return d >= 1 && d <= 31 ? d : null; }
+  m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/); // aaaa-mm-dd
+  if (m) { const d = parseInt(m[3], 10); return d >= 1 && d <= 31 ? d : null; }
+  return null;
+}
+
+// Construye el desglose por día (llaves limpias para Firebase) desde los registros.
+function construirPorDia(registros) {
+  const porDia = {};
+  registros.forEach(r => {
+    const dia = diaDeFecha(r.fecha);
+    if (!dia) return;
+    const k = String(dia).padStart(2, "0");
+    if (!porDia[k]) porDia[k] = { total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {}, porProducto: {}, porSubcampania: {} };
+    const d = porDia[k];
+    d.total += 1;
+    const add = (obj, key) => { const c = limpiarClaveFB(key); obj[c] = (obj[c] ?? 0) + 1; };
+    add(d.porFuente, r.fuente);
+    add(d.porEstatus, r.estatus);
+    add(d.porTemperatura, r.temperatura);
+    add(d.porProducto, r.producto);
+    if (r.subcampania && r.subcampania !== "Sin subcampaña") add(d.porSubcampania, r.subcampania);
+  });
+  return porDia;
+}
+
+// Último día con actividad en un desglose por día.
+function ultimoDiaDe(porDia) {
+  if (!porDia) return null;
+  const dias = Object.keys(porDia).map(d => parseInt(d, 10)).filter(d => !isNaN(d));
+  return dias.length ? Math.max(...dias) : null;
+}
+
+// Acumula el desglose por día hasta el día indicado (inclusive) → agregado {total, porX...}.
+function acumularHastaDia(porDia, diaMax) {
+  if (!porDia) return null;
+  const out = { total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {}, porProducto: {}, porSubcampania: {} };
+  Object.entries(porDia).forEach(([dia, d]) => {
+    if (parseInt(dia, 10) > diaMax) return;
+    out.total += d.total || 0;
+    ["porFuente", "porEstatus", "porTemperatura", "porProducto", "porSubcampania"].forEach(k => {
+      Object.entries(d[k] || {}).forEach(([kk, v]) => { out[k][kk] = (out[k][kk] || 0) + v; });
+    });
+  });
+  return out;
+}
+
 // Funnel visual: barras horizontales decrecientes mostrando el resultado real de cada etapa,
 // el objetivo esperado (línea de referencia), y el % de paso entre etapas consecutivas.
 // Embudo visual real: trapecios apilados que se van angostando según el valor de cada etapa.
@@ -2297,39 +2370,46 @@ function FunnelEtapas({ etapasData }) {
   );
 }
 
-function PieChartLeyenda({ datos, colores, size = 170, prevDatos = null }) {
+function PieChartLeyenda({ datos, colores, size = 170, prevDatos = null, prevMesDatos = null, prevAnioDatos = null }) {
   // datos: [{ label, value }]
-  // prevDatos: { label: value } — mapa del mes anterior para mostrar variación inline
+  // prevDatos / prevMesDatos / prevAnioDatos: { label: value } — mapas para variación inline.
   const entries = datos.map((d, i) => ({ ...d, color: colores[i % colores.length] }));
   const total = entries.reduce((s, e) => s + e.value, 0);
+  const limpia = (k) => String(k).replace(/[.$#[\]/+\s]/g, "_").replace(/_+/g, "_").trim();
+  const lookup = (mapa, label) => {
+    if (!mapa) return null;
+    const v = mapa[label] ?? mapa[limpia(label)];
+    return v == null ? null : v;
+  };
+  const badge = (actual, ant, sufijo, titulo) => {
+    if (ant == null || ant <= 0) return null;
+    const diff = ((actual - ant) / ant * 100);
+    const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
+    return (
+      <span key={sufijo || "p"} title={titulo} style={{
+        fontSize: 9.5, fontWeight: 700, padding: "1px 5px", borderRadius: 8,
+        background: `${color}22`, color, border: `1px solid ${color}44`,
+        whiteSpace: "nowrap", marginLeft: 4,
+      }}>
+        {diff > 0 ? "+" : ""}{diff.toFixed(0)}%{sufijo}
+      </span>
+    );
+  };
   return (
     <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
       <PieChart entries={entries} size={size} />
       <div style={{ flex: 1, minWidth: 180 }}>
         {entries.filter(e => e.value > 0).sort((a, b) => b.value - a.value).map(e => {
           const pct = total > 0 ? (e.value / total * 100) : 0;
-          const ant = prevDatos?.[e.label];
-          let varEl = null;
-          if (ant != null && ant > 0) {
-            const diff = ((e.value - ant) / ant * 100);
-            const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
-            varEl = (
-              <span style={{
-                fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 8,
-                background: `${color}22`, color, border: `1px solid ${color}44`,
-                whiteSpace: "nowrap", marginLeft: 4,
-              }}>
-                {diff > 0 ? "+" : ""}{diff.toFixed(0)}%
-              </span>
-            );
-          }
           return (
             <div key={e.label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, fontSize: 12 }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: e.color, flexShrink: 0 }} />
               <span style={{ color: "#cbd5e1", flex: 1 }}>{e.label}</span>
               <span style={{ color: "#94a3b8", fontWeight: 700 }}>{e.value}</span>
               <span style={{ color: "#64748b", fontSize: 11, minWidth: 38, textAlign: "right" }}>{pct.toFixed(0)}%</span>
-              {varEl}
+              {prevDatos != null && badge(e.value, lookup(prevDatos, e.label), "", "vs periodo anterior")}
+              {prevMesDatos != null && badge(e.value, lookup(prevMesDatos, e.label), "m", "vs mes anterior (mismo día)")}
+              {prevAnioDatos != null && badge(e.value, lookup(prevAnioDatos, e.label), "a", "vs mismo mes del año anterior (mismo día)")}
             </div>
           );
         })}
@@ -2354,17 +2434,22 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
     setFuentesSel(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
   };
 
-  const [datosPorAgenciaMesAnterior, setDatosPorAgenciaMesAnterior] = useState({});
-  const [prevMonthKey, setPrevMonthKey] = useState("");
+  const [datosPorAgenciaMesPasado, setDatosPorAgenciaMesPasado] = useState({});
+  const [datosPorAgenciaAnioAnterior, setDatosPorAgenciaAnioAnterior] = useState({});
+  const [baseMesKey, setBaseMesKey] = useState("");
+  const [baseAnioKey, setBaseAnioKey] = useState("");
 
   useEffect(() => {
     (async () => {
       setLoadingDatos(true);
-      const prevKey = getPreviousMonthKey(monthKey);
-      setPrevMonthKey(prevKey);
-      const [raw, rawPrev] = await Promise.all([
+      const mesKey = getPreviousMonthKey(monthKey);
+      const anioKey = getSameMonthLastYearKey(monthKey);
+      setBaseMesKey(mesKey);
+      setBaseAnioKey(anioKey);
+      const [raw, rawMes, rawAnio] = await Promise.all([
         fbGet(`${FUENTES_LEADS_PATH}/${monthKey}`),
-        fbGet(`${FUENTES_LEADS_PATH}/${prevKey}`),
+        fbGet(`${FUENTES_LEADS_PATH}/${mesKey}`),
+        fbGet(`${FUENTES_LEADS_PATH}/${anioKey}`),
       ]);
       // Firebase guarda con claves encodeadas (encodeKey) — remapear a nombres originales
       const remapAgencias = (obj) => {
@@ -2372,13 +2457,13 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         const result = {};
         AGENCIAS.forEach(ag => {
           const encoded = encodeKey(ag);
-          // Buscar tanto por nombre original como por nombre encodeado
           result[ag] = obj[ag] ?? obj[encoded] ?? null;
         });
         return result;
       };
       setDatosPorAgencia(remapAgencias(raw));
-      setDatosPorAgenciaMesAnterior(remapAgencias(rawPrev));
+      setDatosPorAgenciaMesPasado(remapAgencias(rawMes));
+      setDatosPorAgenciaAnioAnterior(remapAgencias(rawAnio));
       setLoadingDatos(false);
     })();
   }, [monthKey]);
@@ -2390,7 +2475,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
     setErrorCarga("");
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
       const registros = parseFuentesLeadsWorkbook(wb);
       if (registros.length === 0) {
         setErrorCarga("No se encontraron leads en este archivo. Verifica que sea el reporte correcto.");
@@ -2401,12 +2486,15 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
       const limpiarClaves = (obj) => {
         const limpio = {};
         Object.entries(obj ?? {}).forEach(([k, v]) => {
-          const c = String(k).replace(/[.$#[\]/+\s]/g, "_").replace(/_+/g,"_").trim() || "x";
+          const c = limpiarClaveFB(k);
           limpio[c] = (limpio[c] ?? 0) + (Number(v) || 0);
         });
         return limpio;
       };
-      // Guardamos solo lo necesario para las gráficas — sin porAsesor (muy complejo) ni registros (muy grande)
+      // Desglose por día (para comparativos con corte al mismo día) + último día con actividad.
+      const porDia = construirPorDia(registros);
+      const ultimoDia = ultimoDiaDe(porDia);
+      // Guardamos los agregados del mes + el desglose por día (sin registros ni porAsesor, muy grandes).
       const paraFirebase = {
         total: Number(agregado.total) || 0,
         porFuente: limpiarClaves(agregado.porFuente),
@@ -2414,6 +2502,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         porTemperatura: limpiarClaves(agregado.porTemperatura),
         porProducto: limpiarClaves(agregado.porProducto),
         porSubcampania: limpiarClaves(agregado.porSubcampania),
+        porDia,
+        ultimoDia,
       };
       await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${encodeKey(agenciaSel)}`, paraFirebase);
       setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: { ...paraFirebase, registros, porAsesor: agregado.porAsesor } }));
@@ -2489,46 +2579,46 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
     return null;
   })();
 
-  // Consolidado mes anterior para comparación
-  const datosPrev = (() => {
-    const todasLasAg = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
-    // Intentar desde registros individuales primero
-    const registrosPrev = [];
-    todasLasAg.forEach(ag => {
-      const raw = datosPorAgenciaMesAnterior[ag];
-      if (raw?.registros && Array.isArray(raw.registros)) registrosPrev.push(...raw.registros);
-      else if (raw && Array.isArray(raw)) registrosPrev.push(...raw);
+  // Día de corte = último día con actividad en el mes en curso (para comparar "a la misma fecha").
+  const diaCorte = (() => {
+    const ags = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+    let d = 0;
+    ags.forEach(ag => {
+      const x = datosPorAgencia[ag];
+      if (!x) return;
+      if (x.ultimoDia) d = Math.max(d, x.ultimoDia);
+      else if (x.porDia) d = Math.max(d, ultimoDiaDe(x.porDia) || 0);
+      else if (Array.isArray(x.registros)) x.registros.forEach(r => { const dd = diaDeFecha(r.fecha); if (dd) d = Math.max(d, dd); });
     });
-    if (registrosPrev.length > 0) return agregarFuentesLeads(registrosPrev);
-    // Fallback: usar agregados guardados directamente
-    const merged = { total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {}, porProducto: {}, porSubcampania: {} };
-    let tieneAlgo = false;
-    todasLasAg.forEach(ag => {
-      const d = datosPorAgenciaMesAnterior[ag];
-      if (!d) return;
-      tieneAlgo = true;
-      merged.total += d.total ?? 0;
-      ['porFuente','porEstatus','porTemperatura','porProducto','porSubcampania'].forEach(key => {
-        Object.entries(d[key] ?? {}).forEach(([k,v]) => { merged[key][k] = (merged[key][k] ?? 0) + v; });
-      });
-    });
-    return tieneAlgo ? merged : null;
+    return d || 31;
   })();
 
-  // Helper: variación % vs mes anterior con badge visual
-  const varBadge = (actual, anterior) => {
-    if (anterior == null || anterior === 0) return null;
-    const diff = ((actual - anterior) / anterior * 100);
-    const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
-    const texto = `${diff > 0 ? "+" : ""}${diff.toFixed(0)}% vs mes ant.`;
-    return (
-      <span style={{
-        fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10,
-        background: `${color}22`, color, border: `1px solid ${color}55`,
-        marginLeft: 8, whiteSpace: "nowrap",
-      }}>{texto}</span>
-    );
+  // Consolida un conjunto (por agencia) recortado al día de corte.
+  const consolidarCorte = (datosAg) => {
+    const ags = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+    const merged = { total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {}, porProducto: {}, porSubcampania: {} };
+    let tiene = false, conCorte = false;
+    ags.forEach(ag => {
+      const x = datosAg[ag];
+      if (!x) return;
+      let cut = null;
+      if (x.porDia) { cut = acumularHastaDia(x.porDia, diaCorte); conCorte = true; }
+      else if (Array.isArray(x.registros)) { cut = agregarFuentesLeads(x.registros.filter(r => { const dd = diaDeFecha(r.fecha); return dd && dd <= diaCorte; })); conCorte = true; }
+      else if (x.porFuente) { cut = x; } // fallback: agregado completo del mes (sin corte por día)
+      if (!cut) return;
+      tiene = true;
+      merged.total += cut.total || 0;
+      ["porFuente", "porEstatus", "porTemperatura", "porProducto", "porSubcampania"].forEach(k => {
+        Object.entries(cut[k] || {}).forEach(([kk, v]) => { merged[k][kk] = (merged[k][kk] ?? 0) + v; });
+      });
+    });
+    if (!tiene) return null;
+    merged._conCorte = conCorte;
+    return merged;
   };
+
+  const baseMes = consolidarCorte(datosPorAgenciaMesPasado);
+  const baseAnio = consolidarCorte(datosPorAgenciaAnioAnterior);
 
   const datosFuentePie = datos ? FUENTES_LEAD.map(f => ({ label: f.label, value: datos.porFuente[f.key] ?? 0 })) : [];
   const coloresFuente = FUENTES_LEAD.map(f => f.color);
@@ -2655,6 +2745,27 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
               <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TOTAL LEADS{!todasFuentesSeleccionadas ? " (FILTRADO)" : ""}</div>
               <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.total}</div>
+              {todasFuentesSeleccionadas && (baseMes?.total > 0 || baseAnio?.total > 0) && (
+                <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                  {(() => {
+                    const chip = (base, etiqueta, titulo) => {
+                      if (!base || !(base.total > 0)) return null;
+                      const diff = (datos.total - base.total) / base.total * 100;
+                      const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
+                      return (
+                        <span title={titulo} style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: `${color}22`, color, border: `1px solid ${color}55`, whiteSpace: "nowrap" }}>
+                          {diff > 0 ? "+" : ""}{diff.toFixed(0)}% {etiqueta}
+                        </span>
+                      );
+                    };
+                    return <>
+                      {chip(baseMes, "vs mes ant.", `Contra ${getMonthLabel(baseMesKey)} al día ${diaCorte} (${baseMes?.total ?? 0} leads)`)}
+                      {chip(baseAnio, "vs año ant.", `Contra ${getMonthLabel(baseAnioKey)} al día ${diaCorte} (${baseAnio?.total ?? 0} leads)`)}
+                    </>;
+                  })()}
+                </div>
+              )}
+              <div style={{ color: "#475569", fontSize: 9.5, marginTop: 3 }}>corte al día {diaCorte}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
               <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>VENTAS CERRADAS (FUNNEL)</div>
@@ -2674,10 +2785,14 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
 
       {datos && (
         <>
-          {/* Aviso si no hay datos del mes anterior para comparar */}
-          {!datosPrev && prevMonthKey && (
+          {/* Aviso / leyenda del comparativo con corte al día */}
+          {!baseMes && !baseAnio ? (
             <div style={{ background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 8, padding: "10px 14px", color: "#64748b", fontSize: 12 }}>
-              💡 No hay reporte de <b style={{ color: "#3b9eea" }}>{getMonthLabel(prevMonthKey)}</b> cargado — sube el Excel de ese mes para ver las variaciones.
+              💡 Para ver las variaciones sube los reportes de <b style={{ color: "#3b9eea" }}>{getMonthLabel(baseMesKey)}</b> (mes anterior) y <b style={{ color: "#3b9eea" }}>{getMonthLabel(baseAnioKey)}</b> (mismo mes del año anterior).
+            </div>
+          ) : (
+            <div style={{ color: "#64748b", fontSize: 11.5 }}>
+              Variaciones con <b style={{ color: "#94a3b8" }}>corte al día {diaCorte}</b>: <b style={{ color: "#94a3b8" }}>m</b> = vs {getMonthLabel(baseMesKey)} (mes anterior){baseMes ? "" : " — sin datos"} · <b style={{ color: "#94a3b8" }}>a</b> = vs {getMonthLabel(baseAnioKey)} (año anterior){baseAnio ? "" : " — sin datos"}. Pasa el cursor sobre cada porcentaje para el detalle.
             </div>
           )}
           <Card>
@@ -2685,7 +2800,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             <PieChartLeyenda
               datos={datosFuentePie}
               colores={coloresFuente}
-              prevDatos={datosPrev ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, datosPrev.porFuente[f.key] ?? 0])) : null}
+              prevMesDatos={baseMes ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, baseMes.porFuente[f.key] ?? 0])) : null}
+              prevAnioDatos={baseAnio ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, baseAnio.porFuente[f.key] ?? 0])) : null}
             />
           </Card>
 
@@ -2697,7 +2813,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                   datos={datosEstatusPie}
                   colores={coloresEstatus}
                   size={150}
-                  prevDatos={datosPrev ? datosPrev.porEstatus : null}
+                  prevMesDatos={baseMes ? baseMes.porEstatus : null}
+                  prevAnioDatos={baseAnio ? baseAnio.porEstatus : null}
                 />
               </Card>
             </div>
@@ -2708,7 +2825,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                   datos={datosTemperaturaPie}
                   colores={coloresTemperatura}
                   size={150}
-                  prevDatos={datosPrev ? datosPrev.porTemperatura : null}
+                  prevMesDatos={baseMes ? baseMes.porTemperatura : null}
+                  prevAnioDatos={baseAnio ? baseAnio.porTemperatura : null}
                 />
               </Card>
             </div>
@@ -2719,7 +2837,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             <PieChartLeyenda
               datos={datosProductoPie}
               colores={coloresProducto}
-              prevDatos={datosPrev ? datosPrev.porProducto : null}
+              prevMesDatos={baseMes ? baseMes.porProducto : null}
+              prevAnioDatos={baseAnio ? baseAnio.porProducto : null}
             />
           </Card>
 
@@ -2735,7 +2854,8 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                 <PieChartLeyenda
                   datos={subcampPie}
                   colores={coloresSub}
-                  prevDatos={datosPrev?.porSubcampania ?? null}
+                  prevMesDatos={baseMes?.porSubcampania ?? null}
+                  prevAnioDatos={baseAnio?.porSubcampania ?? null}
                 />
               </Card>
             );
