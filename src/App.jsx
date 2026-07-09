@@ -7963,6 +7963,60 @@ function parseGeografia(workbook) {
   return { meta: extraerMetaPosicionamiento(workbook), colonias, brandVolume };
 }
 
+// Reporte 4: Performance Overview Summary (eficiencia / potencial del concesionario)
+function parsePerformanceOverview(workbook) {
+  const meta = extraerMetaPosicionamiento(workbook);
+  // Hoja "Categorías" (Menudeo / Flotilla)
+  const catSheet = workbook.SheetNames.find(n => n.toLowerCase().includes("categor"));
+  const categorias = [];
+  if (catSheet) {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[catSheet], { header: 1, defval: null });
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row[0] === null || String(row[0]).trim() === "") continue;
+      categorias.push({
+        nombre: String(row[0]).trim(),
+        mercado: numOrNull(row[1]) ?? 0,
+        nissanMs: numOrNull(row[2]),
+        nissanUnidades: numOrNull(row[3]) ?? 0,
+        ventasNacionales: numOrNull(row[4]),
+        expected: numOrNull(row[5]),
+        compradoresPMA: numOrNull(row[6]),
+        arribaDebajo: numOrNull(row[7]),
+        eficiencia: numOrNull(row[8]),
+        dealerMs: numOrNull(row[9]),
+        expectedMs: numOrNull(row[10]),
+        dealerArribaDebajo: numOrNull(row[11]),
+        dealerEfectividad: numOrNull(row[12]),
+      });
+    }
+  }
+  // Hoja "Geografía" (por colonia / CensusTract)
+  const geoSheet = workbook.SheetNames.find(n => n.toLowerCase().includes("geograf"));
+  const colonias = [];
+  if (geoSheet) {
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[geoSheet], { header: 1, defval: null });
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row || row[0] === null || String(row[0]).trim() === "") continue;
+      colonias.push({
+        colonia: String(row[0]).trim(),
+        mercado: numOrNull(row[1]),
+        nissanMs: numOrNull(row[2]),
+        nissanUnidades: numOrNull(row[3]),
+        expected: numOrNull(row[4]),
+        arribaDebajo: numOrNull(row[5]),
+        eficiencia: numOrNull(row[6]),
+        expectedMs: numOrNull(row[7]),
+        compradoresPMA: numOrNull(row[8]),
+        dealerArribaDebajo: numOrNull(row[9]),
+        dealerEfectividad: numOrNull(row[10]),
+      });
+    }
+  }
+  return { meta, categorias, colonias };
+}
+
 // Badge de variación (+ verde / - rojo) reutilizable
 function DeltaBadge({ value, suffix = "", ppt = false }) {
   if (value === null || value === undefined) return <span style={{ color: "#475569" }}>—</span>;
@@ -7991,26 +8045,30 @@ function PosicionamientoSection({ monthKey }) {
   const [datosMarca, setDatosMarca] = useState(null);
   const [datosSeg, setDatosSeg] = useState(null);
   const [datosGeo, setDatosGeo] = useState(null);
+  const [datosEfi, setDatosEfi] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState("");
   const [loadingDatos, setLoadingDatos] = useState(true);
   const [segSel, setSegSel] = useState(null);
   const [geoFiltro, setGeoFiltro] = useState("todas"); // todas | conNissan | oportunidad
   const [geoVerTodas, setGeoVerTodas] = useState(false);
+  const [efiVerTodas, setEfiVerTodas] = useState(false);
   const fileRef = useRef(null);
 
   useEffect(() => {
     (async () => {
       setLoadingDatos(true);
       setError("");
-      const [m, s, g] = await Promise.all([
+      const [m, s, g, e] = await Promise.all([
         fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/marca`),
         fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/segmentos`),
         fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/geografia`),
+        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/eficiencia`),
       ]);
       setDatosMarca(m || null);
       setDatosSeg(s || null);
       setDatosGeo(g || null);
+      setDatosEfi(e || null);
       setSegSel(null);
       setLoadingDatos(false);
     })();
@@ -8031,11 +8089,13 @@ function PosicionamientoSection({ monthKey }) {
       let parsed, tipo;
       if (sub === "marca")      { parsed = parsePosicionamientoMarca(wb);     tipo = "marca"; }
       else if (sub === "segmentos") { parsed = parsePosicionamientoSegmentos(wb); tipo = "segmentos"; }
-      else                      { parsed = parseGeografia(wb);                 tipo = "geografia"; }
+      else if (sub === "geografia") { parsed = parseGeografia(wb);             tipo = "geografia"; }
+      else                      { parsed = parsePerformanceOverview(wb);       tipo = "eficiencia"; }
 
       const vacio = (tipo === "marca" && parsed.marcas.length === 0)
         || (tipo === "segmentos" && parsed.segmentos.length === 0)
-        || (tipo === "geografia" && parsed.colonias.length === 0);
+        || (tipo === "geografia" && parsed.colonias.length === 0)
+        || (tipo === "eficiencia" && parsed.colonias.length === 0 && parsed.categorias.length === 0);
       if (vacio) { setError("No se encontraron datos. Verifica que sea el reporte correcto para esta sub-pestaña."); setCargando(false); return; }
 
       // Validación: el reporte cierra un mes y se sube en el siguiente.
@@ -8052,7 +8112,8 @@ function PosicionamientoSection({ monthKey }) {
       await fbSet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/${tipo}`, parsed);
       if (tipo === "marca") setDatosMarca(parsed);
       else if (tipo === "segmentos") { setDatosSeg(parsed); setSegSel(null); }
-      else setDatosGeo(parsed);
+      else if (tipo === "geografia") setDatosGeo(parsed);
+      else setDatosEfi(parsed);
     } catch (err) {
       console.error(err);
       setError(`No se pudo procesar el archivo: ${err.message}`);
@@ -8062,8 +8123,8 @@ function PosicionamientoSection({ monthKey }) {
     }
   };
 
-  const metaActual = sub === "marca" ? datosMarca?.meta : sub === "segmentos" ? datosSeg?.meta : datosGeo?.meta;
-  const nombreReporte = sub === "marca" ? "Posicionamiento por Marca" : sub === "segmentos" ? "Posicionamiento por Segmentos" : "Eficiencia de la Geografía";
+  const metaActual = sub === "marca" ? datosMarca?.meta : sub === "segmentos" ? datosSeg?.meta : sub === "geografia" ? datosGeo?.meta : datosEfi?.meta;
+  const nombreReporte = sub === "marca" ? "Posicionamiento por Marca" : sub === "segmentos" ? "Posicionamiento por Segmentos" : sub === "geografia" ? "Eficiencia de la Geografía" : "Performance Overview Summary";
   const territorioLabel = TERRITORIOS_POS.find(t => t.key === territorio)?.label || territorio;
 
   return (
@@ -8091,6 +8152,7 @@ function PosicionamientoSection({ monthKey }) {
             { key: "marca", label: "🏁 Por Marca" },
             { key: "segmentos", label: "🚗 Por Segmentos" },
             { key: "geografia", label: "🗺️ Por Geografía" },
+            { key: "eficiencia", label: "⚡ Eficiencia / Potencial" },
           ].map(t => (
             <button key={t.key} onClick={() => setSub(t.key)} style={{
               background: sub === t.key ? "#3b9eea" : "#0f2239",
@@ -8557,6 +8619,170 @@ function PosicionamientoSection({ monthKey }) {
                     }
                     l.push("\nResponde en markdown, ejecutivo y directo:");
                     l.push("## Dónde Nissan es fuerte (defender)\n## Colonias prioritarias de conquista y contra qué marca\n## 3 acciones de cobertura territorial");
+                    return l.join("\n");
+                  }}
+                />
+              </>
+            );
+          })())}
+
+          {/* ══════════════ SUB: EFICIENCIA / POTENCIAL ══════════════ */}
+          {sub === "eficiencia" && (!datosEfi ? (
+            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Performance Overview Summary" de {territorioLabel} para {getMonthLabel(monthKey)}.</div></Card>
+          ) : (() => {
+            const efi = datosEfi;
+            const cats = efi.categorias || [];
+            const cols = efi.colonias || [];
+            const conEf = cols.filter(c => c.eficiencia != null);
+            const totNis = cols.reduce((s, c) => s + (c.nissanUnidades || 0), 0);
+            const totExp = cols.reduce((s, c) => s + (c.expected || 0), 0);
+            const brechaTotal = totExp - totNis;
+            const efGlobal = totExp > 0 ? (totNis / totExp * 100) : null;
+            const efColor = (e) => e == null ? "#475569" : e > 100 ? "#4ade80" : e >= 50 ? "#fbbf24" : "#f87171";
+            const verde = conEf.filter(c => c.eficiencia > 100).length;
+            const amarillo = conEf.filter(c => c.eficiencia >= 50 && c.eficiencia <= 100).length;
+            const rojo = conEf.filter(c => c.eficiencia < 50).length;
+            const oportunidad = cols.filter(c => c.arribaDebajo != null && c.arribaDebajo < 0).sort((a, b) => a.arribaDebajo - b.arribaDebajo);
+            const fortalezas = cols.filter(c => c.eficiencia != null && c.eficiencia > 100).sort((a, b) => b.eficiencia - a.eficiencia);
+            const oppMostradas = efiVerTodas ? oportunidad : oportunidad.slice(0, 20);
+            return (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+                  <div style={{ background: "#0f2239", border: `1px solid ${efColor(efGlobal)}`, borderTop: `3px solid ${efColor(efGlobal)}`, borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>EFICIENCIA GLOBAL</div>
+                    <div style={{ color: efColor(efGlobal), fontSize: 26, fontWeight: 800 }}>{efGlobal != null ? `${efGlobal.toFixed(0)}%` : "—"}</div>
+                    <div style={{ color: "#475569", fontSize: 11 }}>de su potencial</div>
+                  </div>
+                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #3b9eea", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>REAL VS ESPERADO</div>
+                    <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{totNis} / {totExp}</div>
+                    <div style={{ color: "#475569", fontSize: 11 }}>unidades</div>
+                  </div>
+                  <div style={{ background: "#0f2239", border: "1px solid #f87171", borderTop: "3px solid #f87171", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>BRECHA DE POTENCIAL</div>
+                    <div style={{ color: "#f87171", fontSize: 22, fontWeight: 800 }}>{brechaTotal > 0 ? `-${brechaTotal}` : brechaTotal}</div>
+                    <div style={{ color: "#475569", fontSize: 11 }}>uds que se dejan de vender</div>
+                  </div>
+                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>SEMÁFORO COLONIAS</div>
+                    <div style={{ fontSize: 18, fontWeight: 800 }}>
+                      <span style={{ color: "#4ade80" }}>{verde}</span> <span style={{ color: "#475569", fontSize: 12 }}>/</span> <span style={{ color: "#fbbf24" }}>{amarillo}</span> <span style={{ color: "#475569", fontSize: 12 }}>/</span> <span style={{ color: "#f87171" }}>{rojo}</span>
+                    </div>
+                    <div style={{ color: "#475569", fontSize: 10 }}>🟢&gt;100% · 🟡50-100% · 🔴&lt;50%</div>
+                  </div>
+                </div>
+
+                {cats.length > 0 && (
+                  <Card>
+                    <SectionHeader title="EFICIENCIA POR CATEGORÍA" icon="📦" />
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+                      {cats.map(c => (
+                        <div key={c.nombre} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderLeft: `4px solid ${efColor(c.eficiencia)}`, borderRadius: 8, padding: "12px 14px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ color: "#f1f5f9", fontSize: 14, fontWeight: 800 }}>{c.nombre}</span>
+                            <span style={{ color: efColor(c.eficiencia), fontSize: 20, fontWeight: 800 }}>{c.eficiencia != null ? `${c.eficiencia}%` : "—"}</span>
+                          </div>
+                          <div style={{ color: "#64748b", fontSize: 11.5, marginTop: 6, lineHeight: 1.6 }}>
+                            Mercado: <b style={{ color: "#cbd5e1" }}>{c.mercado}</b> · Nissan: <b style={{ color: "#cbd5e1" }}>{c.nissanUnidades}</b> ({c.nissanMs}%)<br />
+                            Potencial: <b style={{ color: "#cbd5e1" }}>{c.expected}</b> uds · Brecha: <b style={{ color: c.arribaDebajo < 0 ? "#f87171" : "#4ade80" }}>{c.arribaDebajo > 0 ? `+${c.arribaDebajo}` : c.arribaDebajo}</b>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                )}
+
+                <Card>
+                  <SectionHeader title="OPORTUNIDAD POR COLONIA — BAJO POTENCIAL" icon="🎯" />
+                  <div style={{ color: "#fbbf24", fontSize: 11.5, marginBottom: 10, background: "#fbbf2411", border: "1px solid #fbbf2433", borderRadius: 6, padding: "8px 12px" }}>
+                    Colonias con demanda donde Nissan vende por debajo de su potencial, ordenadas por unidades desperdiciadas. Prospección y mercadeo dirigido.
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                          <th style={{ textAlign: "left", padding: "6px 8px" }}>COLONIA</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>MERCADO</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>NISSAN</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>ESPERADO</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>BRECHA</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>EFICIENCIA</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {oppMostradas.map((c, i) => (
+                          <tr key={i} style={{ borderBottom: "1px solid #1e3a5f", background: c.mercado >= 10 ? "#fbbf2410" : "transparent" }}>
+                            <td style={{ padding: "6px 8px", color: "#f1f5f9" }}>{c.colonia}</td>
+                            <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>{c.mercado ?? "—"}</td>
+                            <td style={{ textAlign: "right", padding: "6px 8px", color: "#94a3b8" }}>{c.nissanUnidades ?? 0}</td>
+                            <td style={{ textAlign: "right", padding: "6px 8px", color: "#3b9eea", fontWeight: 700 }}>{c.expected ?? "—"}</td>
+                            <td style={{ textAlign: "right", padding: "6px 8px", color: "#f87171", fontWeight: 700 }}>{c.arribaDebajo}</td>
+                            <td style={{ textAlign: "right", padding: "6px 8px", color: efColor(c.eficiencia), fontWeight: 700 }}>{c.eficiencia != null ? `${c.eficiencia}%` : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {oportunidad.length > 20 && (
+                    <div style={{ textAlign: "center", marginTop: 12 }}>
+                      <button onClick={() => setEfiVerTodas(!efiVerTodas)} style={{
+                        background: "transparent", border: "1px solid #fbbf24", color: "#fbbf24",
+                        borderRadius: 6, padding: "6px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+                      }}>{efiVerTodas ? "Ver menos" : `Ver todas (${oportunidad.length})`}</button>
+                    </div>
+                  )}
+                </Card>
+
+                {fortalezas.length > 0 && (
+                  <Card>
+                    <SectionHeader title="FORTALEZAS — SOBRE POTENCIAL (REPLICAR)" icon="💪" />
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <thead>
+                          <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                            <th style={{ textAlign: "left", padding: "6px 8px" }}>COLONIA</th>
+                            <th style={{ textAlign: "right", padding: "6px 8px" }}>NISSAN</th>
+                            <th style={{ textAlign: "right", padding: "6px 8px" }}>ESPERADO</th>
+                            <th style={{ textAlign: "right", padding: "6px 8px" }}>EFICIENCIA</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fortalezas.slice(0, efiVerTodas ? fortalezas.length : 10).map((c, i) => (
+                            <tr key={i} style={{ borderBottom: "1px solid #1e3a5f" }}>
+                              <td style={{ padding: "6px 8px", color: "#f1f5f9" }}>{c.colonia}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#4ade80", fontWeight: 700 }}>{c.nissanUnidades ?? 0}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#94a3b8" }}>{c.expected ?? "—"}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#4ade80", fontWeight: 700 }}>{c.eficiencia}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
+
+                <AnalisisIABlock
+                  titulo="ANÁLISIS DE EFICIENCIA CON IA"
+                  subtitulo="🧠 Analizar eficiencia y potencial"
+                  loadingLabel="Analizando eficiencia…"
+                  buildPrompt={() => {
+                    const l = [];
+                    l.push("Eres analista de inteligencia comercial para la plaza Nissan en " + (efi.meta?.geografia || "el territorio") + ".");
+                    l.push("Analiza la eficiencia del concesionario (ventas reales vs. potencial esperado, fuente Urban Science) y prioriza acciones para capturar el potencial no realizado.\n");
+                    l.push(`Periodo: ${efi.meta?.periodo || "N/D"}`);
+                    l.push(`Eficiencia global: ${efGlobal != null ? efGlobal.toFixed(0) + "%" : "N/D"} (${totNis} uds reales vs ${totExp} esperadas; brecha ${brechaTotal}).`);
+                    if (cats.length) {
+                      l.push("\nPOR CATEGORÍA (nombre | mercado | Nissan uds | part% | esperado | brecha | eficiencia%):");
+                      cats.forEach(c => l.push(`  ${c.nombre} | ${c.mercado} | ${c.nissanUnidades} | ${c.nissanMs}% | ${c.expected} | ${c.arribaDebajo} | ${c.eficiencia}%`));
+                    }
+                    l.push("\nTOP COLONIAS BAJO POTENCIAL (colonia | mercado | Nissan | esperado | brecha | eficiencia%):");
+                    oportunidad.slice(0, 15).forEach(c => l.push(`  ${c.colonia} | ${c.mercado} | ${c.nissanUnidades} | ${c.expected} | ${c.arribaDebajo} | ${c.eficiencia}%`));
+                    if (fortalezas.length) {
+                      l.push("\nCOLONIAS SOBRE POTENCIAL (fortalezas a replicar):");
+                      fortalezas.slice(0, 8).forEach(c => l.push(`  ${c.colonia}: ${c.nissanUnidades} uds vs ${c.expected} esperadas (${c.eficiencia}%)`));
+                    }
+                    l.push("\nResponde en markdown, ejecutivo y directo:");
+                    l.push("## Lectura de eficiencia (retail vs flotilla)\n## Colonias prioritarias para capturar potencial\n## Qué replicar de las colonias fuertes\n## 3 acciones concretas");
                     return l.join("\n");
                   }}
                 />
