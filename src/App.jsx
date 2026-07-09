@@ -4313,7 +4313,7 @@ const INDICADORES_TENDENCIA = [
   { key: "ms",      label: "Market Share (%)", suffix: "%", agenciasValidas: AGENCIAS },
 ];
 
-function LineChart({ series, width = 760, height = 220, suffix = "" }) {
+function LineChart({ series, width = 1100, height = 240, suffix = "" }) {
   // series: [{ label, color, points: [{x: label, y: number|null}] }]
   // Los puntos con y === null representan meses sin dato: dejan hueco en la línea.
   const allY = series.flatMap(s => s.points.map(p => p.y)).filter(y => y != null);
@@ -4329,7 +4329,7 @@ function LineChart({ series, width = 760, height = 220, suffix = "" }) {
   const xScale = (i) => padding.left + i * xStep;
 
   return (
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: width }}>
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ width: "100%", maxWidth: width, height: "auto", display: "block" }}>
       {/* Líneas guía horizontales */}
       {[0, 0.25, 0.5, 0.75, 1].map(f => {
         const y = padding.top + h * f;
@@ -4341,9 +4341,9 @@ function LineChart({ series, width = 760, height = 220, suffix = "" }) {
           </g>
         );
       })}
-      {/* Etiquetas de eje X (todos los meses del rango, salteando para no saturar) */}
+      {/* Etiquetas de eje X — se muestran todas cuando hay 13 o menos meses. */}
       {ejeX.points.map((p, i) => (
-        (i % Math.ceil(n / 8 || 1) === 0) && (
+        (i % (n <= 13 ? 1 : Math.ceil(n / 12)) === 0) && (
           <text key={i} x={xScale(i)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">{p.x}</text>
         )
       ))}
