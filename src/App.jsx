@@ -4314,14 +4314,16 @@ const INDICADORES_TENDENCIA = [
 ];
 
 function LineChart({ series, width = 760, height = 220, suffix = "" }) {
-  // series: [{ label, color, points: [{x: label, y: number}] }]
-  const allY = series.flatMap(s => s.points.map(p => p.y));
+  // series: [{ label, color, points: [{x: label, y: number|null}] }]
+  // Los puntos con y === null representan meses sin dato: dejan hueco en la línea.
+  const allY = series.flatMap(s => s.points.map(p => p.y)).filter(y => y != null);
   const maxY = Math.max(1, ...allY);
   const minY = Math.min(0, ...allY);
   const padding = { top: 24, right: 16, bottom: 28, left: 40 };
   const w = width - padding.left - padding.right;
   const h = height - padding.top - padding.bottom;
-  const n = series[0]?.points.length ?? 0;
+  const n = Math.max(0, ...series.map(s => s.points.length));
+  const ejeX = series.reduce((a, b) => (b.points.length > a.points.length ? b : a), series[0] || { points: [] });
   const xStep = n > 1 ? w / (n - 1) : 0;
   const yScale = (val) => padding.top + h - ((val - minY) / (maxY - minY || 1)) * h;
   const xScale = (i) => padding.left + i * xStep;
@@ -4339,21 +4341,28 @@ function LineChart({ series, width = 760, height = 220, suffix = "" }) {
           </g>
         );
       })}
-      {/* Etiquetas de eje X (cada 2 puntos para no saturar) */}
-      {series[0]?.points.map((p, i) => (
+      {/* Etiquetas de eje X (todos los meses del rango, salteando para no saturar) */}
+      {ejeX.points.map((p, i) => (
         (i % Math.ceil(n / 8 || 1) === 0) && (
           <text key={i} x={xScale(i)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">{p.x}</text>
         )
       ))}
       {/* Líneas de cada serie, con el valor numérico visible sobre cada punto */}
       {series.map((s, si) => {
-        const pathD = s.points.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(p.y)}`).join(" ");
+        // Construye el trazo salteando huecos (y === null): reinicia con "M" tras cada hueco.
+        let pathD = ""; let trazando = false;
+        s.points.forEach((p, i) => {
+          if (p.y == null) { trazando = false; return; }
+          pathD += `${trazando ? "L" : "M"} ${xScale(i)} ${yScale(p.y)} `;
+          trazando = true;
+        });
         // Si hay más de una serie, alternamos el offset vertical de las etiquetas para que no se encimen.
         const labelOffsetY = series.length > 1 ? (si === 0 ? -10 : 16) : -10;
         return (
           <g key={si}>
-            <path d={pathD} fill="none" stroke={s.color} strokeWidth="2.5" />
+            <path d={pathD.trim()} fill="none" stroke={s.color} strokeWidth="2.5" />
             {s.points.map((p, i) => (
+              p.y == null ? null : (
               <g key={i}>
                 <circle cx={xScale(i)} cy={yScale(p.y)} r="3" fill={s.color}>
                   <title>{`${s.label} — ${p.x}: ${p.y.toFixed(1)}${suffix}`}</title>
@@ -4369,6 +4378,7 @@ function LineChart({ series, width = 760, height = 220, suffix = "" }) {
                   {p.y.toFixed(suffix === "%" ? 1 : 0)}{suffix}
                 </text>
               </g>
+              )
             ))}
           </g>
         );
@@ -5521,36 +5531,30 @@ function TendenciasSection({ currentMonthKey }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      // Meses del año en curso, de enero hasta el mes operativo actual
-      const mesesAnioActual = [];
-      for (let m = 1; m <= mesActualNum; m++) {
-        mesesAnioActual.push(`${anioActual}-${String(m).padStart(2, "0")}`);
-      }
-      const datosActual = await Promise.all(mesesAnioActual.map(async mk => {
-        const raw = await fbGet(`datos/${mk}`);
-        const merged = {};
-        Object.keys(initialData).forEach(section => {
-          merged[section] = decodeFirebaseData(raw?.[section], initialData[section]);
-        });
-        return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged, agenciaSel) };
-      }));
-      setSerieActual(datosActual.map(d => ({ x: d.mes, y: d.value })));
-
-      if (compararAnioAnterior) {
-        const anioAnterior = String(parseInt(anioActual, 10) - 1);
-        const mesesAnioAnterior = [];
-        for (let m = 1; m <= mesActualNum; m++) {
-          mesesAnioAnterior.push(`${anioAnterior}-${String(m).padStart(2, "0")}`);
-        }
-        const datosAnterior = await Promise.all(mesesAnioAnterior.map(async mk => {
-          const raw = await fbGet(`datos/${mk}`);
+      // Construye una serie de 12 meses (ene–dic) para un año dado.
+      // hastaMes: si se indica, los meses posteriores quedan vacíos (año en curso).
+      // Un mes sin datos en Firebase queda como null (hueco en la línea), no como 0.
+      const buildSerie = async (anio, hastaMes) => Promise.all(
+        Array.from({ length: 12 }, (_, idx) => idx + 1).map(async (m) => {
+          const etiqueta = MES_NOMBRES[m - 1].slice(0, 3);
+          if (hastaMes != null && m > hastaMes) return { x: etiqueta, y: null };
+          const raw = await fbGet(`datos/${anio}-${String(m).padStart(2, "0")}`);
+          if (!raw) return { x: etiqueta, y: null };
           const merged = {};
           Object.keys(initialData).forEach(section => {
             merged[section] = decodeFirebaseData(raw?.[section], initialData[section]);
           });
-          return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged, agenciaSel) };
-        }));
-        setSerieAnterior(datosAnterior.map(d => ({ x: d.mes, y: d.value })));
+          return { x: etiqueta, y: computeIndicadorValue(indicador, merged, agenciaSel) };
+        })
+      );
+
+      // Año en curso: enero hasta el mes operativo; el resto del año queda vacío.
+      setSerieActual(await buildSerie(anioActual, mesActualNum));
+
+      if (compararAnioAnterior) {
+        // Año anterior: los 12 meses completos, para ver el cierre total del año pasado.
+        const anioAnterior = String(parseInt(anioActual, 10) - 1);
+        setSerieAnterior(await buildSerie(anioAnterior, null));
       } else {
         setSerieAnterior([]);
       }
