@@ -7792,6 +7792,742 @@ function ImportarSatisfaccion24hrs({ onFieldChange, monthKey }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// POSICIONAMIENTO COMPETITIVO TERRITORIAL (Fuente: Urban Science / Foresight)
+// Tres reportes: Posicionamiento por Marca, por Segmentos, y Eficiencia de la Geografía.
+// ═══════════════════════════════════════════════════════════════════════════
+const POSICIONAMIENTO_PATH = "posicionamiento"; // posicionamiento/{monthKey}/{marca|segmentos|geografia}
+
+// Lee la hoja de "Filtros Avanzados" para extraer el contexto del reporte.
+function extraerMetaPosicionamiento(workbook) {
+  const filtrosSheet = workbook.SheetNames.find(n => n.toLowerCase().includes("filtros"));
+  const meta = { geografia: "", periodo: "", fecha: "", comparacion: "" };
+  if (!filtrosSheet) return meta;
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[filtrosSheet], { header: 1, defval: null });
+  rows.forEach(r => {
+    const k = String(r?.[0] || "").trim();
+    const v = r?.[1];
+    if (k.includes("Geografía")) meta.geografia = v ? String(v).trim() : "";
+    else if (k.includes("Periodo Calendario")) meta.periodo = v ? String(v).trim() : "";
+    else if (k.includes("Reporting Date")) meta.fecha = v ? String(v).trim() : "";
+    else if (k.includes("Tipo de Comparación")) meta.comparacion = v ? String(v).trim() : "";
+  });
+  return meta;
+}
+
+const numOrNull = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(v); return isNaN(n) ? null : n; };
+
+// Deriva "YYYY-MM" desde el Reporting Date del reporte ("DD/MM/YY"). null si no se puede.
+function mesDeReporte(meta) {
+  const f = String(meta?.fecha || "").trim();
+  const p = f.split("/");
+  if (p.length === 3) {
+    let y = parseInt(p[2], 10); if (!isNaN(y) && y < 100) y += 2000;
+    const mm = parseInt(p[1], 10);
+    if (!isNaN(y) && mm >= 1 && mm <= 12) return `${y}-${String(mm).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+// Reporte 1: Posicionamiento por Marca
+function parsePosicionamientoMarca(workbook) {
+  const ws = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  const marcas = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || row[1] === null || String(row[1]).trim() === "") continue;
+    marcas.push({
+      posicion: numOrNull(row[0]),
+      marca: String(row[1]).trim(),
+      unidades: numOrNull(row[2]) ?? 0,
+      unidadesAnt: numOrNull(row[3]),
+      deltaUnidades: numOrNull(row[4]),
+      deltaPct: numOrNull(row[5]),
+      ms: numOrNull(row[6]),
+      msAnt: numOrNull(row[7]),
+      deltaMs: numOrNull(row[8]),
+    });
+  }
+  return { meta: extraerMetaPosicionamiento(workbook), marcas };
+}
+
+// Reporte 2: Posicionamiento por Segmentos (segmento → ranking de modelos)
+function parsePosicionamientoSegmentos(workbook) {
+  const ws = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  const map = {};
+  const orden = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const seg = row?.[0];
+    if (seg === null || seg === undefined || String(seg).trim() === "") continue;
+    const key = String(seg).trim();
+    if (!map[key]) {
+      map[key] = {
+        segmento: key,
+        unidades: numOrNull(row[1]) ?? 0,
+        deltaPct: numOrNull(row[2]),
+        ms: numOrNull(row[3]),
+        deltaMs: numOrNull(row[4]),
+        nissanModelos: row[5] ? String(row[5]).trim() : "",
+        nissanUnidades: numOrNull(row[6]) ?? 0,
+        nissanDeltaPct: numOrNull(row[7]),
+        nissanMs: numOrNull(row[8]),
+        nissanDeltaMs: numOrNull(row[9]),
+        modelos: [],
+      };
+      orden.push(key);
+    }
+    if (row[11] !== null && String(row[11]).trim() !== "") {
+      map[key].modelos.push({
+        posicion: numOrNull(row[10]),
+        marca: String(row[11]).trim(),
+        modelo: row[12] ? String(row[12]).trim() : "",
+        unidades: numOrNull(row[13]) ?? 0,
+        deltaPct: numOrNull(row[14]),
+        ms: numOrNull(row[15]),
+        deltaMs: numOrNull(row[16]),
+      });
+    }
+  }
+  // Posición de Nissan dentro de cada segmento (mejor posición entre sus modelos)
+  orden.forEach(k => {
+    const posN = map[k].modelos.filter(m => m.marca.toLowerCase() === "nissan").map(m => m.posicion).filter(p => p != null);
+    map[k].nissanPosicion = posN.length ? Math.min(...posN) : null;
+  });
+  return { meta: extraerMetaPosicionamiento(workbook), segmentos: orden.map(k => map[k]) };
+}
+
+// Reporte 3: Eficiencia de la Geografía (por colonia / CensusTract)
+function parseGeografia(workbook) {
+  const ws = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+  const colonias = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || row[1] === null || String(row[1]).trim() === "") continue;
+    colonias.push({
+      posicion: numOrNull(row[0]),
+      colonia: String(row[1]).trim(),
+      unidades: numOrNull(row[2]) ?? 0,
+      deltaUnidades: numOrNull(row[3]),
+      deltaPct: numOrNull(row[4]),
+      ms: numOrNull(row[5]),
+      deltaMs: numOrNull(row[6]),
+      nissanUnidades: numOrNull(row[7]),
+      nissanDeltaUnidades: numOrNull(row[8]),
+      nissanDeltaPct: numOrNull(row[9]),
+      nissanMs: numOrNull(row[10]),
+      nissanDeltaMs: numOrNull(row[11]),
+    });
+  }
+  // Brand Volume by Geography (matriz colonia × marca) — permite ver quién domina cada colonia.
+  let brandVolume = null;
+  const bvName = workbook.SheetNames.find(n => n.toLowerCase().includes("brand volume"));
+  if (bvName) {
+    const bvRows = XLSX.utils.sheet_to_json(workbook.Sheets[bvName], { header: 1, defval: null });
+    const headers = (bvRows[0] || []).map(h => String(h || "").trim());
+    const marcasBV = headers.slice(1);
+    const iNis = marcasBV.findIndex(m => m.toLowerCase() === "nissan");
+    const totalRow = bvRows.find(r => String(r?.[0] || "").trim().toLowerCase() === "total");
+    const totales = [];
+    if (totalRow) marcasBV.forEach((m, i) => { const u = numOrNull(totalRow[i + 1]) ?? 0; if (u > 0) totales.push({ marca: m, unidades: u }); });
+    totales.sort((a, b) => b.unidades - a.unidades);
+    const coloniasBV = [];
+    for (let r = 1; r < bvRows.length; r++) {
+      const row = bvRows[r];
+      const name = String(row?.[0] || "").trim();
+      if (!name || name.toLowerCase() === "total") continue;
+      let lider = null, liderU = -1, total = 0, nis = 0;
+      marcasBV.forEach((m, i) => {
+        const u = numOrNull(row[i + 1]) ?? 0;
+        total += u;
+        if (u > liderU) { liderU = u; lider = m; }
+        if (i === iNis) nis = u;
+      });
+      coloniasBV.push({ colonia: name, total, lider, liderUnidades: liderU, nissanUnidades: nis });
+    }
+    brandVolume = { totales, colonias: coloniasBV };
+  }
+  return { meta: extraerMetaPosicionamiento(workbook), colonias, brandVolume };
+}
+
+// Badge de variación (+ verde / - rojo) reutilizable
+function DeltaBadge({ value, suffix = "", ppt = false }) {
+  if (value === null || value === undefined) return <span style={{ color: "#475569" }}>—</span>;
+  const color = value > 0 ? "#4ade80" : value < 0 ? "#f87171" : "#64748b";
+  const signo = value > 0 ? "+" : "";
+  return <span style={{ color, fontWeight: 700 }}>{signo}{value.toFixed(ppt ? 2 : 1)}{ppt ? " ppt" : suffix}</span>;
+}
+
+// Barra horizontal de participación (o de unidades con sufijo/decimales configurables)
+function BarraParticipacion({ label, value, max, color, resaltar, sufijo = "%", decimales = 1 }) {
+  const pct = max > 0 ? (value / max) * 100 : 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+      <div style={{ width: 100, textAlign: "right", fontSize: 11.5, color: resaltar ? "#D4AF37" : "#94a3b8", fontWeight: resaltar ? 800 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+      <div style={{ flex: 1, background: "#0d1b2e", borderRadius: 4, height: 18, position: "relative", overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 4, transition: "width .3s" }} />
+      </div>
+      <div style={{ width: 48, fontSize: 11.5, color: resaltar ? "#D4AF37" : "#cbd5e1", fontWeight: resaltar ? 800 : 600 }}>{value != null ? value.toFixed(decimales) : "—"}{sufijo}</div>
+    </div>
+  );
+}
+
+function PosicionamientoSection({ monthKey }) {
+  const [sub, setSub] = useState("marca"); // marca | segmentos | geografia
+  const [datosMarca, setDatosMarca] = useState(null);
+  const [datosSeg, setDatosSeg] = useState(null);
+  const [datosGeo, setDatosGeo] = useState(null);
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState("");
+  const [loadingDatos, setLoadingDatos] = useState(true);
+  const [segSel, setSegSel] = useState(null);
+  const [geoFiltro, setGeoFiltro] = useState("todas"); // todas | conNissan | oportunidad
+  const [geoVerTodas, setGeoVerTodas] = useState(false);
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoadingDatos(true);
+      const [m, s, g] = await Promise.all([
+        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/marca`),
+        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/segmentos`),
+        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/geografia`),
+      ]);
+      setDatosMarca(m || null);
+      setDatosSeg(s || null);
+      setDatosGeo(g || null);
+      setSegSel(null);
+      setLoadingDatos(false);
+    })();
+  }, [monthKey]);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!/\.(xlsx|xls)$/i.test(file.name)) {
+      setError("Sube el Excel del reporte de Urban Science (.xlsx).");
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
+    setCargando(true); setError("");
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      let parsed, tipo;
+      if (sub === "marca")      { parsed = parsePosicionamientoMarca(wb);     tipo = "marca"; }
+      else if (sub === "segmentos") { parsed = parsePosicionamientoSegmentos(wb); tipo = "segmentos"; }
+      else                      { parsed = parseGeografia(wb);                 tipo = "geografia"; }
+
+      const vacio = (tipo === "marca" && parsed.marcas.length === 0)
+        || (tipo === "segmentos" && parsed.segmentos.length === 0)
+        || (tipo === "geografia" && parsed.colonias.length === 0);
+      if (vacio) { setError("No se encontraron datos. Verifica que sea el reporte correcto para esta sub-pestaña."); setCargando(false); return; }
+
+      // Validación: el reporte cierra un mes y se sube en el siguiente.
+      // Estando el tablero en el mes activo, el archivo válido es el del mes INMEDIATO ANTERIOR.
+      const mesRep = mesDeReporte(parsed.meta);
+      const mesEsperado = getPreviousMonthKey(monthKey);
+      if (mesRep && mesRep !== mesEsperado) {
+        setError(`Este reporte es de ${getMonthLabel(mesRep)}. Para el mes activo (${getMonthLabel(monthKey)}) corresponde subir el reporte de ${getMonthLabel(mesEsperado)}, el mes inmediato anterior. Cambia el mes del tablero o sube el archivo correcto.`);
+        setCargando(false);
+        if (fileRef.current) fileRef.current.value = "";
+        return;
+      }
+
+      await fbSet(`${POSICIONAMIENTO_PATH}/${monthKey}/${tipo}`, parsed);
+      if (tipo === "marca") setDatosMarca(parsed);
+      else if (tipo === "segmentos") { setDatosSeg(parsed); setSegSel(null); }
+      else setDatosGeo(parsed);
+    } catch (err) {
+      console.error(err);
+      setError(`No se pudo procesar el archivo: ${err.message}`);
+    } finally {
+      setCargando(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const metaActual = sub === "marca" ? datosMarca?.meta : sub === "segmentos" ? datosSeg?.meta : datosGeo?.meta;
+  const nombreReporte = sub === "marca" ? "Posicionamiento por Marca" : sub === "segmentos" ? "Posicionamiento por Segmentos" : "Eficiencia de la Geografía";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Card>
+        <SectionHeader title="POSICIONAMIENTO COMPETITIVO TERRITORIAL" icon="🎯" />
+        <div style={{ color: "#64748b", fontSize: 11.5, marginBottom: 14 }}>
+          Diagnóstico competitivo con datos de Urban Science / Foresight. Cada sub-pestaña recibe su propio reporte de Excel. El reporte se sube en el mes siguiente a su cierre: en el mes activo ({getMonthLabel(monthKey)}) corresponde el reporte de <b style={{ color: "#94a3b8" }}>{getMonthLabel(getPreviousMonthKey(monthKey))}</b>.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+          {[
+            { key: "marca", label: "🏁 Por Marca" },
+            { key: "segmentos", label: "🚗 Por Segmentos" },
+            { key: "geografia", label: "🗺️ Por Geografía" },
+          ].map(t => (
+            <button key={t.key} onClick={() => setSub(t.key)} style={{
+              background: sub === t.key ? "#3b9eea" : "#0f2239",
+              color: sub === t.key ? "#0a1628" : "#94a3b8",
+              border: `1px solid ${sub === t.key ? "#3b9eea" : "#1e3a5f"}`,
+              borderRadius: 6, padding: "7px 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer"
+            }}>{t.label}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-posicionamiento" />
+          <label htmlFor="file-posicionamiento" style={{
+            background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
+            border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
+            cursor: cargando ? "default" : "pointer", display: "inline-block"
+          }}>{cargando ? "Procesando…" : `📤 Subir "${nombreReporte}" (.xlsx)`}</label>
+          {metaActual?.geografia && (
+            <div style={{ fontSize: 11.5, color: "#94a3b8" }}>
+              <b style={{ color: "#3b9eea" }}>{metaActual.geografia}</b>
+              {metaActual.periodo ? ` · ${metaActual.periodo}` : ""}
+              {metaActual.fecha ? ` · corte ${metaActual.fecha}` : ""}
+            </div>
+          )}
+        </div>
+        {error && (
+          <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 12.5, marginTop: 12 }}>
+            {error}
+          </div>
+        )}
+      </Card>
+
+      {loadingDatos ? (
+        <Card><div style={{ color: "#64748b", textAlign: "center", padding: "30px 0" }}>Cargando…</div></Card>
+      ) : (
+        <>
+          {/* ══════════════ SUB: MARCA ══════════════ */}
+          {sub === "marca" && (!datosMarca ? (
+            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Posicionamiento por Marca" para {getMonthLabel(monthKey)}.</div></Card>
+          ) : (() => {
+            const marcas = datosMarca.marcas;
+            const totalMercado = marcas.reduce((s, m) => s + (m.unidades || 0), 0);
+            const nissan = marcas.find(m => m.marca.toLowerCase() === "nissan");
+            const lider = marcas.find(m => m.posicion === 1) || marcas[0];
+            const brechaLider = nissan && lider ? (lider.ms - nissan.ms) : null;
+            const maxMs = Math.max(...marcas.map(m => m.ms || 0));
+            const topBarras = marcas.slice(0, 15);
+            const movers = [...marcas].filter(m => m.deltaMs != null);
+            const avances = [...movers].sort((a, b) => b.deltaMs - a.deltaMs).slice(0, 5);
+            const retrocesos = [...movers].sort((a, b) => a.deltaMs - b.deltaMs).slice(0, 5);
+            return (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+                  <div style={{ background: "#0f2239", border: "1px solid #D4AF37", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>POSICIÓN NISSAN</div>
+                    <div style={{ color: "#D4AF37", fontSize: 26, fontWeight: 800 }}>{nissan ? `#${nissan.posicion}` : "—"}</div>
+                    <div style={{ color: "#475569", fontSize: 11 }}>de {marcas.length} marcas</div>
+                  </div>
+                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #3b9eea", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>PARTICIPACIÓN NISSAN</div>
+                    <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{nissan?.ms != null ? `${nissan.ms}%` : "—"}</div>
+                    <div style={{ fontSize: 11 }}><DeltaBadge value={nissan?.deltaMs} ppt /></div>
+                  </div>
+                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>UNIDADES NISSAN</div>
+                    <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{nissan?.unidades ?? "—"}</div>
+                    <div style={{ fontSize: 11 }}><DeltaBadge value={nissan?.deltaPct} suffix="%" /></div>
+                  </div>
+                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #f87171", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>LÍDER · BRECHA</div>
+                    <div style={{ color: "#f1f5f9", fontSize: 16, fontWeight: 800 }}>{lider?.marca}</div>
+                    <div style={{ color: "#94a3b8", fontSize: 11 }}>{lider?.ms}% · brecha {brechaLider != null ? `${brechaLider.toFixed(1)} ppt` : "—"}</div>
+                  </div>
+                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #c084fc", borderRadius: 8, padding: "12px 14px" }}>
+                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>MERCADO TOTAL</div>
+                    <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{totalMercado}</div>
+                    <div style={{ color: "#475569", fontSize: 11 }}>unidades del periodo</div>
+                  </div>
+                </div>
+
+                <Card>
+                  <SectionHeader title="PARTICIPACIÓN TERRITORIAL POR MARCA (TOP 15)" icon="📊" />
+                  {topBarras.map(m => (
+                    <BarraParticipacion key={m.marca} label={m.marca} value={m.ms} max={maxMs}
+                      color={m.marca.toLowerCase() === "nissan" ? "#D4AF37" : m.posicion === 1 ? "#f87171" : "#3b9eea"}
+                      resaltar={m.marca.toLowerCase() === "nissan"} />
+                  ))}
+                </Card>
+
+                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 300 }}>
+                    <Card>
+                      <SectionHeader title="MAYORES AVANCES (Δ ppt)" icon="📈" />
+                      {avances.map(m => (
+                        <div key={m.marca} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #0f2239" }}>
+                          <span style={{ color: m.marca.toLowerCase() === "nissan" ? "#D4AF37" : "#cbd5e1", fontWeight: m.marca.toLowerCase() === "nissan" ? 800 : 600, fontSize: 12.5 }}>{m.marca}</span>
+                          <span style={{ fontSize: 12.5 }}><DeltaBadge value={m.deltaMs} ppt /></span>
+                        </div>
+                      ))}
+                    </Card>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 300 }}>
+                    <Card>
+                      <SectionHeader title="MAYORES RETROCESOS (Δ ppt)" icon="📉" />
+                      {retrocesos.map(m => (
+                        <div key={m.marca} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #0f2239" }}>
+                          <span style={{ color: m.marca.toLowerCase() === "nissan" ? "#D4AF37" : "#cbd5e1", fontWeight: m.marca.toLowerCase() === "nissan" ? 800 : 600, fontSize: 12.5 }}>{m.marca}</span>
+                          <span style={{ fontSize: 12.5 }}><DeltaBadge value={m.deltaMs} ppt /></span>
+                        </div>
+                      ))}
+                    </Card>
+                  </div>
+                </div>
+
+                <Card>
+                  <SectionHeader title="RANKING COMPLETO DE MARCAS" icon="🏁" />
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                          <th style={{ textAlign: "center", padding: "6px 8px" }}>#</th>
+                          <th style={{ textAlign: "left", padding: "6px 8px" }}>MARCA</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>UNIDADES</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ % UDS</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTICIP.</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTIC. ANT.</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ ppt</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {marcas.map(m => {
+                          const esNissan = m.marca.toLowerCase() === "nissan";
+                          return (
+                            <tr key={m.marca} style={{ borderBottom: "1px solid #1e3a5f", background: esNissan ? "#D4AF3714" : "transparent" }}>
+                              <td style={{ textAlign: "center", padding: "6px 8px", color: m.posicion === 1 ? "#f87171" : "#64748b", fontWeight: 700 }}>{m.posicion}</td>
+                              <td style={{ padding: "6px 8px", color: esNissan ? "#D4AF37" : "#f1f5f9", fontWeight: esNissan ? 800 : 600 }}>{m.marca}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1" }}>{m.unidades}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={m.deltaPct} suffix="%" /></td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: esNissan ? "#D4AF37" : "#f1f5f9", fontWeight: 700 }}>{m.ms != null ? `${m.ms}%` : "—"}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#64748b" }}>{m.msAnt != null ? `${m.msAnt}%` : "—"}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={m.deltaMs} ppt /></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+
+                <AnalisisIABlock
+                  titulo="ANÁLISIS DE POSICIONAMIENTO CON IA"
+                  subtitulo="🧠 Analizar posicionamiento por marca"
+                  loadingLabel="Analizando posicionamiento…"
+                  buildPrompt={() => {
+                    const l = [];
+                    l.push("Eres analista de inteligencia comercial competitiva para la plaza Nissan en Tuxtla Gutiérrez, Chiapas.");
+                    l.push("Analiza el posicionamiento por marca (fuente Urban Science / Foresight) y entrega una lectura ejecutiva accionable.\n");
+                    l.push(`Territorio: ${datosMarca.meta?.geografia || "N/D"} · Periodo: ${datosMarca.meta?.periodo || "N/D"}`);
+                    l.push(`Mercado total: ${totalMercado} unidades.`);
+                    l.push(`Nissan: posición #${nissan?.posicion}, ${nissan?.unidades} uds (Δ ${nissan?.deltaPct}% uds), participación ${nissan?.ms}% (Δ ${nissan?.deltaMs} ppt).`);
+                    l.push(`Líder: ${lider?.marca} con ${lider?.ms}% (brecha vs Nissan: ${brechaLider != null ? brechaLider.toFixed(1) : "s/d"} ppt).\n`);
+                    l.push("RANKING (posición. marca: uds, Δ% uds, participación%, Δ ppt):");
+                    marcas.forEach(m => l.push(`  ${m.posicion}. ${m.marca}: ${m.unidades} uds, ${m.deltaPct ?? "s/d"}%, ${m.ms ?? "s/d"}%, ${m.deltaMs ?? "s/d"} ppt`));
+                    l.push("\nResponde en markdown, ejecutivo y directo, sin relleno:");
+                    l.push("## Posición de Nissan y lectura del mes\n## Amenazas y competidores en ascenso\n## Recomendaciones para ganar participación (3 acciones concretas)");
+                    return l.join("\n");
+                  }}
+                />
+              </>
+            );
+          })())}
+
+          {/* ══════════════ SUB: SEGMENTOS ══════════════ */}
+          {sub === "segmentos" && (!datosSeg ? (
+            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Posicionamiento por Segmentos" para {getMonthLabel(monthKey)}.</div></Card>
+          ) : (() => {
+            const segs = datosSeg.segmentos;
+            const nis1 = segs.filter(s => s.nissanPosicion === 1).length;
+            const nisTop3 = segs.filter(s => s.nissanPosicion != null && s.nissanPosicion <= 3).length;
+            const nisPresente = segs.filter(s => s.nissanUnidades > 0).length;
+            const posColor = (p) => p === 1 ? "#D4AF37" : p != null && p <= 3 ? "#3b9eea" : p != null ? "#94a3b8" : "#475569";
+            const segActivo = segSel != null ? segs.find(s => s.segmento === segSel) : null;
+            return (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+                  {[
+                    { l: "SEGMENTOS", v: segs.length, c: "#c084fc", s: "analizados" },
+                    { l: "NISSAN #1", v: nis1, c: "#D4AF37", s: `de ${segs.length} segmentos` },
+                    { l: "NISSAN TOP 3", v: nisTop3, c: "#3b9eea", s: `de ${segs.length} segmentos` },
+                    { l: "NISSAN PRESENTE", v: nisPresente, c: "#4ade80", s: `de ${segs.length} segmentos` },
+                  ].map(k => (
+                    <div key={k.l} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.c}`, borderRadius: 8, padding: "12px 14px" }}>
+                      <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.l}</div>
+                      <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{k.v}</div>
+                      <div style={{ color: "#475569", fontSize: 11 }}>{k.s}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <Card>
+                  <SectionHeader title="POSICIÓN DE NISSAN POR SEGMENTO" icon="🚗" />
+                  <div style={{ color: "#64748b", fontSize: 11, marginBottom: 12 }}>Da clic en un segmento para ver el ranking completo de modelos.</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
+                    {segs.map(s => (
+                      <div key={s.segmento} onClick={() => setSegSel(segSel === s.segmento ? null : s.segmento)} style={{
+                        background: segSel === s.segmento ? "#0d1b2e" : "#0f2239",
+                        border: `1px solid ${segSel === s.segmento ? "#3b9eea" : "#1e3a5f"}`,
+                        borderLeft: `4px solid ${posColor(s.nissanPosicion)}`,
+                        borderRadius: 8, padding: "10px 12px", cursor: "pointer"
+                      }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                          <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700, flex: 1 }}>{s.segmento}</span>
+                          <span style={{ color: posColor(s.nissanPosicion), fontSize: 15, fontWeight: 800, whiteSpace: "nowrap" }}>{s.nissanPosicion != null ? `#${s.nissanPosicion}` : "s/p"}</span>
+                        </div>
+                        <div style={{ color: "#64748b", fontSize: 10.5, marginTop: 4 }}>
+                          Segmento: {s.unidades} uds · Nissan: {s.nissanUnidades} uds ({s.nissanMs != null ? `${s.nissanMs}%` : "—"})
+                        </div>
+                        {s.nissanModelos && <div style={{ color: "#475569", fontSize: 10, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.nissanModelos}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+
+                {segActivo && (
+                  <Card>
+                    <SectionHeader title={`RANKING DE MODELOS — ${segActivo.segmento}`} icon="🏁" />
+                    <div style={{ color: "#94a3b8", fontSize: 11.5, marginBottom: 10 }}>
+                      Segmento: {segActivo.unidades} uds · participación {segActivo.ms != null ? `${segActivo.ms}%` : "—"} (<DeltaBadge value={segActivo.deltaMs} ppt />) · Nissan #{segActivo.nissanPosicion ?? "s/p"}
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <thead>
+                          <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                            <th style={{ textAlign: "center", padding: "6px 8px" }}>#</th>
+                            <th style={{ textAlign: "left", padding: "6px 8px" }}>MARCA</th>
+                            <th style={{ textAlign: "left", padding: "6px 8px" }}>MODELO</th>
+                            <th style={{ textAlign: "right", padding: "6px 8px" }}>UNIDADES</th>
+                            <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ % UDS</th>
+                            <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTICIP.</th>
+                            <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ ppt</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {segActivo.modelos.map((m, i) => {
+                            const esNissan = m.marca.toLowerCase() === "nissan";
+                            return (
+                              <tr key={i} style={{ borderBottom: "1px solid #1e3a5f", background: esNissan ? "#D4AF3714" : "transparent" }}>
+                                <td style={{ textAlign: "center", padding: "6px 8px", color: m.posicion === 1 ? "#f87171" : "#64748b", fontWeight: 700 }}>{m.posicion}</td>
+                                <td style={{ padding: "6px 8px", color: esNissan ? "#D4AF37" : "#cbd5e1", fontWeight: esNissan ? 800 : 600 }}>{m.marca}</td>
+                                <td style={{ padding: "6px 8px", color: esNissan ? "#D4AF37" : "#f1f5f9" }}>{m.modelo}</td>
+                                <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1" }}>{m.unidades}</td>
+                                <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={m.deltaPct} suffix="%" /></td>
+                                <td style={{ textAlign: "right", padding: "6px 8px", color: esNissan ? "#D4AF37" : "#f1f5f9", fontWeight: 700 }}>{m.ms != null ? `${m.ms}%` : "—"}</td>
+                                <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={m.deltaMs} ppt /></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Card>
+                )}
+
+                <AnalisisIABlock
+                  titulo="ANÁLISIS DE SEGMENTOS CON IA"
+                  subtitulo="🧠 Analizar posicionamiento por segmento"
+                  loadingLabel="Analizando segmentos…"
+                  buildPrompt={() => {
+                    const l = [];
+                    l.push("Eres analista de inteligencia comercial competitiva para la plaza Nissan en Tuxtla Gutiérrez, Chiapas.");
+                    l.push("Analiza el posicionamiento de Nissan por segmento (fuente Urban Science / Foresight) e identifica dónde atacar y dónde defender.\n");
+                    l.push(`Territorio: ${datosSeg.meta?.geografia || "N/D"} · Periodo: ${datosSeg.meta?.periodo || "N/D"}`);
+                    l.push(`Nissan es #1 en ${nis1} de ${segs.length} segmentos; top 3 en ${nisTop3}; presente en ${nisPresente}.\n`);
+                    l.push("DETALLE POR SEGMENTO (segmento | uds segmento | participación seg | Nissan pos | Nissan uds | Nissan part% | modelos Nissan):");
+                    segs.forEach(s => l.push(`  ${s.segmento} | ${s.unidades} | ${s.ms ?? "s/d"}% | #${s.nissanPosicion ?? "s/p"} | ${s.nissanUnidades} | ${s.nissanMs ?? "s/d"}% | ${s.nissanModelos || "—"}`));
+                    l.push("\nResponde en markdown, ejecutivo y directo:");
+                    l.push("## Segmentos fuertes de Nissan (defender)\n## Segmentos de oportunidad (atacar) y contra qué rival\n## 3 acciones concretas de producto/comercial");
+                    return l.join("\n");
+                  }}
+                />
+              </>
+            );
+          })())}
+
+          {/* ══════════════ SUB: GEOGRAFÍA ══════════════ */}
+          {sub === "geografia" && (!datosGeo ? (
+            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Eficiencia de la Geografía" para {getMonthLabel(monthKey)}.</div></Card>
+          ) : (() => {
+            const cols = datosGeo.colonias;
+            const conNissan = cols.filter(c => c.nissanUnidades && c.nissanUnidades > 0);
+            const sinNissan = cols.filter(c => !c.nissanUnidades || c.nissanUnidades === 0);
+            // Oportunidad: colonias con mercado relevante donde Nissan no está presente.
+            const oportunidad = [...sinNissan].sort((a, b) => b.unidades - a.unidades);
+            const filtradas = geoFiltro === "conNissan" ? conNissan : geoFiltro === "oportunidad" ? oportunidad : cols;
+            const mostradas = geoVerTodas ? filtradas : filtradas.slice(0, 30);
+            return (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+                  {[
+                    { l: "COLONIAS", v: cols.length, c: "#c084fc", s: "en el territorio" },
+                    { l: "CON NISSAN", v: conNissan.length, c: "#4ade80", s: "presencia registrada" },
+                    { l: "OPORTUNIDAD", v: sinNissan.length, c: "#fbbf24", s: "sin presencia Nissan" },
+                    { l: "MERCADO SIN NISSAN", v: sinNissan.reduce((s, c) => s + c.unidades, 0), c: "#f87171", s: "uds en colonias sin Nissan" },
+                  ].map(k => (
+                    <div key={k.l} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.c}`, borderRadius: 8, padding: "12px 14px" }}>
+                      <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.l}</div>
+                      <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{k.v}</div>
+                      <div style={{ color: "#475569", fontSize: 11 }}>{k.s}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <Card>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+                    <SectionHeader title="EFICIENCIA POR COLONIA" icon="🗺️" />
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {[
+                        { key: "todas", label: "Todas" },
+                        { key: "conNissan", label: "Con Nissan" },
+                        { key: "oportunidad", label: "🎯 Oportunidad" },
+                      ].map(f => (
+                        <button key={f.key} onClick={() => { setGeoFiltro(f.key); setGeoVerTodas(false); }} style={{
+                          background: geoFiltro === f.key ? "#3b9eea" : "#0f2239",
+                          color: geoFiltro === f.key ? "#0a1628" : "#94a3b8",
+                          border: `1px solid ${geoFiltro === f.key ? "#3b9eea" : "#1e3a5f"}`,
+                          borderRadius: 6, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
+                        }}>{f.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  {geoFiltro === "oportunidad" && (
+                    <div style={{ background: "#fbbf2411", border: "1px solid #fbbf2433", borderRadius: 6, padding: "8px 12px", color: "#fbbf24", fontSize: 11.5, marginBottom: 12 }}>
+                      Colonias con demanda donde Nissan no registró ventas — potencial de conquista, ordenadas por tamaño de mercado.
+                    </div>
+                  )}
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                      <thead>
+                        <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                          <th style={{ textAlign: "left", padding: "6px 8px" }}>COLONIA</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>UDS MERCADO</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTICIP.</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>UDS NISSAN</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTIC. NISSAN</th>
+                          <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ ppt NISSAN</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mostradas.map((c, i) => {
+                          const sinNis = !c.nissanUnidades || c.nissanUnidades === 0;
+                          return (
+                            <tr key={i} style={{ borderBottom: "1px solid #1e3a5f", background: sinNis && c.unidades >= 10 ? "#fbbf2410" : "transparent" }}>
+                              <td style={{ padding: "6px 8px", color: "#f1f5f9" }}>{c.colonia}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>{c.unidades}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#94a3b8" }}>{c.ms != null ? `${c.ms}%` : "—"}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: sinNis ? "#f87171" : "#4ade80", fontWeight: 700 }}>{c.nissanUnidades ?? 0}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#D4AF37", fontWeight: 700 }}>{c.nissanMs != null ? `${c.nissanMs}%` : "—"}</td>
+                              <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={c.nissanDeltaMs} ppt /></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {filtradas.length > 30 && (
+                    <div style={{ textAlign: "center", marginTop: 12 }}>
+                      <button onClick={() => setGeoVerTodas(!geoVerTodas)} style={{
+                        background: "transparent", border: "1px solid #3b9eea", color: "#3b9eea",
+                        borderRadius: 6, padding: "6px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+                      }}>{geoVerTodas ? "Ver menos" : `Ver todas (${filtradas.length})`}</button>
+                    </div>
+                  )}
+                </Card>
+
+                {/* Brand Volume by Geography: quién domina cada colonia */}
+                {datosGeo.brandVolume && (() => {
+                  const bv = datosGeo.brandVolume;
+                  const maxTot = Math.max(...bv.totales.map(t => t.unidades), 1);
+                  const conquista = bv.colonias.filter(c => c.nissanUnidades === 0 && c.total > 0).sort((a, b) => b.total - a.total);
+                  const conqMostradas = geoVerTodas ? conquista : conquista.slice(0, 20);
+                  return (
+                    <>
+                      <Card>
+                        <SectionHeader title="MARCAS LÍDERES EN EL TERRITORIO (BRAND VOLUME)" icon="🏆" />
+                        {bv.totales.slice(0, 12).map(t => (
+                          <BarraParticipacion key={t.marca} label={t.marca} value={t.unidades} max={maxTot}
+                            color={t.marca.toLowerCase() === "nissan" ? "#D4AF37" : "#3b9eea"}
+                            resaltar={t.marca.toLowerCase() === "nissan"} sufijo="" decimales={0} />
+                        ))}
+                        <div style={{ color: "#475569", fontSize: 10.5, marginTop: 6 }}>Unidades por marca en el conteo por colonia del territorio.</div>
+                      </Card>
+
+                      <Card>
+                        <SectionHeader title="COLONIAS DE CONQUISTA — NISSAN AUSENTE" icon="🎯" />
+                        <div style={{ color: "#fbbf24", fontSize: 11.5, marginBottom: 10, background: "#fbbf2411", border: "1px solid #fbbf2433", borderRadius: 6, padding: "8px 12px" }}>
+                          Colonias con demanda donde Nissan no registró ventas, y la marca que hoy las domina. Priorización para conquista.
+                        </div>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                            <thead>
+                              <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
+                                <th style={{ textAlign: "left", padding: "6px 8px" }}>COLONIA</th>
+                                <th style={{ textAlign: "right", padding: "6px 8px" }}>UDS MERCADO</th>
+                                <th style={{ textAlign: "left", padding: "6px 8px" }}>MARCA QUE DOMINA</th>
+                                <th style={{ textAlign: "right", padding: "6px 8px" }}>UDS LÍDER</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {conqMostradas.map((c, i) => (
+                                <tr key={i} style={{ borderBottom: "1px solid #1e3a5f", background: c.total >= 10 ? "#fbbf2410" : "transparent" }}>
+                                  <td style={{ padding: "6px 8px", color: "#f1f5f9" }}>{c.colonia}</td>
+                                  <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>{c.total}</td>
+                                  <td style={{ padding: "6px 8px", color: "#f87171", fontWeight: 600 }}>{c.lider}</td>
+                                  <td style={{ textAlign: "right", padding: "6px 8px", color: "#94a3b8" }}>{c.liderUnidades}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {conquista.length > 20 && (
+                          <div style={{ textAlign: "center", marginTop: 12 }}>
+                            <button onClick={() => setGeoVerTodas(!geoVerTodas)} style={{
+                              background: "transparent", border: "1px solid #fbbf24", color: "#fbbf24",
+                              borderRadius: 6, padding: "6px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+                            }}>{geoVerTodas ? "Ver menos" : `Ver todas (${conquista.length})`}</button>
+                          </div>
+                        )}
+                      </Card>
+                    </>
+                  );
+                })()}
+
+                <AnalisisIABlock
+                  titulo="ANÁLISIS DE COBERTURA GEOGRÁFICA CON IA"
+                  subtitulo="🧠 Analizar cobertura y conquista"
+                  loadingLabel="Analizando geografía…"
+                  buildPrompt={() => {
+                    const l = [];
+                    l.push("Eres analista de inteligencia comercial competitiva para la plaza Nissan en Tuxtla Gutiérrez, Chiapas.");
+                    l.push("Analiza la eficiencia geográfica (fuente Urban Science / Foresight) y prioriza dónde conquistar y dónde defender.\n");
+                    l.push(`Territorio: ${datosGeo.meta?.geografia || "N/D"} · Periodo: ${datosGeo.meta?.periodo || "N/D"}`);
+                    l.push(`Colonias: ${cols.length}. Con Nissan: ${conNissan.length}. Sin Nissan (oportunidad): ${sinNissan.length}.`);
+                    l.push(`Mercado en colonias sin Nissan: ${sinNissan.reduce((s, c) => s + c.unidades, 0)} uds.\n`);
+                    l.push("TOP COLONIAS DONDE NISSAN ES FUERTE (colonia | uds mercado | Nissan uds | Nissan part%):");
+                    [...conNissan].sort((a, b) => (b.nissanMs || 0) - (a.nissanMs || 0)).slice(0, 10).forEach(c => l.push(`  ${c.colonia} | ${c.unidades} | ${c.nissanUnidades} | ${c.nissanMs ?? "s/d"}%`));
+                    if (datosGeo.brandVolume) {
+                      const conq = datosGeo.brandVolume.colonias.filter(c => c.nissanUnidades === 0 && c.total > 0).sort((a, b) => b.total - a.total).slice(0, 15);
+                      l.push("\nTOP COLONIAS DE CONQUISTA (Nissan ausente) — colonia | uds mercado | marca que domina | uds líder:");
+                      conq.forEach(c => l.push(`  ${c.colonia} | ${c.total} | ${c.lider} | ${c.liderUnidades}`));
+                    }
+                    l.push("\nResponde en markdown, ejecutivo y directo:");
+                    l.push("## Dónde Nissan es fuerte (defender)\n## Colonias prioritarias de conquista y contra qué marca\n## 3 acciones de cobertura territorial");
+                    return l.join("\n");
+                  }}
+                />
+              </>
+            );
+          })())}
+        </>
+      )}
+    </div>
+  );
+}
+
 function Dashboard({ userRole, userAgencia, userEmail }) {
   const [tab, setTab] = useState("resumen"); // resumen | operativo | funnel | ...
   const [data, setData] = useState(initialData);
@@ -8284,6 +9020,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               color: tab === "marketShare" ? "#0a1628" : "#94a3b8",
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>📈 Mercado Automotriz</button>
+            <button onClick={() => setTab("posicionamiento")} style={{
+              background: tab === "posicionamiento" ? "#5eead4" : "transparent",
+              color: tab === "posicionamiento" ? "#0a1628" : "#94a3b8",
+              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer"
+            }}>🎯 Posicionamiento</button>
             <button onClick={() => setTab("tendencias")} style={{
               background: tab === "tendencias" ? "#5eead4" : "transparent",
               color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
@@ -8424,6 +9166,8 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           <InventarioSection />
         ) : tab === "marketShare" ? (
           <MercadoADACHSection monthKey={viewMonth} />
+        ) : tab === "posicionamiento" ? (
+          <PosicionamientoSection monthKey={viewMonth} />
         ) : tab === "tendencias" ? (
           <TendenciasSection currentMonthKey={currentMonthKey} />
         ) : tab === "analisis" ? (
