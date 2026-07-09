@@ -7796,7 +7796,17 @@ function ImportarSatisfaccion24hrs({ onFieldChange, monthKey }) {
 // POSICIONAMIENTO COMPETITIVO TERRITORIAL (Fuente: Urban Science / Foresight)
 // Tres reportes: Posicionamiento por Marca, por Segmentos, y Eficiencia de la Geografía.
 // ═══════════════════════════════════════════════════════════════════════════
-const POSICIONAMIENTO_PATH = "posicionamiento"; // posicionamiento/{monthKey}/{marca|segmentos|geografia}
+const POSICIONAMIENTO_PATH = "posicionamiento"; // posicionamiento/{monthKey}/{territorio}/{marca|segmentos|geografia}
+
+// Plazas/territorios que suben su propio diagnóstico competitivo por separado.
+const TERRITORIOS_POS = [
+  { key: "tuxtla_pte",   label: "Tuxtla Pte" },
+  { key: "tuxtla_ote",   label: "Tuxtla Ote" },
+  { key: "tapachula",    label: "Tapachula" },
+  { key: "san_cristobal", label: "San Cristóbal" },
+  { key: "comitan",      label: "Comitán" },
+  { key: "palenque",     label: "Palenque" },
+];
 
 // Lee la hoja de "Filtros Avanzados" para extraer el contexto del reporte.
 function extraerMetaPosicionamiento(workbook) {
@@ -7976,6 +7986,7 @@ function BarraParticipacion({ label, value, max, color, resaltar, sufijo = "%", 
 }
 
 function PosicionamientoSection({ monthKey }) {
+  const [territorio, setTerritorio] = useState(TERRITORIOS_POS[0].key);
   const [sub, setSub] = useState("marca"); // marca | segmentos | geografia
   const [datosMarca, setDatosMarca] = useState(null);
   const [datosSeg, setDatosSeg] = useState(null);
@@ -7991,10 +8002,11 @@ function PosicionamientoSection({ monthKey }) {
   useEffect(() => {
     (async () => {
       setLoadingDatos(true);
+      setError("");
       const [m, s, g] = await Promise.all([
-        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/marca`),
-        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/segmentos`),
-        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/geografia`),
+        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/marca`),
+        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/segmentos`),
+        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/geografia`),
       ]);
       setDatosMarca(m || null);
       setDatosSeg(s || null);
@@ -8002,7 +8014,7 @@ function PosicionamientoSection({ monthKey }) {
       setSegSel(null);
       setLoadingDatos(false);
     })();
-  }, [monthKey]);
+  }, [monthKey, territorio]);
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -8037,7 +8049,7 @@ function PosicionamientoSection({ monthKey }) {
         return;
       }
 
-      await fbSet(`${POSICIONAMIENTO_PATH}/${monthKey}/${tipo}`, parsed);
+      await fbSet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/${tipo}`, parsed);
       if (tipo === "marca") setDatosMarca(parsed);
       else if (tipo === "segmentos") { setDatosSeg(parsed); setSegSel(null); }
       else setDatosGeo(parsed);
@@ -8052,13 +8064,27 @@ function PosicionamientoSection({ monthKey }) {
 
   const metaActual = sub === "marca" ? datosMarca?.meta : sub === "segmentos" ? datosSeg?.meta : datosGeo?.meta;
   const nombreReporte = sub === "marca" ? "Posicionamiento por Marca" : sub === "segmentos" ? "Posicionamiento por Segmentos" : "Eficiencia de la Geografía";
+  const territorioLabel = TERRITORIOS_POS.find(t => t.key === territorio)?.label || territorio;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <Card>
         <SectionHeader title="POSICIONAMIENTO COMPETITIVO TERRITORIAL" icon="🎯" />
         <div style={{ color: "#64748b", fontSize: 11.5, marginBottom: 14 }}>
-          Diagnóstico competitivo con datos de Urban Science / Foresight. Cada sub-pestaña recibe su propio reporte de Excel. El reporte se sube en el mes siguiente a su cierre: en el mes activo ({getMonthLabel(monthKey)}) corresponde el reporte de <b style={{ color: "#94a3b8" }}>{getMonthLabel(getPreviousMonthKey(monthKey))}</b>.
+          Diagnóstico competitivo con datos de Urban Science / Foresight. Cada plaza sube sus propios reportes por separado. El reporte se sube en el mes siguiente a su cierre: en el mes activo ({getMonthLabel(monthKey)}) corresponde el reporte de <b style={{ color: "#94a3b8" }}>{getMonthLabel(getPreviousMonthKey(monthKey))}</b>.
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .8, marginBottom: 6 }}>PLAZA / TERRITORIO</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {TERRITORIOS_POS.map(t => (
+              <button key={t.key} onClick={() => setTerritorio(t.key)} style={{
+                background: territorio === t.key ? "#D4AF37" : "#0f2239",
+                color: territorio === t.key ? "#0a1628" : "#94a3b8",
+                border: `1px solid ${territorio === t.key ? "#D4AF37" : "#1e3a5f"}`,
+                borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
+              }}>{t.label}</button>
+            ))}
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
           {[
@@ -8080,7 +8106,7 @@ function PosicionamientoSection({ monthKey }) {
             background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
             border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
             cursor: cargando ? "default" : "pointer", display: "inline-block"
-          }}>{cargando ? "Procesando…" : `📤 Subir "${nombreReporte}" (.xlsx)`}</label>
+          }}>{cargando ? "Procesando…" : `📤 Subir "${nombreReporte}" — ${territorioLabel} (.xlsx)`}</label>
           {metaActual?.geografia && (
             <div style={{ fontSize: 11.5, color: "#94a3b8" }}>
               <b style={{ color: "#3b9eea" }}>{metaActual.geografia}</b>
@@ -8102,7 +8128,7 @@ function PosicionamientoSection({ monthKey }) {
         <>
           {/* ══════════════ SUB: MARCA ══════════════ */}
           {sub === "marca" && (!datosMarca ? (
-            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Posicionamiento por Marca" para {getMonthLabel(monthKey)}.</div></Card>
+            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Posicionamiento por Marca" de {territorioLabel} para {getMonthLabel(monthKey)}.</div></Card>
           ) : (() => {
             const marcas = datosMarca.marcas;
             const totalMercado = marcas.reduce((s, m) => s + (m.unidades || 0), 0);
@@ -8238,7 +8264,7 @@ function PosicionamientoSection({ monthKey }) {
 
           {/* ══════════════ SUB: SEGMENTOS ══════════════ */}
           {sub === "segmentos" && (!datosSeg ? (
-            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Posicionamiento por Segmentos" para {getMonthLabel(monthKey)}.</div></Card>
+            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Posicionamiento por Segmentos" de {territorioLabel} para {getMonthLabel(monthKey)}.</div></Card>
           ) : (() => {
             const segs = datosSeg.segmentos;
             const nis1 = segs.filter(s => s.nissanPosicion === 1).length;
@@ -8267,7 +8293,10 @@ function PosicionamientoSection({ monthKey }) {
                   <SectionHeader title="POSICIÓN DE NISSAN POR SEGMENTO" icon="🚗" />
                   <div style={{ color: "#64748b", fontSize: 11, marginBottom: 12 }}>Da clic en un segmento para ver el ranking completo de modelos.</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
-                    {segs.map(s => (
+                    {segs.map(s => {
+                      const liderModelo = (s.modelos || []).find(m => m.posicion === 1) || (s.modelos || []).slice().sort((a, b) => (a.posicion ?? 999) - (b.posicion ?? 999))[0] || null;
+                      const liderEsNissan = liderModelo && liderModelo.marca.toLowerCase() === "nissan";
+                      return (
                       <div key={s.segmento} onClick={() => setSegSel(segSel === s.segmento ? null : s.segmento)} style={{
                         background: segSel === s.segmento ? "#0d1b2e" : "#0f2239",
                         border: `1px solid ${segSel === s.segmento ? "#3b9eea" : "#1e3a5f"}`,
@@ -8281,9 +8310,17 @@ function PosicionamientoSection({ monthKey }) {
                         <div style={{ color: "#64748b", fontSize: 10.5, marginTop: 4 }}>
                           Segmento: {s.unidades} uds · Nissan: {s.nissanUnidades} uds ({s.nissanMs != null ? `${s.nissanMs}%` : "—"})
                         </div>
-                        {s.nissanModelos && <div style={{ color: "#475569", fontSize: 10, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.nissanModelos}</div>}
+                        {liderModelo && (
+                          <div style={{ color: "#94a3b8", fontSize: 10.5, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            🥇 Líder: <b style={{ color: liderEsNissan ? "#D4AF37" : "#cbd5e1" }}>{liderModelo.marca} {liderModelo.modelo}</b>
+                            {liderModelo.unidades != null ? ` · ${liderModelo.unidades} uds` : ""}
+                            {liderModelo.ms != null ? ` · ${liderModelo.ms}%` : ""}
+                          </div>
+                        )}
+                        {s.nissanModelos && <div style={{ color: "#475569", fontSize: 10, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Nissan: {s.nissanModelos}</div>}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </Card>
 
@@ -8337,8 +8374,12 @@ function PosicionamientoSection({ monthKey }) {
                     l.push("Analiza el posicionamiento de Nissan por segmento (fuente Urban Science / Foresight) e identifica dónde atacar y dónde defender.\n");
                     l.push(`Territorio: ${datosSeg.meta?.geografia || "N/D"} · Periodo: ${datosSeg.meta?.periodo || "N/D"}`);
                     l.push(`Nissan es #1 en ${nis1} de ${segs.length} segmentos; top 3 en ${nisTop3}; presente en ${nisPresente}.\n`);
-                    l.push("DETALLE POR SEGMENTO (segmento | uds segmento | participación seg | Nissan pos | Nissan uds | Nissan part% | modelos Nissan):");
-                    segs.forEach(s => l.push(`  ${s.segmento} | ${s.unidades} | ${s.ms ?? "s/d"}% | #${s.nissanPosicion ?? "s/p"} | ${s.nissanUnidades} | ${s.nissanMs ?? "s/d"}% | ${s.nissanModelos || "—"}`));
+                    l.push("DETALLE POR SEGMENTO (segmento | uds seg | particip seg | modelo líder | Nissan pos | Nissan uds | Nissan part% | modelos Nissan):");
+                    segs.forEach(s => {
+                      const lid = (s.modelos || []).find(m => m.posicion === 1) || (s.modelos || [])[0];
+                      const lidTxt = lid ? `${lid.marca} ${lid.modelo} (${lid.unidades} uds)` : "—";
+                      l.push(`  ${s.segmento} | ${s.unidades} | ${s.ms ?? "s/d"}% | líder: ${lidTxt} | #${s.nissanPosicion ?? "s/p"} | ${s.nissanUnidades} | ${s.nissanMs ?? "s/d"}% | ${s.nissanModelos || "—"}`);
+                    });
                     l.push("\nResponde en markdown, ejecutivo y directo:");
                     l.push("## Segmentos fuertes de Nissan (defender)\n## Segmentos de oportunidad (atacar) y contra qué rival\n## 3 acciones concretas de producto/comercial");
                     return l.join("\n");
@@ -8350,7 +8391,7 @@ function PosicionamientoSection({ monthKey }) {
 
           {/* ══════════════ SUB: GEOGRAFÍA ══════════════ */}
           {sub === "geografia" && (!datosGeo ? (
-            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Eficiencia de la Geografía" para {getMonthLabel(monthKey)}.</div></Card>
+            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Eficiencia de la Geografía" de {territorioLabel} para {getMonthLabel(monthKey)}.</div></Card>
           ) : (() => {
             const cols = datosGeo.colonias;
             const conNissan = cols.filter(c => c.nissanUnidades && c.nissanUnidades > 0);
