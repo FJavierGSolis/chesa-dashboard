@@ -4356,20 +4356,28 @@ function LineChart({ series, width = 1100, height = 240, suffix = "" }) {
           pathD += `${trazando ? "L" : "M"} ${xScale(i)} ${yScale(p.y)} `;
           trazando = true;
         });
-        // Si hay más de una serie, alternamos el offset vertical de las etiquetas para que no se encimen.
-        const labelOffsetY = series.length > 1 ? (si === 0 ? -10 : 16) : -10;
         return (
           <g key={si}>
             <path d={pathD.trim()} fill="none" stroke={s.color} strokeWidth="2.5" />
-            {s.points.map((p, i) => (
-              p.y == null ? null : (
+            {s.points.map((p, i) => {
+              if (p.y == null) return null;
+              // Coloca la etiqueta arriba si este punto es el más alto entre las series
+              // en ese mes, y abajo si es el más bajo — así los números nunca se enciman.
+              let arriba = true;
+              if (series.length > 1) {
+                const otras = series.map((o, j) => (j === si ? null : o.points[i]?.y)).filter(v => v != null);
+                const maxOtras = otras.length ? Math.max(...otras) : -Infinity;
+                arriba = p.y > maxOtras || (p.y === maxOtras && si === 0);
+              }
+              const dy = arriba ? -11 : 18;
+              return (
               <g key={i}>
                 <circle cx={xScale(i)} cy={yScale(p.y)} r="3" fill={s.color}>
                   <title>{`${s.label} — ${p.x}: ${p.y.toFixed(1)}${suffix}`}</title>
                 </circle>
                 <text
                   x={xScale(i)}
-                  y={yScale(p.y) + labelOffsetY}
+                  y={yScale(p.y) + dy}
                   textAnchor="middle"
                   fontSize="10"
                   fontWeight="700"
@@ -4378,8 +4386,8 @@ function LineChart({ series, width = 1100, height = 240, suffix = "" }) {
                   {p.y.toFixed(suffix === "%" ? 1 : 0)}{suffix}
                 </text>
               </g>
-              )
-            ))}
+              );
+            })}
           </g>
         );
       })}
