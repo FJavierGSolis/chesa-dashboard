@@ -317,12 +317,6 @@ function getPreviousMonthKey(monthKey) {
   return getMonthKey(d);
 }
 
-// Mismo mes del año anterior (ej. "2026-06" -> "2025-06").
-function getSameMonthLastYearKey(monthKey) {
-  const [y, m] = monthKey.split("-").map(Number);
-  return `${y - 1}-${String(m).padStart(2, "0")}`;
-}
-
 // Genera todos los monthKey desde INICIO_OPERACIONES hasta el mes operativo actual (inclusive).
 const INICIO_OPERACIONES = "2024-05"; // mayo 2024, cuando CHESA inició operaciones
 function getAllMonthsRange(hastaKey) {
@@ -1672,131 +1666,6 @@ function MarketShareSection({ data, onFieldChange, monthKey }) {
 }
 
 // ── SECCIÓN: Rotación (de personal) ───────────────────────────────────────────
-// ── Lectura del Excel de Rotación (hoja CHANGAN, bloque ADMIN+APV'S = plantilla total) ──
-// Estructura del archivo: la hoja "CHANGAN" tiene 3 bloques apilados
-// (ADMIN+APV'S = total, ADMON = admin, APV'S = post-venta). Usamos el primero
-// (total) porque el dashboard maneja una sola rotación por agencia.
-// Cada bloque tiene 6 sub-tablas: MEGAMOTRIZ (consolidado del grupo) + las 5 agencias.
-function parseRotacionWorkbook(workbook, monthKey) {
-  // Buscar la hoja de la marca (CHANGAN), tolerante a mayúsculas/espacios.
-  const sheetName = workbook.SheetNames.find(n => n.toUpperCase().replace(/\s/g, "").includes("CHANGAN"));
-  if (!sheetName) throw new Error('No se encontró la pestaña "CHANGAN" en el archivo.');
-  const ws = workbook.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-
-  // El primer bloque (ADMIN+APV'S) termina donde empieza el bloque "ADMON".
-  let boundary = rows.length;
-  for (let i = 0; i < rows.length; i++) {
-    const a = rows[i]?.[0];
-    if (a && String(a).toUpperCase().includes("ADMON")) { boundary = i; break; }
-  }
-
-  const num = parseInt(monthKey.split("-")[1], 10);
-  const nombreMes = (MES_NOMBRES[num - 1] || "").toUpperCase();
-
-  // La columna B (índice 1) tiene el MES en el bloque total.
-  let fila = null;
-  for (let i = 0; i < boundary; i++) {
-    const b = rows[i]?.[1];
-    if (b && String(b).trim().toUpperCase() === nombreMes) { fila = rows[i]; break; }
-  }
-  if (!fila) throw new Error(`No se encontró el mes "${nombreMes}" en el bloque de plantilla total.`);
-
-  // Columnas por agencia (0-based): [# inicio, altas, bajas]
-  const COLS = {
-    "COMITÁN":        [11, 12, 13],
-    "OCOSINGO":       [20, 21, 22],
-    "SAN CRISTÓBAL":  [29, 30, 31],
-    "TAPACHULA":      [38, 39, 40],
-    "TUXTLA":         [47, 48, 49],
-  };
-  const num0 = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };
-  const out = {};
-  Object.entries(COLS).forEach(([ag, [ci, ca, cb]]) => {
-    out[ag] = {
-      plantillaInicial: num0(fila[ci]),
-      altas: num0(fila[ca]),
-      bajas: num0(fila[cb]),
-    };
-  });
-  return out;
-}
-
-// ── Carga del Excel de Rotación → llena plantilla/altas/bajas del mes por agencia ──
-function ImportarRotacion({ onFieldChange, monthKey }) {
-  const [cargando, setCargando] = useState(false);
-  const [error, setError] = useState("");
-  const [resultado, setResultado] = useState(null); // { aplicados: [...] }
-  const fileRef = useRef(null);
-
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!/\.(xlsx|xls)$/i.test(file.name)) {
-      setError("Sube el Excel de Rotación (.xlsx).");
-      if (fileRef.current) fileRef.current.value = "";
-      return;
-    }
-    setCargando(true); setError(""); setResultado(null);
-    try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      // La rotación se reporta cerrada: estando en el mes en curso, aplican las
-      // cifras del mes anterior. Por eso LEEMOS la fila del mes pasado, pero
-      // ESCRIBIMOS en el mes activo (onFieldChange guarda en el mes en vista).
-      const sourceMonthKey = getPreviousMonthKey(monthKey);
-      const datos = parseRotacionWorkbook(wb, sourceMonthKey);
-      const aplicados = [];
-      Object.entries(datos).forEach(([ag, d]) => {
-        onFieldChange("rotacion", ag, "plantillaInicial", d.plantillaInicial);
-        onFieldChange("rotacion", ag, "altas", d.altas);
-        onFieldChange("rotacion", ag, "bajas", d.bajas);
-        aplicados.push(`${ag}: plantilla ${d.plantillaInicial}, altas ${d.altas}, bajas ${d.bajas}`);
-      });
-      setResultado({ aplicados });
-    } catch (err) {
-      console.error(err);
-      setError(`No se pudo procesar el Excel: ${err.message}`);
-    } finally {
-      setCargando(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
-
-  return (
-    <Card style={{ borderLeft: "4px solid #3b9eea", marginBottom: 16 }}>
-      <div style={{ color: "#3b9eea", fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
-        ⚡ Automatizar Rotación
-      </div>
-      <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5, marginBottom: 12 }}>
-        Sube el Excel oficial de Rotación. Toma la hoja <b style={{ color: "#cbd5e1" }}>CHANGAN</b> (bloque de plantilla total ADMIN+APV'S). Como la rotación se reporta cerrada, aplica al mes en curso ({getMonthLabel(monthKey)}) las cifras del mes anterior (<b style={{ color: "#cbd5e1" }}>{getMonthLabel(getPreviousMonthKey(monthKey))}</b>): plantilla inicial, altas y bajas de las 5 agencias. El % de rotación y el cumplimiento se recalculan solos.
-      </div>
-      <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-rotacion" />
-      <label htmlFor="file-rotacion" style={{
-        background: cargando ? "#1e3a5f" : "#3b9eea", color: cargando ? "#64748b" : "#0a1628",
-        border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 12.5, fontWeight: 700,
-        cursor: cargando ? "default" : "pointer", display: "inline-block", whiteSpace: "nowrap"
-      }}>
-        {cargando ? "Procesando…" : "📤 Subir Excel de Rotación (.xlsx)"}
-      </label>
-
-      {error && (
-        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 12.5, marginTop: 12 }}>
-          {error}
-        </div>
-      )}
-      {resultado && (
-        <div style={{ background: "#14532d22", border: "1px solid #4ade80", borderRadius: 8, padding: "10px 14px", color: "#4ade80", fontSize: 12.5, marginTop: 12 }}>
-          ✅ Cifras de {getMonthLabel(getPreviousMonthKey(monthKey))} aplicadas al mes en curso ({getMonthLabel(monthKey)}):
-          <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>
-            {resultado.aplicados.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a}</li>)}
-          </ul>
-        </div>
-      )}
-    </Card>
-  );
-}
-
 function RotacionSection({ data, onFieldChange }) {
   const totales = AGENCIAS.reduce((acc, ag) => {
     const row = data.rotacion[ag] ?? { plantillaInicial: 0, altas: 0, bajas: 0, objetivo: 2.5 };
@@ -2225,73 +2094,6 @@ function agregarFuentesLeads(registros) {
   };
 }
 
-// ── Utilidades para el comparativo con corte al día ──────────────────────────
-// Limpia una llave para Firebase (sin . $ # [ ] / + ni espacios).
-function limpiarClaveFB(k) {
-  return String(k).replace(/[.$#[\]/+\s]/g, "_").replace(/_+/g, "_").trim() || "x";
-}
-
-// Día del mes (1-31) desde la "Fecha de Alta" (Date, serial de Excel o texto dd/mm/aaaa | aaaa-mm-dd).
-function diaDeFecha(fecha) {
-  if (fecha == null) return null;
-  if (fecha instanceof Date) return isNaN(fecha) ? null : fecha.getDate();
-  if (typeof fecha === "number") {
-    if (XLSX.SSF && typeof XLSX.SSF.parse_date_code === "function") {
-      const d = XLSX.SSF.parse_date_code(fecha);
-      if (d && d.d) return d.d;
-    }
-    const dd = new Date(Math.round((fecha - 25569) * 86400 * 1000));
-    return isNaN(dd) ? null : dd.getUTCDate();
-  }
-  const s = String(fecha).trim();
-  let m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/); // dd/mm/aaaa
-  if (m) { const d = parseInt(m[1], 10); return d >= 1 && d <= 31 ? d : null; }
-  m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/); // aaaa-mm-dd
-  if (m) { const d = parseInt(m[3], 10); return d >= 1 && d <= 31 ? d : null; }
-  return null;
-}
-
-// Construye el desglose por día (llaves limpias para Firebase) desde los registros.
-function construirPorDia(registros) {
-  const porDia = {};
-  registros.forEach(r => {
-    const dia = diaDeFecha(r.fecha);
-    if (!dia) return;
-    const k = String(dia).padStart(2, "0");
-    if (!porDia[k]) porDia[k] = { total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {}, porProducto: {}, porSubcampania: {} };
-    const d = porDia[k];
-    d.total += 1;
-    const add = (obj, key) => { const c = limpiarClaveFB(key); obj[c] = (obj[c] ?? 0) + 1; };
-    add(d.porFuente, r.fuente);
-    add(d.porEstatus, r.estatus);
-    add(d.porTemperatura, r.temperatura);
-    add(d.porProducto, r.producto);
-    if (r.subcampania && r.subcampania !== "Sin subcampaña") add(d.porSubcampania, r.subcampania);
-  });
-  return porDia;
-}
-
-// Último día con actividad en un desglose por día.
-function ultimoDiaDe(porDia) {
-  if (!porDia) return null;
-  const dias = Object.keys(porDia).map(d => parseInt(d, 10)).filter(d => !isNaN(d));
-  return dias.length ? Math.max(...dias) : null;
-}
-
-// Acumula el desglose por día hasta el día indicado (inclusive) → agregado {total, porX...}.
-function acumularHastaDia(porDia, diaMax) {
-  if (!porDia) return null;
-  const out = { total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {}, porProducto: {}, porSubcampania: {} };
-  Object.entries(porDia).forEach(([dia, d]) => {
-    if (parseInt(dia, 10) > diaMax) return;
-    out.total += d.total || 0;
-    ["porFuente", "porEstatus", "porTemperatura", "porProducto", "porSubcampania"].forEach(k => {
-      Object.entries(d[k] || {}).forEach(([kk, v]) => { out[k][kk] = (out[k][kk] || 0) + v; });
-    });
-  });
-  return out;
-}
-
 // Funnel visual: barras horizontales decrecientes mostrando el resultado real de cada etapa,
 // el objetivo esperado (línea de referencia), y el % de paso entre etapas consecutivas.
 // Embudo visual real: trapecios apilados que se van angostando según el valor de cada etapa.
@@ -2370,74 +2172,39 @@ function FunnelEtapas({ etapasData }) {
   );
 }
 
-function PieChartLeyenda({ datos, colores, size = 170, prevDatos = null, prevMesDatos = null, prevAnioDatos = null }) {
+function PieChartLeyenda({ datos, colores, size = 170, prevDatos = null }) {
   // datos: [{ label, value }]
-  // prevDatos / prevMesDatos / prevAnioDatos: { label: value } — mapas para variación inline.
+  // prevDatos: { label: value } — mapa del mes anterior para mostrar variación inline
   const entries = datos.map((d, i) => ({ ...d, color: colores[i % colores.length] }));
   const total = entries.reduce((s, e) => s + e.value, 0);
-  const limpia = (k) => String(k).replace(/[.$#[\]/+\s]/g, "_").replace(/_+/g, "_").trim();
-  const lookup = (mapa, label) => {
-    if (!mapa) return null;
-    const v = mapa[label] ?? mapa[limpia(label)];
-    return v == null ? null : v;
-  };
-  const badge = (actual, ant, sufijo, titulo) => {
-    if (ant == null || ant <= 0) return null;
-    const diff = ((actual - ant) / ant * 100);
-    const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
-    return (
-      <span key={sufijo || "p"} title={titulo} style={{
-        fontSize: 9.5, fontWeight: 700, padding: "1px 5px", borderRadius: 8,
-        background: `${color}22`, color, border: `1px solid ${color}44`,
-        whiteSpace: "nowrap", marginLeft: 4,
-      }}>
-        {diff > 0 ? "+" : ""}{diff.toFixed(0)}%{sufijo}
-      </span>
-    );
-  };
-  // Columna de ancho fijo (m / a). Si no hay dato del periodo, muestra "s/d" atenuado.
-  const slot = (actual, ant, sufijo, titulo) => {
-    const hay = ant != null && ant > 0;
-    const diff = hay ? ((actual - ant) / ant * 100) : 0;
-    const color = !hay ? "#475569" : diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
-    return (
-      <span title={titulo} style={{
-        fontSize: 9.5, fontWeight: 700, padding: "1px 4px", borderRadius: 8,
-        background: hay ? `${color}22` : "transparent",
-        color, border: `1px solid ${hay ? color + "44" : "#1e3a5f"}`,
-        whiteSpace: "nowrap", textAlign: "center", minWidth: 50,
-        display: "inline-block", opacity: hay ? 1 : 0.5, flexShrink: 0,
-      }}>
-        {hay ? `${diff > 0 ? "+" : ""}${diff.toFixed(0)}%` : "s/d"}
-      </span>
-    );
-  };
-  const hayComparativo = prevMesDatos != null || prevAnioDatos != null;
   return (
     <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
       <PieChart entries={entries} size={size} />
       <div style={{ flex: 1, minWidth: 180 }}>
-        {hayComparativo && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5, fontSize: 9, color: "#475569", fontWeight: 700, letterSpacing: .3 }}>
-            <span style={{ width: 9, flexShrink: 0 }} />
-            <span style={{ flex: 1, minWidth: 90 }} />
-            <span style={{ minWidth: 28 }} />
-            <span style={{ minWidth: 34 }} />
-            {prevMesDatos != null && <span style={{ minWidth: 50, textAlign: "center" }}>vs M-1</span>}
-            {prevAnioDatos != null && <span style={{ minWidth: 50, textAlign: "center" }}>vs A-1</span>}
-          </div>
-        )}
         {entries.filter(e => e.value > 0).sort((a, b) => b.value - a.value).map(e => {
           const pct = total > 0 ? (e.value / total * 100) : 0;
+          const ant = prevDatos?.[e.label];
+          let varEl = null;
+          if (ant != null && ant > 0) {
+            const diff = ((e.value - ant) / ant * 100);
+            const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
+            varEl = (
+              <span style={{
+                fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 8,
+                background: `${color}22`, color, border: `1px solid ${color}44`,
+                whiteSpace: "nowrap", marginLeft: 4,
+              }}>
+                {diff > 0 ? "+" : ""}{diff.toFixed(0)}%
+              </span>
+            );
+          }
           return (
             <div key={e.label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, fontSize: 12 }}>
               <span style={{ width: 9, height: 9, borderRadius: "50%", background: e.color, flexShrink: 0 }} />
-              <span style={{ color: "#cbd5e1", flex: 1, minWidth: 90 }}>{e.label}</span>
-              <span style={{ color: "#94a3b8", fontWeight: 700, minWidth: 28, textAlign: "right" }}>{e.value}</span>
-              <span style={{ color: "#64748b", fontSize: 11, minWidth: 34, textAlign: "right" }}>{pct.toFixed(0)}%</span>
-              {prevDatos != null && badge(e.value, lookup(prevDatos, e.label), "", "vs periodo anterior")}
-              {prevMesDatos != null && slot(e.value, lookup(prevMesDatos, e.label), "m", "vs mes anterior (mismo día)")}
-              {prevAnioDatos != null && slot(e.value, lookup(prevAnioDatos, e.label), "a", "vs mismo mes del año anterior (mismo día)")}
+              <span style={{ color: "#cbd5e1", flex: 1 }}>{e.label}</span>
+              <span style={{ color: "#94a3b8", fontWeight: 700 }}>{e.value}</span>
+              <span style={{ color: "#64748b", fontSize: 11, minWidth: 38, textAlign: "right" }}>{pct.toFixed(0)}%</span>
+              {varEl}
             </div>
           );
         })}
@@ -2462,22 +2229,17 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
     setFuentesSel(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
   };
 
-  const [datosPorAgenciaMesPasado, setDatosPorAgenciaMesPasado] = useState({});
-  const [datosPorAgenciaAnioAnterior, setDatosPorAgenciaAnioAnterior] = useState({});
-  const [baseMesKey, setBaseMesKey] = useState("");
-  const [baseAnioKey, setBaseAnioKey] = useState("");
+  const [datosPorAgenciaMesAnterior, setDatosPorAgenciaMesAnterior] = useState({});
+  const [prevMonthKey, setPrevMonthKey] = useState("");
 
   useEffect(() => {
     (async () => {
       setLoadingDatos(true);
-      const mesKey = getPreviousMonthKey(monthKey);
-      const anioKey = getSameMonthLastYearKey(monthKey);
-      setBaseMesKey(mesKey);
-      setBaseAnioKey(anioKey);
-      const [raw, rawMes, rawAnio] = await Promise.all([
+      const prevKey = getPreviousMonthKey(monthKey);
+      setPrevMonthKey(prevKey);
+      const [raw, rawPrev] = await Promise.all([
         fbGet(`${FUENTES_LEADS_PATH}/${monthKey}`),
-        fbGet(`${FUENTES_LEADS_PATH}/${mesKey}`),
-        fbGet(`${FUENTES_LEADS_PATH}/${anioKey}`),
+        fbGet(`${FUENTES_LEADS_PATH}/${prevKey}`),
       ]);
       // Firebase guarda con claves encodeadas (encodeKey) — remapear a nombres originales
       const remapAgencias = (obj) => {
@@ -2485,13 +2247,13 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         const result = {};
         AGENCIAS.forEach(ag => {
           const encoded = encodeKey(ag);
+          // Buscar tanto por nombre original como por nombre encodeado
           result[ag] = obj[ag] ?? obj[encoded] ?? null;
         });
         return result;
       };
       setDatosPorAgencia(remapAgencias(raw));
-      setDatosPorAgenciaMesPasado(remapAgencias(rawMes));
-      setDatosPorAgenciaAnioAnterior(remapAgencias(rawAnio));
+      setDatosPorAgenciaMesAnterior(remapAgencias(rawPrev));
       setLoadingDatos(false);
     })();
   }, [monthKey]);
@@ -2503,7 +2265,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
     setErrorCarga("");
     try {
       const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const wb = XLSX.read(buf, { type: "array" });
       const registros = parseFuentesLeadsWorkbook(wb);
       if (registros.length === 0) {
         setErrorCarga("No se encontraron leads en este archivo. Verifica que sea el reporte correcto.");
@@ -2514,15 +2276,12 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
       const limpiarClaves = (obj) => {
         const limpio = {};
         Object.entries(obj ?? {}).forEach(([k, v]) => {
-          const c = limpiarClaveFB(k);
+          const c = String(k).replace(/[.$#[\]/+\s]/g, "_").replace(/_+/g,"_").trim() || "x";
           limpio[c] = (limpio[c] ?? 0) + (Number(v) || 0);
         });
         return limpio;
       };
-      // Desglose por día (para comparativos con corte al mismo día) + último día con actividad.
-      const porDia = construirPorDia(registros);
-      const ultimoDia = ultimoDiaDe(porDia);
-      // Guardamos los agregados del mes + el desglose por día (sin registros ni porAsesor, muy grandes).
+      // Guardamos solo lo necesario para las gráficas — sin porAsesor (muy complejo) ni registros (muy grande)
       const paraFirebase = {
         total: Number(agregado.total) || 0,
         porFuente: limpiarClaves(agregado.porFuente),
@@ -2530,8 +2289,6 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
         porTemperatura: limpiarClaves(agregado.porTemperatura),
         porProducto: limpiarClaves(agregado.porProducto),
         porSubcampania: limpiarClaves(agregado.porSubcampania),
-        porDia,
-        ultimoDia,
       };
       await fbSet(`${FUENTES_LEADS_PATH}/${monthKey}/${encodeKey(agenciaSel)}`, paraFirebase);
       setDatosPorAgencia(prev => ({ ...prev, [agenciaSel]: { ...paraFirebase, registros, porAsesor: agregado.porAsesor } }));
@@ -2607,54 +2364,46 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
     return null;
   })();
 
-  // Día de corte = último día con actividad en el mes en curso (para comparar "a la misma fecha").
-  const diaCorte = (() => {
-    const ags = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
-    let d = 0;
-    ags.forEach(ag => {
-      const x = datosPorAgencia[ag];
-      if (!x) return;
-      if (x.ultimoDia) d = Math.max(d, x.ultimoDia);
-      else if (x.porDia) d = Math.max(d, ultimoDiaDe(x.porDia) || 0);
-      else if (Array.isArray(x.registros)) x.registros.forEach(r => { const dd = diaDeFecha(r.fecha); if (dd) d = Math.max(d, dd); });
+  // Consolidado mes anterior para comparación
+  const datosPrev = (() => {
+    const todasLasAg = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+    // Intentar desde registros individuales primero
+    const registrosPrev = [];
+    todasLasAg.forEach(ag => {
+      const raw = datosPorAgenciaMesAnterior[ag];
+      if (raw?.registros && Array.isArray(raw.registros)) registrosPrev.push(...raw.registros);
+      else if (raw && Array.isArray(raw)) registrosPrev.push(...raw);
     });
-    return d || 31;
-  })();
-
-  // Consolida un conjunto (por agencia) recortado al día de corte.
-  // _conCorte = true solo si TODAS las agencias con datos traen desglose por día
-  // (o registros); si alguna cae al agregado completo del mes, no es comparable "a la misma fecha".
-  const consolidarCorte = (datosAg) => {
-    const ags = agenciaSel === "TODAS" ? AGENCIAS : [agenciaSel];
+    if (registrosPrev.length > 0) return agregarFuentesLeads(registrosPrev);
+    // Fallback: usar agregados guardados directamente
     const merged = { total: 0, porFuente: {}, porEstatus: {}, porTemperatura: {}, porProducto: {}, porSubcampania: {} };
-    let tiene = false, todosCorte = true;
-    ags.forEach(ag => {
-      const x = datosAg[ag];
-      if (!x) return;
-      let cut = null;
-      if (x.porDia) { cut = acumularHastaDia(x.porDia, diaCorte); }
-      else if (Array.isArray(x.registros)) { cut = agregarFuentesLeads(x.registros.filter(r => { const dd = diaDeFecha(r.fecha); return dd && dd <= diaCorte; })); }
-      else if (x.porFuente) { cut = x; todosCorte = false; } // fallback: agregado completo del mes (sin corte por día)
-      if (!cut) return;
-      tiene = true;
-      merged.total += cut.total || 0;
-      ["porFuente", "porEstatus", "porTemperatura", "porProducto", "porSubcampania"].forEach(k => {
-        Object.entries(cut[k] || {}).forEach(([kk, v]) => { merged[k][kk] = (merged[k][kk] ?? 0) + v; });
+    let tieneAlgo = false;
+    todasLasAg.forEach(ag => {
+      const d = datosPorAgenciaMesAnterior[ag];
+      if (!d) return;
+      tieneAlgo = true;
+      merged.total += d.total ?? 0;
+      ['porFuente','porEstatus','porTemperatura','porProducto','porSubcampania'].forEach(key => {
+        Object.entries(d[key] ?? {}).forEach(([k,v]) => { merged[key][k] = (merged[key][k] ?? 0) + v; });
       });
     });
-    if (!tiene) return null;
-    merged._conCorte = todosCorte;
-    return merged;
-  };
+    return tieneAlgo ? merged : null;
+  })();
 
-  const baseMes = consolidarCorte(datosPorAgenciaMesPasado);
-  const baseAnio = consolidarCorte(datosPorAgenciaAnioAnterior);
-  // Un periodo es comparable "a la misma fecha" solo si trae el desglose por día.
-  const mesComparable = !!(baseMes && baseMes.total > 0 && baseMes._conCorte);
-  const anioComparable = !!(baseAnio && baseAnio.total > 0 && baseAnio._conCorte);
-  // Existe algún dato del periodo (aunque sea sin corte) → para avisar "s/d, resube ese mes".
-  const mesTieneAlgo = !!(baseMes && baseMes.total > 0);
-  const anioTieneAlgo = !!(baseAnio && baseAnio.total > 0);
+  // Helper: variación % vs mes anterior con badge visual
+  const varBadge = (actual, anterior) => {
+    if (anterior == null || anterior === 0) return null;
+    const diff = ((actual - anterior) / anterior * 100);
+    const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
+    const texto = `${diff > 0 ? "+" : ""}${diff.toFixed(0)}% vs mes ant.`;
+    return (
+      <span style={{
+        fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10,
+        background: `${color}22`, color, border: `1px solid ${color}55`,
+        marginLeft: 8, whiteSpace: "nowrap",
+      }}>{texto}</span>
+    );
+  };
 
   const datosFuentePie = datos ? FUENTES_LEAD.map(f => ({ label: f.label, value: datos.porFuente[f.key] ?? 0 })) : [];
   const coloresFuente = FUENTES_LEAD.map(f => f.color);
@@ -2781,35 +2530,6 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
               <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>TOTAL LEADS{!todasFuentesSeleccionadas ? " (FILTRADO)" : ""}</div>
               <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{datos.total}</div>
-              {todasFuentesSeleccionadas && (mesTieneAlgo || anioTieneAlgo) && (
-                <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                  {(() => {
-                    const chip = (base, comparable, tieneAlgo, etiqueta, mesLbl) => {
-                      if (!tieneAlgo) return null;
-                      if (!comparable) {
-                        return (
-                          <span title={`Falta el detalle por día de ${mesLbl}. Vuelve a subir ese reporte para comparar a la misma fecha.`} style={{
-                            fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10,
-                            background: "transparent", color: "#64748b", border: "1px solid #1e3a5f", whiteSpace: "nowrap", opacity: 0.7,
-                          }}>s/d {etiqueta}</span>
-                        );
-                      }
-                      const diff = (datos.total - base.total) / base.total * 100;
-                      const color = diff > 0 ? "#4ade80" : diff < 0 ? "#ff4444" : "#64748b";
-                      return (
-                        <span title={`${datos.total} vs ${base.total} leads · contra ${mesLbl} al día ${diaCorte}`} style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: `${color}22`, color, border: `1px solid ${color}55`, whiteSpace: "nowrap" }}>
-                          {diff > 0 ? "+" : ""}{diff.toFixed(0)}% {etiqueta}
-                        </span>
-                      );
-                    };
-                    return <>
-                      {chip(baseMes, mesComparable, mesTieneAlgo, "vs M-1", getMonthLabel(baseMesKey))}
-                      {chip(baseAnio, anioComparable, anioTieneAlgo, "vs A-1", getMonthLabel(baseAnioKey))}
-                    </>;
-                  })()}
-                </div>
-              )}
-              <div style={{ color: "#475569", fontSize: 9.5, marginTop: 3 }}>corte al día {diaCorte}</div>
             </div>
             <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
               <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>VENTAS CERRADAS (FUNNEL)</div>
@@ -2829,14 +2549,10 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
 
       {datos && (
         <>
-          {/* Aviso / leyenda del comparativo con corte al día */}
-          {!mesTieneAlgo && !anioTieneAlgo ? (
+          {/* Aviso si no hay datos del mes anterior para comparar */}
+          {!datosPrev && prevMonthKey && (
             <div style={{ background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 8, padding: "10px 14px", color: "#64748b", fontSize: 12 }}>
-              💡 Para ver las variaciones sube los reportes de <b style={{ color: "#3b9eea" }}>{getMonthLabel(baseMesKey)}</b> (mes anterior) y <b style={{ color: "#3b9eea" }}>{getMonthLabel(baseAnioKey)}</b> (mismo mes del año anterior).
-            </div>
-          ) : (
-            <div style={{ color: "#64748b", fontSize: 11.5 }}>
-              Variaciones con <b style={{ color: "#94a3b8" }}>corte al día {diaCorte}</b>: <b style={{ color: "#94a3b8" }}>vs M-1</b> = contra {getMonthLabel(baseMesKey)}{mesComparable ? "" : mesTieneAlgo ? " (s/d: resube ese mes con detalle por día)" : " (sin datos)"} · <b style={{ color: "#94a3b8" }}>vs A-1</b> = contra {getMonthLabel(baseAnioKey)}{anioComparable ? "" : anioTieneAlgo ? " (s/d: resube ese mes con detalle por día)" : " (sin datos)"}. Pasa el cursor sobre cada porcentaje para el detalle.
+              💡 No hay reporte de <b style={{ color: "#3b9eea" }}>{getMonthLabel(prevMonthKey)}</b> cargado — sube el Excel de ese mes para ver las variaciones.
             </div>
           )}
           <Card>
@@ -2844,8 +2560,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             <PieChartLeyenda
               datos={datosFuentePie}
               colores={coloresFuente}
-              prevMesDatos={mesComparable ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, baseMes.porFuente[f.key] ?? 0])) : {}}
-              prevAnioDatos={anioComparable ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, baseAnio.porFuente[f.key] ?? 0])) : {}}
+              prevDatos={datosPrev ? Object.fromEntries(FUENTES_LEAD.map(f => [f.label, datosPrev.porFuente[f.key] ?? 0])) : null}
             />
           </Card>
 
@@ -2857,8 +2572,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                   datos={datosEstatusPie}
                   colores={coloresEstatus}
                   size={150}
-                  prevMesDatos={mesComparable ? baseMes.porEstatus : {}}
-                  prevAnioDatos={anioComparable ? baseAnio.porEstatus : {}}
+                  prevDatos={datosPrev ? datosPrev.porEstatus : null}
                 />
               </Card>
             </div>
@@ -2869,8 +2583,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                   datos={datosTemperaturaPie}
                   colores={coloresTemperatura}
                   size={150}
-                  prevMesDatos={mesComparable ? baseMes.porTemperatura : {}}
-                  prevAnioDatos={anioComparable ? baseAnio.porTemperatura : {}}
+                  prevDatos={datosPrev ? datosPrev.porTemperatura : null}
                 />
               </Card>
             </div>
@@ -2881,8 +2594,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
             <PieChartLeyenda
               datos={datosProductoPie}
               colores={coloresProducto}
-              prevMesDatos={mesComparable ? baseMes.porProducto : {}}
-              prevAnioDatos={anioComparable ? baseAnio.porProducto : {}}
+              prevDatos={datosPrev ? datosPrev.porProducto : null}
             />
           </Card>
 
@@ -2898,8 +2610,7 @@ function FunnelSection({ monthKey, funnelData, onFunnelFieldChange, saveStatus }
                 <PieChartLeyenda
                   datos={subcampPie}
                   colores={coloresSub}
-                  prevMesDatos={mesComparable ? baseMes.porSubcampania : {}}
-                  prevAnioDatos={anioComparable ? baseAnio.porSubcampania : {}}
+                  prevDatos={datosPrev?.porSubcampania ?? null}
                 />
               </Card>
             );
@@ -3227,8 +2938,20 @@ const CATALOGO_ASESORES = {
 const UNIFICAR_CLAVE = { "GRY": "GRYO", "RFX": "RFXV" };
 
 function normalizarClave(clave) {
-  const c = clave.trim().toUpperCase();
-  return UNIFICAR_CLAVE[c] || c;
+  let c = (clave || "").trim().toUpperCase();
+  // Aplicar unificaciones conocidas (GRY→GRYO, RFX→RFXV)
+  if (UNIFICAR_CLAVE[c]) return UNIFICAR_CLAVE[c];
+  // Si ya está en el catálogo, devolverla tal cual.
+  if (CATALOGO_ASESORES[c]) return c;
+  // El sistema origen a veces agrega un carácter extra al final de la clave
+  // (ej. DADN→DADNO, LGLL→LGLLA). Si al quitar el último carácter coincide
+  // con una clave válida, la usamos. Así recuperamos esas ventas.
+  if (c.length > 3) {
+    const sinUltima = c.slice(0, -1);
+    if (CATALOGO_ASESORES[sinUltima]) return sinUltima;
+    if (UNIFICAR_CLAVE[sinUltima]) return UNIFICAR_CLAVE[sinUltima];
+  }
+  return c;
 }
 
 function nombreAsesor(clave) {
@@ -4477,23 +4200,21 @@ const INDICADORES_TENDENCIA = [
   { key: "ms",      label: "Market Share (%)", suffix: "%", agenciasValidas: AGENCIAS },
 ];
 
-function LineChart({ series, width = 1100, height = 240, suffix = "" }) {
-  // series: [{ label, color, points: [{x: label, y: number|null}] }]
-  // Los puntos con y === null representan meses sin dato: dejan hueco en la línea.
-  const allY = series.flatMap(s => s.points.map(p => p.y)).filter(y => y != null);
+function LineChart({ series, width = 760, height = 220, suffix = "" }) {
+  // series: [{ label, color, points: [{x: label, y: number}] }]
+  const allY = series.flatMap(s => s.points.map(p => p.y));
   const maxY = Math.max(1, ...allY);
   const minY = Math.min(0, ...allY);
   const padding = { top: 24, right: 16, bottom: 28, left: 40 };
   const w = width - padding.left - padding.right;
   const h = height - padding.top - padding.bottom;
-  const n = Math.max(0, ...series.map(s => s.points.length));
-  const ejeX = series.reduce((a, b) => (b.points.length > a.points.length ? b : a), series[0] || { points: [] });
+  const n = series[0]?.points.length ?? 0;
   const xStep = n > 1 ? w / (n - 1) : 0;
   const yScale = (val) => padding.top + h - ((val - minY) / (maxY - minY || 1)) * h;
   const xScale = (i) => padding.left + i * xStep;
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ width: "100%", maxWidth: width, height: "auto", display: "block" }}>
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ maxWidth: width }}>
       {/* Líneas guía horizontales */}
       {[0, 0.25, 0.5, 0.75, 1].map(f => {
         const y = padding.top + h * f;
@@ -4505,43 +4226,28 @@ function LineChart({ series, width = 1100, height = 240, suffix = "" }) {
           </g>
         );
       })}
-      {/* Etiquetas de eje X — se muestran todas cuando hay 13 o menos meses. */}
-      {ejeX.points.map((p, i) => (
-        (i % (n <= 13 ? 1 : Math.ceil(n / 12)) === 0) && (
+      {/* Etiquetas de eje X (cada 2 puntos para no saturar) */}
+      {series[0]?.points.map((p, i) => (
+        (i % Math.ceil(n / 8 || 1) === 0) && (
           <text key={i} x={xScale(i)} y={height - 8} textAnchor="middle" fontSize="9" fill="#64748b">{p.x}</text>
         )
       ))}
       {/* Líneas de cada serie, con el valor numérico visible sobre cada punto */}
       {series.map((s, si) => {
-        // Construye el trazo salteando huecos (y === null): reinicia con "M" tras cada hueco.
-        let pathD = ""; let trazando = false;
-        s.points.forEach((p, i) => {
-          if (p.y == null) { trazando = false; return; }
-          pathD += `${trazando ? "L" : "M"} ${xScale(i)} ${yScale(p.y)} `;
-          trazando = true;
-        });
+        const pathD = s.points.map((p, i) => `${i === 0 ? "M" : "L"} ${xScale(i)} ${yScale(p.y)}`).join(" ");
+        // Si hay más de una serie, alternamos el offset vertical de las etiquetas para que no se encimen.
+        const labelOffsetY = series.length > 1 ? (si === 0 ? -10 : 16) : -10;
         return (
           <g key={si}>
-            <path d={pathD.trim()} fill="none" stroke={s.color} strokeWidth="2.5" />
-            {s.points.map((p, i) => {
-              if (p.y == null) return null;
-              // Coloca la etiqueta arriba si este punto es el más alto entre las series
-              // en ese mes, y abajo si es el más bajo — así los números nunca se enciman.
-              let arriba = true;
-              if (series.length > 1) {
-                const otras = series.map((o, j) => (j === si ? null : o.points[i]?.y)).filter(v => v != null);
-                const maxOtras = otras.length ? Math.max(...otras) : -Infinity;
-                arriba = p.y > maxOtras || (p.y === maxOtras && si === 0);
-              }
-              const dy = arriba ? -11 : 18;
-              return (
+            <path d={pathD} fill="none" stroke={s.color} strokeWidth="2.5" />
+            {s.points.map((p, i) => (
               <g key={i}>
                 <circle cx={xScale(i)} cy={yScale(p.y)} r="3" fill={s.color}>
                   <title>{`${s.label} — ${p.x}: ${p.y.toFixed(1)}${suffix}`}</title>
                 </circle>
                 <text
                   x={xScale(i)}
-                  y={yScale(p.y) + dy}
+                  y={yScale(p.y) + labelOffsetY}
                   textAnchor="middle"
                   fontSize="10"
                   fontWeight="700"
@@ -4550,8 +4256,7 @@ function LineChart({ series, width = 1100, height = 240, suffix = "" }) {
                   {p.y.toFixed(suffix === "%" ? 1 : 0)}{suffix}
                 </text>
               </g>
-              );
-            })}
+            ))}
           </g>
         );
       })}
@@ -4700,39 +4405,6 @@ Responde con markdown. Sé directo y ejecutivo. Estructura:
 ## Qué está pasando en el mercado
 ## Qué significa para CHESA en Chiapas
 (máximo 3 párrafos cortos en total, conectando siempre la tendencia nacional de Changan con la operación local de CHESA)`;
-}
-
-// ── Prompt de extracción SSI/CSI desde los reportes "24 HRS" (Efectividad + Satisfacción) ──
-// Un mismo botón detecta si el PDF es de VENTAS (→ SSI) o de SERVICIOS (→ CSI).
-function buildPromptExtraccion24hrs(mesLabel) {
-  return `Eres un extractor de datos estructurados. Se te da un PDF con reportes "24 HRS" de CHESA Changan (${mesLabel}). Puede ser de VENTAS (alimenta SSI) o de SERVICIOS (alimenta CSI).
-
-El PDF trae varias tablas. Identifica el tipo y usa SOLO la variante combinada:
-- VENTAS  → tablas cuyo encabezado dice "= NUEVO + USADO" (ignora "= NUEVO" y "= USADO" por separado).
-- SERVICIOS → tablas cuyo encabezado dice "= SERVICIO + HYP" (ignora "= SERVICIO" y "= HYP" por separado).
-
-De la variante combinada toma dos filas:
-1. "REPORTE DE EFECTIVIDAD 24 HRS ..." → fila "EFECTIVIDAD 2026" = % de contactabilidad (lo llamamos CBD).
-2. "REPORTE DE SATISFACCIÓN 24 HRS ..." → fila "SATISFACCIÓN" = % de satisfacción.
-
-Columnas por sucursal: CHANGAN TUXTLA, CHANGAN TAPACHULA, CHANGAN OCOSINGO.
-
-Responde ÚNICAMENTE con JSON válido, sin texto ni markdown:
-
-{
-  "tipo": "<ventas | servicios>",
-  "sucursales": {
-    "TUXTLA":    { "cbd": <número>, "satisfaccion": <número> },
-    "TAPACHULA": { "cbd": <número>, "satisfaccion": <número> },
-    "OCOSINGO":  { "cbd": <número>, "satisfaccion": <número> }
-  }
-}
-
-REGLAS:
-- Números sin el signo % (ej. 85.71, 100, 37.5).
-- Si una sucursal tiene TOTAL DE BASE DE DATOS = 0 (sin encuestas), usa null en sus dos campos.
-- "tipo" es crítico: "ventas" si los encabezados dicen VENTAS, "servicios" si dicen SERVICIOS.
-- No agregues texto fuera del JSON.`;
 }
 
 // Datos nacionales AMIA/INEGI hardcodeados — se actualizan manualmente cada mes
@@ -5703,30 +5375,36 @@ function TendenciasSection({ currentMonthKey }) {
   useEffect(() => {
     (async () => {
       setLoading(true);
-      // Construye una serie de 12 meses (ene–dic) para un año dado.
-      // hastaMes: si se indica, los meses posteriores quedan vacíos (año en curso).
-      // Un mes sin datos en Firebase queda como null (hueco en la línea), no como 0.
-      const buildSerie = async (anio, hastaMes) => Promise.all(
-        Array.from({ length: 12 }, (_, idx) => idx + 1).map(async (m) => {
-          const etiqueta = MES_NOMBRES[m - 1].slice(0, 3);
-          if (hastaMes != null && m > hastaMes) return { x: etiqueta, y: null };
-          const raw = await fbGet(`datos/${anio}-${String(m).padStart(2, "0")}`);
-          if (!raw) return { x: etiqueta, y: null };
+      // Meses del año en curso, de enero hasta el mes operativo actual
+      const mesesAnioActual = [];
+      for (let m = 1; m <= mesActualNum; m++) {
+        mesesAnioActual.push(`${anioActual}-${String(m).padStart(2, "0")}`);
+      }
+      const datosActual = await Promise.all(mesesAnioActual.map(async mk => {
+        const raw = await fbGet(`datos/${mk}`);
+        const merged = {};
+        Object.keys(initialData).forEach(section => {
+          merged[section] = decodeFirebaseData(raw?.[section], initialData[section]);
+        });
+        return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged, agenciaSel) };
+      }));
+      setSerieActual(datosActual.map(d => ({ x: d.mes, y: d.value })));
+
+      if (compararAnioAnterior) {
+        const anioAnterior = String(parseInt(anioActual, 10) - 1);
+        const mesesAnioAnterior = [];
+        for (let m = 1; m <= mesActualNum; m++) {
+          mesesAnioAnterior.push(`${anioAnterior}-${String(m).padStart(2, "0")}`);
+        }
+        const datosAnterior = await Promise.all(mesesAnioAnterior.map(async mk => {
+          const raw = await fbGet(`datos/${mk}`);
           const merged = {};
           Object.keys(initialData).forEach(section => {
             merged[section] = decodeFirebaseData(raw?.[section], initialData[section]);
           });
-          return { x: etiqueta, y: computeIndicadorValue(indicador, merged, agenciaSel) };
-        })
-      );
-
-      // Año en curso: enero hasta el mes operativo; el resto del año queda vacío.
-      setSerieActual(await buildSerie(anioActual, mesActualNum));
-
-      if (compararAnioAnterior) {
-        // Año anterior: los 12 meses completos, para ver el cierre total del año pasado.
-        const anioAnterior = String(parseInt(anioActual, 10) - 1);
-        setSerieAnterior(await buildSerie(anioAnterior, null));
+          return { mes: MES_NOMBRES[getMonthNumFromKey(mk) - 1].slice(0, 3), value: computeIndicadorValue(indicador, merged, agenciaSel) };
+        }));
+        setSerieAnterior(datosAnterior.map(d => ({ x: d.mes, y: d.value })));
       } else {
         setSerieAnterior([]);
       }
@@ -5964,32 +5642,16 @@ function parseProspeccionWorkbook(workbook) {
       h && keywords.every(k => String(h).toLowerCase().includes(k.toLowerCase()))
     );
 
-    // Normaliza encabezados (sin acentos) para búsquedas tolerantes.
-    const normH = (s) => String(s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
     const iAsesor    = findCol(["NOMBRE DEL ASESOR"]);
     const iSucursal  = findCol(["SUCURSAL"]);
     const iVehiculo  = findCol(["VEHICULO"]);
     const iEstatus   = findCol(["ESTATUS DEL INTENTO"]);
-    // Calificación: en Teléfono dice "escala del 0 al 10", en WhatsApp "escala de 0 a 10".
-    // Basta con que el encabezado contenga "escala" y "10".
-    const iCalif     = headers.findIndex(h => { const c = normH(h); return c.includes("escala") && c.includes("10"); });
-    // Queja: Teléfono "Motivo de la queja"; WhatsApp "cuál fue la falla de nuestra atención".
-    const iQueja     = headers.findIndex(h => { const c = normH(h); return c.includes("queja") || c.includes("falla"); });
+    const iCalif     = findCol(["escala del 0 al 10"]);
+    const iQueja     = findCol(["Motivo de la queja"]);
     const iFalta     = findCol(["hace falta"]);
     const iComentario = findCol(["Algún comentario"]);
     const iProspecto = findCol(["NOMBRE DEL PROSPECTO"]);
     const iAtencion  = findCol(["atención adecuada"]);
-    // "¿Por qué medio se enteró de nosotros?" — el encabezado varía en redacción y acentos,
-    // así que buscamos de forma tolerante (varias frases posibles).
-    const iMedio = headers.findIndex(h => {
-      const c = normH(h);
-      return (c.includes("medio") && (c.includes("entero") || c.includes("enteraste") || c.includes("conocio") || c.includes("nosotros")))
-          || (c.includes("como") && (c.includes("entero") || c.includes("conocio")))
-          || c.includes("se entero de nosotros")
-          || c.includes("como nos conocio")
-          || c.includes("por que medio");
-    });
 
     for (let r = 2; r < rows.length; r++) {
       const row = rows[r];
@@ -6019,7 +5681,6 @@ function parseProspeccionWorkbook(workbook) {
         origen,
         calificacion: califNum,
         atencionAdecuada: iAtencion >= 0 && row[iAtencion] ? String(row[iAtencion]).trim() : "",
-        medioEntero: iMedio >= 0 && row[iMedio] ? String(row[iMedio]).trim() : "",
         queja:       iQueja >= 0 && row[iQueja] ? String(row[iQueja]).trim() : "",
         faltaPara10: iFalta >= 0 && row[iFalta] ? String(row[iFalta]).trim() : "",
         comentario:  iComentario >= 0 && row[iComentario] ? String(row[iComentario]).trim() : "",
@@ -6345,61 +6006,6 @@ ${lineas}`;
                 });
               })()}
             </div>
-
-            {/* Indicador: ¿por qué medio se enteró de nosotros? (solo Prospección) */}
-            {tipoActivo === "prospeccion" && (() => {
-              const conteo = {};
-              datos.forEach(r => {
-                const raw = (r.medioEntero || "").trim();
-                const key = raw === "" ? "Sin especificar" : raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
-                conteo[key] = (conteo[key] || 0) + 1;
-              });
-              const totalConDato = datos.filter(r => (r.medioEntero || "").trim() !== "").length;
-              if (totalConDato === 0) {
-                return (
-                  <div style={{ background: "#3b9eea11", border: "1px solid #3b9eea33", borderRadius: 8, padding: "10px 14px", color: "#64748b", fontSize: 12, marginBottom: 18 }}>
-                    📣 El reporte de {getMonthLabel(monthKey)} no trae la columna "¿Por qué medio se enteró de nosotros?" (o viene vacía). Si sí la incluye, mándame el encabezado exacto y afino la detección.
-                  </div>
-                );
-              }
-              const entries = Object.entries(conteo).sort((a, b) => b[1] - a[1]);
-              const datosPie = entries.map(([label, value]) => ({ label, value }));
-              const colores = ["#3b9eea", "#D4AF37", "#4ade80", "#c084fc", "#fb923c", "#f472b6", "#60a5fa", "#fbbf24", "#94a3b8", "#34d399", "#f87171", "#a78bfa"];
-              return (
-                <Card style={{ marginBottom: 18 }}>
-                  <SectionHeader title="¿POR QUÉ MEDIO SE ENTERÓ DE NOSOTROS?" icon="📣" />
-                  <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
-                    <PieChartLeyenda datos={datosPie} colores={colores} size={180} />
-                    <div style={{ flex: 1, minWidth: 280 }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                        <thead>
-                          <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
-                            <th style={{ textAlign: "left", padding: "5px 8px" }}>MEDIO</th>
-                            <th style={{ textAlign: "center", padding: "5px 8px" }}>PROSPECTOS</th>
-                            <th style={{ textAlign: "right", padding: "5px 8px" }}>%</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {entries.map(([label, value], i) => (
-                            <tr key={label} style={{ borderBottom: "1px solid #0f2239" }}>
-                              <td style={{ padding: "5px 8px", color: "#f1f5f9" }}>
-                                <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: colores[i % colores.length], marginRight: 8 }} />
-                                {label}
-                              </td>
-                              <td style={{ textAlign: "center", padding: "5px 8px", color: "#D4AF37", fontWeight: 700 }}>{value}</td>
-                              <td style={{ textAlign: "right", padding: "5px 8px", color: "#64748b" }}>{(value / datos.length * 100).toFixed(1)}%</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <div style={{ color: "#475569", fontSize: 10.5, marginTop: 8 }}>
-                        Sobre {datos.length} prospectos contactados{totalConDato < datos.length ? ` · ${datos.length - totalConDato} sin dato de medio` : ""}.
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              );
-            })()}
 
             <p style={{ color: "#94a3b8", fontSize: 11, fontWeight: 700, marginBottom: 8, letterSpacing: .8 }}>
               {tipoActivo === "prospeccion" ? "CALIFICACIÓN POR ASESOR (PROSPECTOS CONTACTADOS)" : "CALIFICACIÓN POR ASESOR"}
@@ -7852,1125 +7458,6 @@ function RitmoVentasSection({ monthKey }) {
   );
 }
 
-// ── Carga de reporte "24 HRS" (PDF) → automatiza SSI / CSI en Operativo ──
-function ImportarSatisfaccion24hrs({ onFieldChange, monthKey }) {
-  const [cargando, setCargando] = useState(false);
-  const [error, setError] = useState("");
-  const [resultado, setResultado] = useState(null); // { tipo, aplicados: [...] }
-  const fileRef = useRef(null);
-
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      setError("Sube el PDF del reporte 24 hrs (Ventas o Servicios).");
-      if (fileRef.current) fileRef.current.value = "";
-      return;
-    }
-    setCargando(true); setError(""); setResultado(null);
-    try {
-      const base64 = await new Promise((res, rej) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result.split(",")[1]);
-        reader.onerror = rej;
-        reader.readAsDataURL(file);
-      });
-
-      const resp = await fetch("/api/analisis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: buildPromptExtraccion24hrs(getMonthLabel(monthKey)), pdf: base64 }),
-      });
-      const dataResp = await resp.json();
-      if (!resp.ok) throw new Error(dataResp.error || "Error al extraer datos");
-
-      let texto = (dataResp.text || "").replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(texto);
-      const tipo = (parsed.tipo || "").toLowerCase();
-      const suc = parsed.sucursales || {};
-      const aplicados = [];
-
-      if (tipo === "ventas") {
-        // SSI: Tuxtla, Tapachula, Ocosingo
-        ["TUXTLA", "TAPACHULA", "OCOSINGO"].forEach(ag => {
-          const d = suc[ag]; if (!d) return;
-          const partes = [];
-          if (d.cbd != null)          { onFieldChange("ssi", ag, "cbd", Number(d.cbd)); partes.push(`CBD ${d.cbd}%`); }
-          if (d.satisfaccion != null) { onFieldChange("ssi", ag, "ssi", Number(d.satisfaccion)); partes.push(`SSI ${d.satisfaccion}%`); }
-          if (partes.length) aplicados.push(`${ag} — ${partes.join(" · ")}`);
-        });
-      } else if (tipo === "servicios") {
-        // CSI: solo Tuxtla y Tapachula (Ocosingo se ignora por indicación)
-        ["TUXTLA", "TAPACHULA"].forEach(ag => {
-          const d = suc[ag]; if (!d) return;
-          const partes = [];
-          if (d.cbd != null)          { onFieldChange("csi", ag, "cbd", Number(d.cbd)); partes.push(`CBD ${d.cbd}%`); }
-          if (d.satisfaccion != null) { onFieldChange("csi", ag, "csi", Number(d.satisfaccion)); partes.push(`CSI ${d.satisfaccion}%`); }
-          if (partes.length) aplicados.push(`${ag} — ${partes.join(" · ")}`);
-        });
-      } else {
-        throw new Error("No se pudo determinar si el reporte es de Ventas o de Servicios.");
-      }
-
-      if (aplicados.length === 0) throw new Error("No se encontraron datos válidos para aplicar.");
-      setResultado({ tipo, aplicados });
-    } catch (err) {
-      console.error(err);
-      setError(`No se pudo procesar el PDF: ${err.message}. Verifica que sea el reporte 24 hrs correcto.`);
-    } finally {
-      setCargando(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
-
-  return (
-    <Card style={{ borderLeft: "4px solid #3b9eea" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
-          <div style={{ color: "#3b9eea", fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
-            ⚡ Automatizar SSI / CSI
-          </div>
-          <div style={{ color: "#94a3b8", fontSize: 12, lineHeight: 1.5 }}>
-            Sube el PDF del reporte "24 HRS". Si es de <b style={{ color: "#cbd5e1" }}>Ventas</b> llena el SSI (Tuxtla, Tapachula, Ocosingo); si es de <b style={{ color: "#cbd5e1" }}>Servicios</b> llena el CSI (Tuxtla, Tapachula). Usa la variante combinada (NUEVO + USADO / SERVICIO + HYP) y actualiza CBD y satisfacción de {getMonthLabel(monthKey)}.
-          </div>
-        </div>
-        <div>
-          <input ref={fileRef} type="file" accept=".pdf" onChange={handleFile} style={{ display: "none" }} id="file-24hrs-satisfaccion" />
-          <label htmlFor="file-24hrs-satisfaccion" style={{
-            background: cargando ? "#1e3a5f" : "#3b9eea", color: cargando ? "#64748b" : "#0a1628",
-            border: "none", borderRadius: 8, padding: "11px 22px", fontSize: 13, fontWeight: 700,
-            cursor: cargando ? "default" : "pointer", display: "inline-block", whiteSpace: "nowrap"
-          }}>
-            {cargando ? "🧠 Leyendo PDF…" : "📤 Subir reporte 24 hrs (.pdf)"}
-          </label>
-        </div>
-      </div>
-
-      {cargando && (
-        <div style={{ color: "#94a3b8", fontSize: 12.5, marginTop: 12 }}>
-          La IA está leyendo el PDF y extrayendo efectividad y satisfacción… ~10-15 segundos.
-        </div>
-      )}
-      {error && (
-        <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 13, marginTop: 12 }}>
-          {error}
-        </div>
-      )}
-      {resultado && (
-        <div style={{ background: "#14532d22", border: "1px solid #4ade80", borderRadius: 8, padding: "10px 14px", color: "#4ade80", fontSize: 13, marginTop: 12 }}>
-          ✅ Detectado: reporte de <b>{resultado.tipo === "ventas" ? "Ventas → SSI" : "Servicios → CSI"}</b>. Aplicado a {getMonthLabel(monthKey)}:
-          <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>
-            {resultado.aplicados.map((a, i) => <li key={i} style={{ marginBottom: 2 }}>{a}</li>)}
-          </ul>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// POSICIONAMIENTO COMPETITIVO TERRITORIAL (Fuente: Urban Science / Foresight)
-// Tres reportes: Posicionamiento por Marca, por Segmentos, y Eficiencia de la Geografía.
-// ═══════════════════════════════════════════════════════════════════════════
-const POSICIONAMIENTO_PATH = "posicionamiento"; // posicionamiento/{monthKey}/{territorio}/{marca|segmentos|geografia}
-
-// Plazas/territorios que suben su propio diagnóstico competitivo por separado.
-const TERRITORIOS_POS = [
-  { key: "tuxtla_pte",   label: "Tuxtla Pte" },
-  { key: "tuxtla_ote",   label: "Tuxtla Ote" },
-  { key: "tapachula",    label: "Tapachula" },
-  { key: "san_cristobal", label: "San Cristóbal" },
-  { key: "comitan",      label: "Comitán" },
-  { key: "palenque",     label: "Palenque" },
-];
-
-// Lee la hoja de "Filtros Avanzados" para extraer el contexto del reporte.
-function extraerMetaPosicionamiento(workbook) {
-  const filtrosSheet = workbook.SheetNames.find(n => n.toLowerCase().includes("filtros"));
-  const meta = { geografia: "", periodo: "", fecha: "", comparacion: "" };
-  if (!filtrosSheet) return meta;
-  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[filtrosSheet], { header: 1, defval: null });
-  rows.forEach(r => {
-    const k = String(r?.[0] || "").trim();
-    const v = r?.[1];
-    if (k.includes("Geografía")) meta.geografia = v ? String(v).trim() : "";
-    else if (k.includes("Periodo Calendario")) meta.periodo = v ? String(v).trim() : "";
-    else if (k.includes("Reporting Date")) meta.fecha = v ? String(v).trim() : "";
-    else if (k.includes("Tipo de Comparación")) meta.comparacion = v ? String(v).trim() : "";
-  });
-  return meta;
-}
-
-const numOrNull = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(v); return isNaN(n) ? null : n; };
-
-// Deriva "YYYY-MM" desde el Reporting Date del reporte ("DD/MM/YY"). null si no se puede.
-function mesDeReporte(meta) {
-  const f = String(meta?.fecha || "").trim();
-  const p = f.split("/");
-  if (p.length === 3) {
-    let y = parseInt(p[2], 10); if (!isNaN(y) && y < 100) y += 2000;
-    const mm = parseInt(p[1], 10);
-    if (!isNaN(y) && mm >= 1 && mm <= 12) return `${y}-${String(mm).padStart(2, "0")}`;
-  }
-  return null;
-}
-
-// Reporte 1: Posicionamiento por Marca
-function parsePosicionamientoMarca(workbook) {
-  const ws = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-  const marcas = [];
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row || row[1] === null || String(row[1]).trim() === "") continue;
-    marcas.push({
-      posicion: numOrNull(row[0]),
-      marca: String(row[1]).trim(),
-      unidades: numOrNull(row[2]) ?? 0,
-      unidadesAnt: numOrNull(row[3]),
-      deltaUnidades: numOrNull(row[4]),
-      deltaPct: numOrNull(row[5]),
-      ms: numOrNull(row[6]),
-      msAnt: numOrNull(row[7]),
-      deltaMs: numOrNull(row[8]),
-    });
-  }
-  return { meta: extraerMetaPosicionamiento(workbook), marcas };
-}
-
-// Reporte 2: Posicionamiento por Segmentos (segmento → ranking de modelos)
-function parsePosicionamientoSegmentos(workbook) {
-  const ws = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-  const map = {};
-  const orden = [];
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    const seg = row?.[0];
-    if (seg === null || seg === undefined || String(seg).trim() === "") continue;
-    const key = String(seg).trim();
-    if (!map[key]) {
-      map[key] = {
-        segmento: key,
-        unidades: numOrNull(row[1]) ?? 0,
-        deltaPct: numOrNull(row[2]),
-        ms: numOrNull(row[3]),
-        deltaMs: numOrNull(row[4]),
-        nissanModelos: row[5] ? String(row[5]).trim() : "",
-        nissanUnidades: numOrNull(row[6]) ?? 0,
-        nissanDeltaPct: numOrNull(row[7]),
-        nissanMs: numOrNull(row[8]),
-        nissanDeltaMs: numOrNull(row[9]),
-        modelos: [],
-      };
-      orden.push(key);
-    }
-    if (row[11] !== null && String(row[11]).trim() !== "") {
-      map[key].modelos.push({
-        posicion: numOrNull(row[10]),
-        marca: String(row[11]).trim(),
-        modelo: row[12] ? String(row[12]).trim() : "",
-        unidades: numOrNull(row[13]) ?? 0,
-        deltaPct: numOrNull(row[14]),
-        ms: numOrNull(row[15]),
-        deltaMs: numOrNull(row[16]),
-      });
-    }
-  }
-  // Posición de Nissan dentro de cada segmento (mejor posición entre sus modelos)
-  orden.forEach(k => {
-    const posN = map[k].modelos.filter(m => m.marca.toLowerCase() === "nissan").map(m => m.posicion).filter(p => p != null);
-    map[k].nissanPosicion = posN.length ? Math.min(...posN) : null;
-  });
-  return { meta: extraerMetaPosicionamiento(workbook), segmentos: orden.map(k => map[k]) };
-}
-
-// Reporte 3: Eficiencia de la Geografía (por colonia / CensusTract)
-function parseGeografia(workbook) {
-  const ws = workbook.Sheets[workbook.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
-  const colonias = [];
-  for (let r = 1; r < rows.length; r++) {
-    const row = rows[r];
-    if (!row || row[1] === null || String(row[1]).trim() === "") continue;
-    colonias.push({
-      posicion: numOrNull(row[0]),
-      colonia: String(row[1]).trim(),
-      unidades: numOrNull(row[2]) ?? 0,
-      deltaUnidades: numOrNull(row[3]),
-      deltaPct: numOrNull(row[4]),
-      ms: numOrNull(row[5]),
-      deltaMs: numOrNull(row[6]),
-      nissanUnidades: numOrNull(row[7]),
-      nissanDeltaUnidades: numOrNull(row[8]),
-      nissanDeltaPct: numOrNull(row[9]),
-      nissanMs: numOrNull(row[10]),
-      nissanDeltaMs: numOrNull(row[11]),
-    });
-  }
-  // Brand Volume by Geography (matriz colonia × marca) — permite ver quién domina cada colonia.
-  let brandVolume = null;
-  const bvName = workbook.SheetNames.find(n => n.toLowerCase().includes("brand volume"));
-  if (bvName) {
-    const bvRows = XLSX.utils.sheet_to_json(workbook.Sheets[bvName], { header: 1, defval: null });
-    const headers = (bvRows[0] || []).map(h => String(h || "").trim());
-    const marcasBV = headers.slice(1);
-    const iNis = marcasBV.findIndex(m => m.toLowerCase() === "nissan");
-    const totalRow = bvRows.find(r => String(r?.[0] || "").trim().toLowerCase() === "total");
-    const totales = [];
-    if (totalRow) marcasBV.forEach((m, i) => { const u = numOrNull(totalRow[i + 1]) ?? 0; if (u > 0) totales.push({ marca: m, unidades: u }); });
-    totales.sort((a, b) => b.unidades - a.unidades);
-    const coloniasBV = [];
-    for (let r = 1; r < bvRows.length; r++) {
-      const row = bvRows[r];
-      const name = String(row?.[0] || "").trim();
-      if (!name || name.toLowerCase() === "total") continue;
-      let lider = null, liderU = -1, total = 0, nis = 0;
-      marcasBV.forEach((m, i) => {
-        const u = numOrNull(row[i + 1]) ?? 0;
-        total += u;
-        if (u > liderU) { liderU = u; lider = m; }
-        if (i === iNis) nis = u;
-      });
-      coloniasBV.push({ colonia: name, total, lider, liderUnidades: liderU, nissanUnidades: nis });
-    }
-    brandVolume = { totales, colonias: coloniasBV };
-  }
-  return { meta: extraerMetaPosicionamiento(workbook), colonias, brandVolume };
-}
-
-// Reporte 4: Performance Overview Summary (eficiencia / potencial del concesionario)
-function parsePerformanceOverview(workbook) {
-  const meta = extraerMetaPosicionamiento(workbook);
-  // Hoja "Categorías" (Menudeo / Flotilla)
-  const catSheet = workbook.SheetNames.find(n => n.toLowerCase().includes("categor"));
-  const categorias = [];
-  if (catSheet) {
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[catSheet], { header: 1, defval: null });
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r];
-      if (!row || row[0] === null || String(row[0]).trim() === "") continue;
-      categorias.push({
-        nombre: String(row[0]).trim(),
-        mercado: numOrNull(row[1]) ?? 0,
-        nissanMs: numOrNull(row[2]),
-        nissanUnidades: numOrNull(row[3]) ?? 0,
-        ventasNacionales: numOrNull(row[4]),
-        expected: numOrNull(row[5]),
-        compradoresPMA: numOrNull(row[6]),
-        arribaDebajo: numOrNull(row[7]),
-        eficiencia: numOrNull(row[8]),
-        dealerMs: numOrNull(row[9]),
-        expectedMs: numOrNull(row[10]),
-        dealerArribaDebajo: numOrNull(row[11]),
-        dealerEfectividad: numOrNull(row[12]),
-      });
-    }
-  }
-  // Hoja "Geografía" (por colonia / CensusTract)
-  const geoSheet = workbook.SheetNames.find(n => n.toLowerCase().includes("geograf"));
-  const colonias = [];
-  if (geoSheet) {
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[geoSheet], { header: 1, defval: null });
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r];
-      if (!row || row[0] === null || String(row[0]).trim() === "") continue;
-      colonias.push({
-        colonia: String(row[0]).trim(),
-        mercado: numOrNull(row[1]),
-        nissanMs: numOrNull(row[2]),
-        nissanUnidades: numOrNull(row[3]),
-        expected: numOrNull(row[4]),
-        arribaDebajo: numOrNull(row[5]),
-        eficiencia: numOrNull(row[6]),
-        expectedMs: numOrNull(row[7]),
-        compradoresPMA: numOrNull(row[8]),
-        dealerArribaDebajo: numOrNull(row[9]),
-        dealerEfectividad: numOrNull(row[10]),
-      });
-    }
-  }
-  return { meta, categorias, colonias };
-}
-
-// Badge de variación (+ verde / - rojo) reutilizable
-function DeltaBadge({ value, suffix = "", ppt = false }) {
-  if (value === null || value === undefined) return <span style={{ color: "#475569" }}>—</span>;
-  const color = value > 0 ? "#4ade80" : value < 0 ? "#f87171" : "#64748b";
-  const signo = value > 0 ? "+" : "";
-  return <span style={{ color, fontWeight: 700 }}>{signo}{value.toFixed(ppt ? 2 : 1)}{ppt ? " ppt" : suffix}</span>;
-}
-
-// Barra horizontal de participación (o de unidades con sufijo/decimales configurables)
-function BarraParticipacion({ label, value, max, color, resaltar, sufijo = "%", decimales = 1 }) {
-  const pct = max > 0 ? (value / max) * 100 : 0;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-      <div style={{ width: 100, textAlign: "right", fontSize: 11.5, color: resaltar ? "#D4AF37" : "#94a3b8", fontWeight: resaltar ? 800 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
-      <div style={{ flex: 1, background: "#0d1b2e", borderRadius: 4, height: 18, position: "relative", overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 4, transition: "width .3s" }} />
-      </div>
-      <div style={{ width: 48, fontSize: 11.5, color: resaltar ? "#D4AF37" : "#cbd5e1", fontWeight: resaltar ? 800 : 600 }}>{value != null ? value.toFixed(decimales) : "—"}{sufijo}</div>
-    </div>
-  );
-}
-
-function PosicionamientoSection({ monthKey }) {
-  const [territorio, setTerritorio] = useState(TERRITORIOS_POS[0].key);
-  const [sub, setSub] = useState("marca"); // marca | segmentos | geografia
-  const [datosMarca, setDatosMarca] = useState(null);
-  const [datosSeg, setDatosSeg] = useState(null);
-  const [datosGeo, setDatosGeo] = useState(null);
-  const [datosEfi, setDatosEfi] = useState(null);
-  const [cargando, setCargando] = useState(false);
-  const [error, setError] = useState("");
-  const [loadingDatos, setLoadingDatos] = useState(true);
-  const [segSel, setSegSel] = useState(null);
-  const [geoFiltro, setGeoFiltro] = useState("todas"); // todas | conNissan | oportunidad
-  const [geoVerTodas, setGeoVerTodas] = useState(false);
-  const [efiVerTodas, setEfiVerTodas] = useState(false);
-  const fileRef = useRef(null);
-
-  useEffect(() => {
-    (async () => {
-      setLoadingDatos(true);
-      setError("");
-      const [m, s, g, e] = await Promise.all([
-        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/marca`),
-        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/segmentos`),
-        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/geografia`),
-        fbGet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/eficiencia`),
-      ]);
-      setDatosMarca(m || null);
-      setDatosSeg(s || null);
-      setDatosGeo(g || null);
-      setDatosEfi(e || null);
-      setSegSel(null);
-      setLoadingDatos(false);
-    })();
-  }, [monthKey, territorio]);
-
-  const handleFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!/\.(xlsx|xls)$/i.test(file.name)) {
-      setError("Sube el Excel del reporte de Urban Science (.xlsx).");
-      if (fileRef.current) fileRef.current.value = "";
-      return;
-    }
-    setCargando(true); setError("");
-    try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      let parsed, tipo;
-      if (sub === "marca")      { parsed = parsePosicionamientoMarca(wb);     tipo = "marca"; }
-      else if (sub === "segmentos") { parsed = parsePosicionamientoSegmentos(wb); tipo = "segmentos"; }
-      else if (sub === "geografia") { parsed = parseGeografia(wb);             tipo = "geografia"; }
-      else                      { parsed = parsePerformanceOverview(wb);       tipo = "eficiencia"; }
-
-      const vacio = (tipo === "marca" && parsed.marcas.length === 0)
-        || (tipo === "segmentos" && parsed.segmentos.length === 0)
-        || (tipo === "geografia" && parsed.colonias.length === 0)
-        || (tipo === "eficiencia" && parsed.colonias.length === 0 && parsed.categorias.length === 0);
-      if (vacio) { setError("No se encontraron datos. Verifica que sea el reporte correcto para esta sub-pestaña."); setCargando(false); return; }
-
-      // Validación: el reporte cierra un mes y se sube en el siguiente.
-      // Estando el tablero en el mes activo, el archivo válido es el del mes INMEDIATO ANTERIOR.
-      const mesRep = mesDeReporte(parsed.meta);
-      const mesEsperado = getPreviousMonthKey(monthKey);
-      if (mesRep && mesRep !== mesEsperado) {
-        setError(`Este reporte es de ${getMonthLabel(mesRep)}. Para el mes activo (${getMonthLabel(monthKey)}) corresponde subir el reporte de ${getMonthLabel(mesEsperado)}, el mes inmediato anterior. Cambia el mes del tablero o sube el archivo correcto.`);
-        setCargando(false);
-        if (fileRef.current) fileRef.current.value = "";
-        return;
-      }
-
-      await fbSet(`${POSICIONAMIENTO_PATH}/${monthKey}/${territorio}/${tipo}`, parsed);
-      if (tipo === "marca") setDatosMarca(parsed);
-      else if (tipo === "segmentos") { setDatosSeg(parsed); setSegSel(null); }
-      else if (tipo === "geografia") setDatosGeo(parsed);
-      else setDatosEfi(parsed);
-    } catch (err) {
-      console.error(err);
-      setError(`No se pudo procesar el archivo: ${err.message}`);
-    } finally {
-      setCargando(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
-
-  const metaActual = sub === "marca" ? datosMarca?.meta : sub === "segmentos" ? datosSeg?.meta : sub === "geografia" ? datosGeo?.meta : datosEfi?.meta;
-  const nombreReporte = sub === "marca" ? "Posicionamiento por Marca" : sub === "segmentos" ? "Posicionamiento por Segmentos" : sub === "geografia" ? "Eficiencia de la Geografía" : "Performance Overview Summary";
-  const territorioLabel = TERRITORIOS_POS.find(t => t.key === territorio)?.label || territorio;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Card>
-        <SectionHeader title="POSICIONAMIENTO COMPETITIVO TERRITORIAL" icon="🎯" />
-        <div style={{ color: "#64748b", fontSize: 11.5, marginBottom: 14 }}>
-          Diagnóstico competitivo con datos de Urban Science / Foresight. Cada plaza sube sus propios reportes por separado. El reporte se sube en el mes siguiente a su cierre: en el mes activo ({getMonthLabel(monthKey)}) corresponde el reporte de <b style={{ color: "#94a3b8" }}>{getMonthLabel(getPreviousMonthKey(monthKey))}</b>.
-        </div>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ color: "#64748b", fontSize: 10.5, fontWeight: 700, letterSpacing: .8, marginBottom: 6 }}>PLAZA / TERRITORIO</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {TERRITORIOS_POS.map(t => (
-              <button key={t.key} onClick={() => setTerritorio(t.key)} style={{
-                background: territorio === t.key ? "#D4AF37" : "#0f2239",
-                color: territorio === t.key ? "#0a1628" : "#94a3b8",
-                border: `1px solid ${territorio === t.key ? "#D4AF37" : "#1e3a5f"}`,
-                borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-              }}>{t.label}</button>
-            ))}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-          {[
-            { key: "marca", label: "🏁 Por Marca" },
-            { key: "segmentos", label: "🚗 Por Segmentos" },
-            { key: "geografia", label: "🗺️ Por Geografía" },
-            { key: "eficiencia", label: "⚡ Eficiencia / Potencial" },
-          ].map(t => (
-            <button key={t.key} onClick={() => setSub(t.key)} style={{
-              background: sub === t.key ? "#3b9eea" : "#0f2239",
-              color: sub === t.key ? "#0a1628" : "#94a3b8",
-              border: `1px solid ${sub === t.key ? "#3b9eea" : "#1e3a5f"}`,
-              borderRadius: 6, padding: "7px 16px", fontSize: 12.5, fontWeight: 700, cursor: "pointer"
-            }}>{t.label}</button>
-          ))}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: "none" }} id="file-posicionamiento" />
-          <label htmlFor="file-posicionamiento" style={{
-            background: cargando ? "#1e3a5f" : "#D4AF37", color: cargando ? "#64748b" : "#0a1628",
-            border: "none", borderRadius: 8, padding: "9px 18px", fontSize: 12.5, fontWeight: 700,
-            cursor: cargando ? "default" : "pointer", display: "inline-block"
-          }}>{cargando ? "Procesando…" : `📤 Subir "${nombreReporte}" — ${territorioLabel} (.xlsx)`}</label>
-          {metaActual?.geografia && (
-            <div style={{ fontSize: 11.5, color: "#94a3b8" }}>
-              <b style={{ color: "#3b9eea" }}>{metaActual.geografia}</b>
-              {metaActual.periodo ? ` · ${metaActual.periodo}` : ""}
-              {metaActual.fecha ? ` · corte ${metaActual.fecha}` : ""}
-            </div>
-          )}
-        </div>
-        {error && (
-          <div style={{ background: "#dc262622", border: "1px solid #f87171", borderRadius: 8, padding: "10px 14px", color: "#f87171", fontSize: 12.5, marginTop: 12 }}>
-            {error}
-          </div>
-        )}
-      </Card>
-
-      {loadingDatos ? (
-        <Card><div style={{ color: "#64748b", textAlign: "center", padding: "30px 0" }}>Cargando…</div></Card>
-      ) : (
-        <>
-          {/* ══════════════ SUB: MARCA ══════════════ */}
-          {sub === "marca" && (!datosMarca ? (
-            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Posicionamiento por Marca" de {territorioLabel} para {getMonthLabel(monthKey)}.</div></Card>
-          ) : (() => {
-            const marcas = datosMarca.marcas;
-            const totalMercado = marcas.reduce((s, m) => s + (m.unidades || 0), 0);
-            const nissan = marcas.find(m => m.marca.toLowerCase() === "nissan");
-            const lider = marcas.find(m => m.posicion === 1) || marcas[0];
-            const brechaLider = nissan && lider ? (lider.ms - nissan.ms) : null;
-            const maxMs = Math.max(...marcas.map(m => m.ms || 0));
-            const topBarras = marcas.slice(0, 15);
-            const movers = [...marcas].filter(m => m.deltaMs != null);
-            const avances = [...movers].sort((a, b) => b.deltaMs - a.deltaMs).slice(0, 5);
-            const retrocesos = [...movers].sort((a, b) => a.deltaMs - b.deltaMs).slice(0, 5);
-            return (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-                  <div style={{ background: "#0f2239", border: "1px solid #D4AF37", borderTop: "3px solid #D4AF37", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>POSICIÓN NISSAN</div>
-                    <div style={{ color: "#D4AF37", fontSize: 26, fontWeight: 800 }}>{nissan ? `#${nissan.posicion}` : "—"}</div>
-                    <div style={{ color: "#475569", fontSize: 11 }}>de {marcas.length} marcas</div>
-                  </div>
-                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #3b9eea", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>PARTICIPACIÓN NISSAN</div>
-                    <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{nissan?.ms != null ? `${nissan.ms}%` : "—"}</div>
-                    <div style={{ fontSize: 11 }}><DeltaBadge value={nissan?.deltaMs} ppt /></div>
-                  </div>
-                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>UNIDADES NISSAN</div>
-                    <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{nissan?.unidades ?? "—"}</div>
-                    <div style={{ fontSize: 11 }}><DeltaBadge value={nissan?.deltaPct} suffix="%" /></div>
-                  </div>
-                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #f87171", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>LÍDER · BRECHA</div>
-                    <div style={{ color: "#f1f5f9", fontSize: 16, fontWeight: 800 }}>{lider?.marca}</div>
-                    <div style={{ color: "#94a3b8", fontSize: 11 }}>{lider?.ms}% · brecha {brechaLider != null ? `${brechaLider.toFixed(1)} ppt` : "—"}</div>
-                  </div>
-                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #c084fc", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>MERCADO TOTAL</div>
-                    <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{totalMercado}</div>
-                    <div style={{ color: "#475569", fontSize: 11 }}>unidades del periodo</div>
-                  </div>
-                </div>
-
-                <Card>
-                  <SectionHeader title="PARTICIPACIÓN TERRITORIAL POR MARCA (TOP 15)" icon="📊" />
-                  {topBarras.map(m => (
-                    <BarraParticipacion key={m.marca} label={m.marca} value={m.ms} max={maxMs}
-                      color={m.marca.toLowerCase() === "nissan" ? "#D4AF37" : m.posicion === 1 ? "#f87171" : "#3b9eea"}
-                      resaltar={m.marca.toLowerCase() === "nissan"} />
-                  ))}
-                </Card>
-
-                <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-                  <div style={{ flex: 1, minWidth: 300 }}>
-                    <Card>
-                      <SectionHeader title="MAYORES AVANCES (Δ ppt)" icon="📈" />
-                      {avances.map(m => (
-                        <div key={m.marca} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #0f2239" }}>
-                          <span style={{ color: m.marca.toLowerCase() === "nissan" ? "#D4AF37" : "#cbd5e1", fontWeight: m.marca.toLowerCase() === "nissan" ? 800 : 600, fontSize: 12.5 }}>{m.marca}</span>
-                          <span style={{ fontSize: 12.5 }}><DeltaBadge value={m.deltaMs} ppt /></span>
-                        </div>
-                      ))}
-                    </Card>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 300 }}>
-                    <Card>
-                      <SectionHeader title="MAYORES RETROCESOS (Δ ppt)" icon="📉" />
-                      {retrocesos.map(m => (
-                        <div key={m.marca} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #0f2239" }}>
-                          <span style={{ color: m.marca.toLowerCase() === "nissan" ? "#D4AF37" : "#cbd5e1", fontWeight: m.marca.toLowerCase() === "nissan" ? 800 : 600, fontSize: 12.5 }}>{m.marca}</span>
-                          <span style={{ fontSize: 12.5 }}><DeltaBadge value={m.deltaMs} ppt /></span>
-                        </div>
-                      ))}
-                    </Card>
-                  </div>
-                </div>
-
-                <Card>
-                  <SectionHeader title="RANKING COMPLETO DE MARCAS" icon="🏁" />
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                      <thead>
-                        <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
-                          <th style={{ textAlign: "center", padding: "6px 8px" }}>#</th>
-                          <th style={{ textAlign: "left", padding: "6px 8px" }}>MARCA</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>UNIDADES</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ % UDS</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTICIP.</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTIC. ANT.</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ ppt</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {marcas.map(m => {
-                          const esNissan = m.marca.toLowerCase() === "nissan";
-                          return (
-                            <tr key={m.marca} style={{ borderBottom: "1px solid #1e3a5f", background: esNissan ? "#D4AF3714" : "transparent" }}>
-                              <td style={{ textAlign: "center", padding: "6px 8px", color: m.posicion === 1 ? "#f87171" : "#64748b", fontWeight: 700 }}>{m.posicion}</td>
-                              <td style={{ padding: "6px 8px", color: esNissan ? "#D4AF37" : "#f1f5f9", fontWeight: esNissan ? 800 : 600 }}>{m.marca}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1" }}>{m.unidades}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={m.deltaPct} suffix="%" /></td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: esNissan ? "#D4AF37" : "#f1f5f9", fontWeight: 700 }}>{m.ms != null ? `${m.ms}%` : "—"}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#64748b" }}>{m.msAnt != null ? `${m.msAnt}%` : "—"}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={m.deltaMs} ppt /></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </Card>
-
-                <AnalisisIABlock
-                  titulo="ANÁLISIS DE POSICIONAMIENTO CON IA"
-                  subtitulo="🧠 Analizar posicionamiento por marca"
-                  loadingLabel="Analizando posicionamiento…"
-                  buildPrompt={() => {
-                    const l = [];
-                    l.push("Eres analista de inteligencia comercial competitiva para la plaza Nissan en Tuxtla Gutiérrez, Chiapas.");
-                    l.push("Analiza el posicionamiento por marca (fuente Urban Science / Foresight) y entrega una lectura ejecutiva accionable.\n");
-                    l.push(`Territorio: ${datosMarca.meta?.geografia || "N/D"} · Periodo: ${datosMarca.meta?.periodo || "N/D"}`);
-                    l.push(`Mercado total: ${totalMercado} unidades.`);
-                    l.push(`Nissan: posición #${nissan?.posicion}, ${nissan?.unidades} uds (Δ ${nissan?.deltaPct}% uds), participación ${nissan?.ms}% (Δ ${nissan?.deltaMs} ppt).`);
-                    l.push(`Líder: ${lider?.marca} con ${lider?.ms}% (brecha vs Nissan: ${brechaLider != null ? brechaLider.toFixed(1) : "s/d"} ppt).\n`);
-                    l.push("RANKING (posición. marca: uds, Δ% uds, participación%, Δ ppt):");
-                    marcas.forEach(m => l.push(`  ${m.posicion}. ${m.marca}: ${m.unidades} uds, ${m.deltaPct ?? "s/d"}%, ${m.ms ?? "s/d"}%, ${m.deltaMs ?? "s/d"} ppt`));
-                    l.push("\nResponde en markdown, ejecutivo y directo, sin relleno:");
-                    l.push("## Posición de Nissan y lectura del mes\n## Amenazas y competidores en ascenso\n## Recomendaciones para ganar participación (3 acciones concretas)");
-                    return l.join("\n");
-                  }}
-                />
-              </>
-            );
-          })())}
-
-          {/* ══════════════ SUB: SEGMENTOS ══════════════ */}
-          {sub === "segmentos" && (!datosSeg ? (
-            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Posicionamiento por Segmentos" de {territorioLabel} para {getMonthLabel(monthKey)}.</div></Card>
-          ) : (() => {
-            const segs = datosSeg.segmentos;
-            const nis1 = segs.filter(s => s.nissanPosicion === 1).length;
-            const nisTop3 = segs.filter(s => s.nissanPosicion != null && s.nissanPosicion <= 3).length;
-            const nisPresente = segs.filter(s => s.nissanUnidades > 0).length;
-            const posColor = (p) => p === 1 ? "#D4AF37" : p != null && p <= 3 ? "#3b9eea" : p != null ? "#94a3b8" : "#475569";
-            const segActivo = segSel != null ? segs.find(s => s.segmento === segSel) : null;
-            return (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-                  {[
-                    { l: "SEGMENTOS", v: segs.length, c: "#c084fc", s: "analizados" },
-                    { l: "NISSAN #1", v: nis1, c: "#D4AF37", s: `de ${segs.length} segmentos` },
-                    { l: "NISSAN TOP 3", v: nisTop3, c: "#3b9eea", s: `de ${segs.length} segmentos` },
-                    { l: "NISSAN PRESENTE", v: nisPresente, c: "#4ade80", s: `de ${segs.length} segmentos` },
-                  ].map(k => (
-                    <div key={k.l} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.c}`, borderRadius: 8, padding: "12px 14px" }}>
-                      <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.l}</div>
-                      <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{k.v}</div>
-                      <div style={{ color: "#475569", fontSize: 11 }}>{k.s}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <Card>
-                  <SectionHeader title="POSICIÓN DE NISSAN POR SEGMENTO" icon="🚗" />
-                  <div style={{ color: "#64748b", fontSize: 11, marginBottom: 12 }}>Da clic en un segmento para ver el ranking completo de modelos.</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 10 }}>
-                    {segs.map(s => {
-                      const liderModelo = (s.modelos || []).find(m => m.posicion === 1) || (s.modelos || []).slice().sort((a, b) => (a.posicion ?? 999) - (b.posicion ?? 999))[0] || null;
-                      const liderEsNissan = liderModelo && liderModelo.marca.toLowerCase() === "nissan";
-                      return (
-                      <div key={s.segmento} onClick={() => setSegSel(segSel === s.segmento ? null : s.segmento)} style={{
-                        background: segSel === s.segmento ? "#0d1b2e" : "#0f2239",
-                        border: `1px solid ${segSel === s.segmento ? "#3b9eea" : "#1e3a5f"}`,
-                        borderLeft: `4px solid ${posColor(s.nissanPosicion)}`,
-                        borderRadius: 8, padding: "10px 12px", cursor: "pointer"
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                          <span style={{ color: "#f1f5f9", fontSize: 12, fontWeight: 700, flex: 1 }}>{s.segmento}</span>
-                          <span style={{ color: posColor(s.nissanPosicion), fontSize: 15, fontWeight: 800, whiteSpace: "nowrap" }}>{s.nissanPosicion != null ? `#${s.nissanPosicion}` : "s/p"}</span>
-                        </div>
-                        <div style={{ color: "#64748b", fontSize: 10.5, marginTop: 4 }}>
-                          Segmento: {s.unidades} uds · Nissan: {s.nissanUnidades} uds ({s.nissanMs != null ? `${s.nissanMs}%` : "—"})
-                        </div>
-                        {liderModelo && (
-                          <div style={{ color: "#94a3b8", fontSize: 10.5, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            🥇 Líder: <b style={{ color: liderEsNissan ? "#D4AF37" : "#cbd5e1" }}>{liderModelo.marca} {liderModelo.modelo}</b>
-                            {liderModelo.unidades != null ? ` · ${liderModelo.unidades} uds` : ""}
-                            {liderModelo.ms != null ? ` · ${liderModelo.ms}%` : ""}
-                          </div>
-                        )}
-                        {s.nissanModelos && <div style={{ color: "#475569", fontSize: 10, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Nissan: {s.nissanModelos}</div>}
-                      </div>
-                      );
-                    })}
-                  </div>
-                </Card>
-
-                {segActivo && (
-                  <Card>
-                    <SectionHeader title={`RANKING DE MODELOS — ${segActivo.segmento}`} icon="🏁" />
-                    <div style={{ color: "#94a3b8", fontSize: 11.5, marginBottom: 10 }}>
-                      Segmento: {segActivo.unidades} uds · participación {segActivo.ms != null ? `${segActivo.ms}%` : "—"} (<DeltaBadge value={segActivo.deltaMs} ppt />) · Nissan #{segActivo.nissanPosicion ?? "s/p"}
-                    </div>
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                        <thead>
-                          <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
-                            <th style={{ textAlign: "center", padding: "6px 8px" }}>#</th>
-                            <th style={{ textAlign: "left", padding: "6px 8px" }}>MARCA</th>
-                            <th style={{ textAlign: "left", padding: "6px 8px" }}>MODELO</th>
-                            <th style={{ textAlign: "right", padding: "6px 8px" }}>UNIDADES</th>
-                            <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ % UDS</th>
-                            <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTICIP.</th>
-                            <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ ppt</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {segActivo.modelos.map((m, i) => {
-                            const esNissan = m.marca.toLowerCase() === "nissan";
-                            return (
-                              <tr key={i} style={{ borderBottom: "1px solid #1e3a5f", background: esNissan ? "#D4AF3714" : "transparent" }}>
-                                <td style={{ textAlign: "center", padding: "6px 8px", color: m.posicion === 1 ? "#f87171" : "#64748b", fontWeight: 700 }}>{m.posicion}</td>
-                                <td style={{ padding: "6px 8px", color: esNissan ? "#D4AF37" : "#cbd5e1", fontWeight: esNissan ? 800 : 600 }}>{m.marca}</td>
-                                <td style={{ padding: "6px 8px", color: esNissan ? "#D4AF37" : "#f1f5f9" }}>{m.modelo}</td>
-                                <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1" }}>{m.unidades}</td>
-                                <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={m.deltaPct} suffix="%" /></td>
-                                <td style={{ textAlign: "right", padding: "6px 8px", color: esNissan ? "#D4AF37" : "#f1f5f9", fontWeight: 700 }}>{m.ms != null ? `${m.ms}%` : "—"}</td>
-                                <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={m.deltaMs} ppt /></td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
-                )}
-
-                <AnalisisIABlock
-                  titulo="ANÁLISIS DE SEGMENTOS CON IA"
-                  subtitulo="🧠 Analizar posicionamiento por segmento"
-                  loadingLabel="Analizando segmentos…"
-                  buildPrompt={() => {
-                    const l = [];
-                    l.push("Eres analista de inteligencia comercial competitiva para la plaza Nissan en Tuxtla Gutiérrez, Chiapas.");
-                    l.push("Analiza el posicionamiento de Nissan por segmento (fuente Urban Science / Foresight) e identifica dónde atacar y dónde defender.\n");
-                    l.push(`Territorio: ${datosSeg.meta?.geografia || "N/D"} · Periodo: ${datosSeg.meta?.periodo || "N/D"}`);
-                    l.push(`Nissan es #1 en ${nis1} de ${segs.length} segmentos; top 3 en ${nisTop3}; presente en ${nisPresente}.\n`);
-                    l.push("DETALLE POR SEGMENTO (segmento | uds seg | particip seg | modelo líder | Nissan pos | Nissan uds | Nissan part% | modelos Nissan):");
-                    segs.forEach(s => {
-                      const lid = (s.modelos || []).find(m => m.posicion === 1) || (s.modelos || [])[0];
-                      const lidTxt = lid ? `${lid.marca} ${lid.modelo} (${lid.unidades} uds)` : "—";
-                      l.push(`  ${s.segmento} | ${s.unidades} | ${s.ms ?? "s/d"}% | líder: ${lidTxt} | #${s.nissanPosicion ?? "s/p"} | ${s.nissanUnidades} | ${s.nissanMs ?? "s/d"}% | ${s.nissanModelos || "—"}`);
-                    });
-                    l.push("\nResponde en markdown, ejecutivo y directo:");
-                    l.push("## Segmentos fuertes de Nissan (defender)\n## Segmentos de oportunidad (atacar) y contra qué rival\n## 3 acciones concretas de producto/comercial");
-                    return l.join("\n");
-                  }}
-                />
-              </>
-            );
-          })())}
-
-          {/* ══════════════ SUB: GEOGRAFÍA ══════════════ */}
-          {sub === "geografia" && (!datosGeo ? (
-            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Eficiencia de la Geografía" de {territorioLabel} para {getMonthLabel(monthKey)}.</div></Card>
-          ) : (() => {
-            const cols = datosGeo.colonias;
-            const conNissan = cols.filter(c => c.nissanUnidades && c.nissanUnidades > 0);
-            const sinNissan = cols.filter(c => !c.nissanUnidades || c.nissanUnidades === 0);
-            // Oportunidad: colonias con mercado relevante donde Nissan no está presente.
-            const oportunidad = [...sinNissan].sort((a, b) => b.unidades - a.unidades);
-            const filtradas = geoFiltro === "conNissan" ? conNissan : geoFiltro === "oportunidad" ? oportunidad : cols;
-            const mostradas = geoVerTodas ? filtradas : filtradas.slice(0, 30);
-            return (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-                  {[
-                    { l: "COLONIAS", v: cols.length, c: "#c084fc", s: "en el territorio" },
-                    { l: "CON NISSAN", v: conNissan.length, c: "#4ade80", s: "presencia registrada" },
-                    { l: "OPORTUNIDAD", v: sinNissan.length, c: "#fbbf24", s: "sin presencia Nissan" },
-                    { l: "MERCADO SIN NISSAN", v: sinNissan.reduce((s, c) => s + c.unidades, 0), c: "#f87171", s: "uds en colonias sin Nissan" },
-                  ].map(k => (
-                    <div key={k.l} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: `3px solid ${k.c}`, borderRadius: 8, padding: "12px 14px" }}>
-                      <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>{k.l}</div>
-                      <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{k.v}</div>
-                      <div style={{ color: "#475569", fontSize: 11 }}>{k.s}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <Card>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
-                    <SectionHeader title="EFICIENCIA POR COLONIA" icon="🗺️" />
-                    <div style={{ display: "flex", gap: 6 }}>
-                      {[
-                        { key: "todas", label: "Todas" },
-                        { key: "conNissan", label: "Con Nissan" },
-                        { key: "oportunidad", label: "🎯 Oportunidad" },
-                      ].map(f => (
-                        <button key={f.key} onClick={() => { setGeoFiltro(f.key); setGeoVerTodas(false); }} style={{
-                          background: geoFiltro === f.key ? "#3b9eea" : "#0f2239",
-                          color: geoFiltro === f.key ? "#0a1628" : "#94a3b8",
-                          border: `1px solid ${geoFiltro === f.key ? "#3b9eea" : "#1e3a5f"}`,
-                          borderRadius: 6, padding: "5px 11px", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
-                        }}>{f.label}</button>
-                      ))}
-                    </div>
-                  </div>
-                  {geoFiltro === "oportunidad" && (
-                    <div style={{ background: "#fbbf2411", border: "1px solid #fbbf2433", borderRadius: 6, padding: "8px 12px", color: "#fbbf24", fontSize: 11.5, marginBottom: 12 }}>
-                      Colonias con demanda donde Nissan no registró ventas — potencial de conquista, ordenadas por tamaño de mercado.
-                    </div>
-                  )}
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                      <thead>
-                        <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
-                          <th style={{ textAlign: "left", padding: "6px 8px" }}>COLONIA</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>UDS MERCADO</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTICIP.</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>UDS NISSAN</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>PARTIC. NISSAN</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>Δ ppt NISSAN</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mostradas.map((c, i) => {
-                          const sinNis = !c.nissanUnidades || c.nissanUnidades === 0;
-                          return (
-                            <tr key={i} style={{ borderBottom: "1px solid #1e3a5f", background: sinNis && c.unidades >= 10 ? "#fbbf2410" : "transparent" }}>
-                              <td style={{ padding: "6px 8px", color: "#f1f5f9" }}>{c.colonia}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>{c.unidades}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#94a3b8" }}>{c.ms != null ? `${c.ms}%` : "—"}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: sinNis ? "#f87171" : "#4ade80", fontWeight: 700 }}>{c.nissanUnidades ?? 0}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#D4AF37", fontWeight: 700 }}>{c.nissanMs != null ? `${c.nissanMs}%` : "—"}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px" }}><DeltaBadge value={c.nissanDeltaMs} ppt /></td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  {filtradas.length > 30 && (
-                    <div style={{ textAlign: "center", marginTop: 12 }}>
-                      <button onClick={() => setGeoVerTodas(!geoVerTodas)} style={{
-                        background: "transparent", border: "1px solid #3b9eea", color: "#3b9eea",
-                        borderRadius: 6, padding: "6px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-                      }}>{geoVerTodas ? "Ver menos" : `Ver todas (${filtradas.length})`}</button>
-                    </div>
-                  )}
-                </Card>
-
-                {/* Brand Volume by Geography: quién domina cada colonia */}
-                {datosGeo.brandVolume && (() => {
-                  const bv = datosGeo.brandVolume;
-                  const maxTot = Math.max(...bv.totales.map(t => t.unidades), 1);
-                  const conquista = bv.colonias.filter(c => c.nissanUnidades === 0 && c.total > 0).sort((a, b) => b.total - a.total);
-                  const conqMostradas = geoVerTodas ? conquista : conquista.slice(0, 20);
-                  return (
-                    <>
-                      <Card>
-                        <SectionHeader title="MARCAS LÍDERES EN EL TERRITORIO (BRAND VOLUME)" icon="🏆" />
-                        {bv.totales.slice(0, 12).map(t => (
-                          <BarraParticipacion key={t.marca} label={t.marca} value={t.unidades} max={maxTot}
-                            color={t.marca.toLowerCase() === "nissan" ? "#D4AF37" : "#3b9eea"}
-                            resaltar={t.marca.toLowerCase() === "nissan"} sufijo="" decimales={0} />
-                        ))}
-                        <div style={{ color: "#475569", fontSize: 10.5, marginTop: 6 }}>Unidades por marca en el conteo por colonia del territorio.</div>
-                      </Card>
-
-                      <Card>
-                        <SectionHeader title="COLONIAS DE CONQUISTA — NISSAN AUSENTE" icon="🎯" />
-                        <div style={{ color: "#fbbf24", fontSize: 11.5, marginBottom: 10, background: "#fbbf2411", border: "1px solid #fbbf2433", borderRadius: 6, padding: "8px 12px" }}>
-                          Colonias con demanda donde Nissan no registró ventas, y la marca que hoy las domina. Priorización para conquista.
-                        </div>
-                        <div style={{ overflowX: "auto" }}>
-                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                            <thead>
-                              <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
-                                <th style={{ textAlign: "left", padding: "6px 8px" }}>COLONIA</th>
-                                <th style={{ textAlign: "right", padding: "6px 8px" }}>UDS MERCADO</th>
-                                <th style={{ textAlign: "left", padding: "6px 8px" }}>MARCA QUE DOMINA</th>
-                                <th style={{ textAlign: "right", padding: "6px 8px" }}>UDS LÍDER</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {conqMostradas.map((c, i) => (
-                                <tr key={i} style={{ borderBottom: "1px solid #1e3a5f", background: c.total >= 10 ? "#fbbf2410" : "transparent" }}>
-                                  <td style={{ padding: "6px 8px", color: "#f1f5f9" }}>{c.colonia}</td>
-                                  <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>{c.total}</td>
-                                  <td style={{ padding: "6px 8px", color: "#f87171", fontWeight: 600 }}>{c.lider}</td>
-                                  <td style={{ textAlign: "right", padding: "6px 8px", color: "#94a3b8" }}>{c.liderUnidades}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        {conquista.length > 20 && (
-                          <div style={{ textAlign: "center", marginTop: 12 }}>
-                            <button onClick={() => setGeoVerTodas(!geoVerTodas)} style={{
-                              background: "transparent", border: "1px solid #fbbf24", color: "#fbbf24",
-                              borderRadius: 6, padding: "6px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-                            }}>{geoVerTodas ? "Ver menos" : `Ver todas (${conquista.length})`}</button>
-                          </div>
-                        )}
-                      </Card>
-                    </>
-                  );
-                })()}
-
-                <AnalisisIABlock
-                  titulo="ANÁLISIS DE COBERTURA GEOGRÁFICA CON IA"
-                  subtitulo="🧠 Analizar cobertura y conquista"
-                  loadingLabel="Analizando geografía…"
-                  buildPrompt={() => {
-                    const l = [];
-                    l.push("Eres analista de inteligencia comercial competitiva para la plaza Nissan en Tuxtla Gutiérrez, Chiapas.");
-                    l.push("Analiza la eficiencia geográfica (fuente Urban Science / Foresight) y prioriza dónde conquistar y dónde defender.\n");
-                    l.push(`Territorio: ${datosGeo.meta?.geografia || "N/D"} · Periodo: ${datosGeo.meta?.periodo || "N/D"}`);
-                    l.push(`Colonias: ${cols.length}. Con Nissan: ${conNissan.length}. Sin Nissan (oportunidad): ${sinNissan.length}.`);
-                    l.push(`Mercado en colonias sin Nissan: ${sinNissan.reduce((s, c) => s + c.unidades, 0)} uds.\n`);
-                    l.push("TOP COLONIAS DONDE NISSAN ES FUERTE (colonia | uds mercado | Nissan uds | Nissan part%):");
-                    [...conNissan].sort((a, b) => (b.nissanMs || 0) - (a.nissanMs || 0)).slice(0, 10).forEach(c => l.push(`  ${c.colonia} | ${c.unidades} | ${c.nissanUnidades} | ${c.nissanMs ?? "s/d"}%`));
-                    if (datosGeo.brandVolume) {
-                      const conq = datosGeo.brandVolume.colonias.filter(c => c.nissanUnidades === 0 && c.total > 0).sort((a, b) => b.total - a.total).slice(0, 15);
-                      l.push("\nTOP COLONIAS DE CONQUISTA (Nissan ausente) — colonia | uds mercado | marca que domina | uds líder:");
-                      conq.forEach(c => l.push(`  ${c.colonia} | ${c.total} | ${c.lider} | ${c.liderUnidades}`));
-                    }
-                    l.push("\nResponde en markdown, ejecutivo y directo:");
-                    l.push("## Dónde Nissan es fuerte (defender)\n## Colonias prioritarias de conquista y contra qué marca\n## 3 acciones de cobertura territorial");
-                    return l.join("\n");
-                  }}
-                />
-              </>
-            );
-          })())}
-
-          {/* ══════════════ SUB: EFICIENCIA / POTENCIAL ══════════════ */}
-          {sub === "eficiencia" && (!datosEfi ? (
-            <Card><div style={{ color: "#475569", textAlign: "center", padding: "30px 0", fontSize: 13 }}>Sube el reporte "Performance Overview Summary" de {territorioLabel} para {getMonthLabel(monthKey)}.</div></Card>
-          ) : (() => {
-            const efi = datosEfi;
-            const cats = efi.categorias || [];
-            const cols = efi.colonias || [];
-            const conEf = cols.filter(c => c.eficiencia != null);
-            const totNis = cols.reduce((s, c) => s + (c.nissanUnidades || 0), 0);
-            const totExp = cols.reduce((s, c) => s + (c.expected || 0), 0);
-            const brechaTotal = totExp - totNis;
-            const efGlobal = totExp > 0 ? (totNis / totExp * 100) : null;
-            const efColor = (e) => e == null ? "#475569" : e > 100 ? "#4ade80" : e >= 50 ? "#fbbf24" : "#f87171";
-            const verde = conEf.filter(c => c.eficiencia > 100).length;
-            const amarillo = conEf.filter(c => c.eficiencia >= 50 && c.eficiencia <= 100).length;
-            const rojo = conEf.filter(c => c.eficiencia < 50).length;
-            const oportunidad = cols.filter(c => c.arribaDebajo != null && c.arribaDebajo < 0).sort((a, b) => a.arribaDebajo - b.arribaDebajo);
-            const fortalezas = cols.filter(c => c.eficiencia != null && c.eficiencia > 100).sort((a, b) => b.eficiencia - a.eficiencia);
-            const oppMostradas = efiVerTodas ? oportunidad : oportunidad.slice(0, 20);
-            return (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
-                  <div style={{ background: "#0f2239", border: `1px solid ${efColor(efGlobal)}`, borderTop: `3px solid ${efColor(efGlobal)}`, borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>EFICIENCIA GLOBAL</div>
-                    <div style={{ color: efColor(efGlobal), fontSize: 26, fontWeight: 800 }}>{efGlobal != null ? `${efGlobal.toFixed(0)}%` : "—"}</div>
-                    <div style={{ color: "#475569", fontSize: 11 }}>de su potencial</div>
-                  </div>
-                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #3b9eea", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>REAL VS ESPERADO</div>
-                    <div style={{ color: "#f1f5f9", fontSize: 22, fontWeight: 800 }}>{totNis} / {totExp}</div>
-                    <div style={{ color: "#475569", fontSize: 11 }}>unidades</div>
-                  </div>
-                  <div style={{ background: "#0f2239", border: "1px solid #f87171", borderTop: "3px solid #f87171", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>BRECHA DE POTENCIAL</div>
-                    <div style={{ color: "#f87171", fontSize: 22, fontWeight: 800 }}>{brechaTotal > 0 ? `-${brechaTotal}` : brechaTotal}</div>
-                    <div style={{ color: "#475569", fontSize: 11 }}>uds que se dejan de vender</div>
-                  </div>
-                  <div style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderTop: "3px solid #4ade80", borderRadius: 8, padding: "12px 14px" }}>
-                    <div style={{ color: "#64748b", fontSize: 10, fontWeight: 700, letterSpacing: .8 }}>SEMÁFORO COLONIAS</div>
-                    <div style={{ fontSize: 18, fontWeight: 800 }}>
-                      <span style={{ color: "#4ade80" }}>{verde}</span> <span style={{ color: "#475569", fontSize: 12 }}>/</span> <span style={{ color: "#fbbf24" }}>{amarillo}</span> <span style={{ color: "#475569", fontSize: 12 }}>/</span> <span style={{ color: "#f87171" }}>{rojo}</span>
-                    </div>
-                    <div style={{ color: "#475569", fontSize: 10 }}>🟢&gt;100% · 🟡50-100% · 🔴&lt;50%</div>
-                  </div>
-                </div>
-
-                {cats.length > 0 && (
-                  <Card>
-                    <SectionHeader title="EFICIENCIA POR CATEGORÍA" icon="📦" />
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-                      {cats.map(c => (
-                        <div key={c.nombre} style={{ background: "#0f2239", border: "1px solid #1e3a5f", borderLeft: `4px solid ${efColor(c.eficiencia)}`, borderRadius: 8, padding: "12px 14px" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ color: "#f1f5f9", fontSize: 14, fontWeight: 800 }}>{c.nombre}</span>
-                            <span style={{ color: efColor(c.eficiencia), fontSize: 20, fontWeight: 800 }}>{c.eficiencia != null ? `${c.eficiencia}%` : "—"}</span>
-                          </div>
-                          <div style={{ color: "#64748b", fontSize: 11.5, marginTop: 6, lineHeight: 1.6 }}>
-                            Mercado: <b style={{ color: "#cbd5e1" }}>{c.mercado}</b> · Nissan: <b style={{ color: "#cbd5e1" }}>{c.nissanUnidades}</b> ({c.nissanMs}%)<br />
-                            Potencial: <b style={{ color: "#cbd5e1" }}>{c.expected}</b> uds · Brecha: <b style={{ color: c.arribaDebajo < 0 ? "#f87171" : "#4ade80" }}>{c.arribaDebajo > 0 ? `+${c.arribaDebajo}` : c.arribaDebajo}</b>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </Card>
-                )}
-
-                <Card>
-                  <SectionHeader title="OPORTUNIDAD POR COLONIA — BAJO POTENCIAL" icon="🎯" />
-                  <div style={{ color: "#fbbf24", fontSize: 11.5, marginBottom: 10, background: "#fbbf2411", border: "1px solid #fbbf2433", borderRadius: 6, padding: "8px 12px" }}>
-                    Colonias con demanda donde Nissan vende por debajo de su potencial, ordenadas por unidades desperdiciadas. Prospección y mercadeo dirigido.
-                  </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                      <thead>
-                        <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
-                          <th style={{ textAlign: "left", padding: "6px 8px" }}>COLONIA</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>MERCADO</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>NISSAN</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>ESPERADO</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>BRECHA</th>
-                          <th style={{ textAlign: "right", padding: "6px 8px" }}>EFICIENCIA</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {oppMostradas.map((c, i) => (
-                          <tr key={i} style={{ borderBottom: "1px solid #1e3a5f", background: c.mercado >= 10 ? "#fbbf2410" : "transparent" }}>
-                            <td style={{ padding: "6px 8px", color: "#f1f5f9" }}>{c.colonia}</td>
-                            <td style={{ textAlign: "right", padding: "6px 8px", color: "#cbd5e1", fontWeight: 700 }}>{c.mercado ?? "—"}</td>
-                            <td style={{ textAlign: "right", padding: "6px 8px", color: "#94a3b8" }}>{c.nissanUnidades ?? 0}</td>
-                            <td style={{ textAlign: "right", padding: "6px 8px", color: "#3b9eea", fontWeight: 700 }}>{c.expected ?? "—"}</td>
-                            <td style={{ textAlign: "right", padding: "6px 8px", color: "#f87171", fontWeight: 700 }}>{c.arribaDebajo}</td>
-                            <td style={{ textAlign: "right", padding: "6px 8px", color: efColor(c.eficiencia), fontWeight: 700 }}>{c.eficiencia != null ? `${c.eficiencia}%` : "—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {oportunidad.length > 20 && (
-                    <div style={{ textAlign: "center", marginTop: 12 }}>
-                      <button onClick={() => setEfiVerTodas(!efiVerTodas)} style={{
-                        background: "transparent", border: "1px solid #fbbf24", color: "#fbbf24",
-                        borderRadius: 6, padding: "6px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer"
-                      }}>{efiVerTodas ? "Ver menos" : `Ver todas (${oportunidad.length})`}</button>
-                    </div>
-                  )}
-                </Card>
-
-                {fortalezas.length > 0 && (
-                  <Card>
-                    <SectionHeader title="FORTALEZAS — SOBRE POTENCIAL (REPLICAR)" icon="💪" />
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                        <thead>
-                          <tr style={{ color: "#64748b", fontSize: 11, borderBottom: "1px solid #1e3a5f" }}>
-                            <th style={{ textAlign: "left", padding: "6px 8px" }}>COLONIA</th>
-                            <th style={{ textAlign: "right", padding: "6px 8px" }}>NISSAN</th>
-                            <th style={{ textAlign: "right", padding: "6px 8px" }}>ESPERADO</th>
-                            <th style={{ textAlign: "right", padding: "6px 8px" }}>EFICIENCIA</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {fortalezas.slice(0, efiVerTodas ? fortalezas.length : 10).map((c, i) => (
-                            <tr key={i} style={{ borderBottom: "1px solid #1e3a5f" }}>
-                              <td style={{ padding: "6px 8px", color: "#f1f5f9" }}>{c.colonia}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#4ade80", fontWeight: 700 }}>{c.nissanUnidades ?? 0}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#94a3b8" }}>{c.expected ?? "—"}</td>
-                              <td style={{ textAlign: "right", padding: "6px 8px", color: "#4ade80", fontWeight: 700 }}>{c.eficiencia}%</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Card>
-                )}
-
-                <AnalisisIABlock
-                  titulo="ANÁLISIS DE EFICIENCIA CON IA"
-                  subtitulo="🧠 Analizar eficiencia y potencial"
-                  loadingLabel="Analizando eficiencia…"
-                  buildPrompt={() => {
-                    const l = [];
-                    l.push("Eres analista de inteligencia comercial para la plaza Nissan en " + (efi.meta?.geografia || "el territorio") + ".");
-                    l.push("Analiza la eficiencia del concesionario (ventas reales vs. potencial esperado, fuente Urban Science) y prioriza acciones para capturar el potencial no realizado.\n");
-                    l.push(`Periodo: ${efi.meta?.periodo || "N/D"}`);
-                    l.push(`Eficiencia global: ${efGlobal != null ? efGlobal.toFixed(0) + "%" : "N/D"} (${totNis} uds reales vs ${totExp} esperadas; brecha ${brechaTotal}).`);
-                    if (cats.length) {
-                      l.push("\nPOR CATEGORÍA (nombre | mercado | Nissan uds | part% | esperado | brecha | eficiencia%):");
-                      cats.forEach(c => l.push(`  ${c.nombre} | ${c.mercado} | ${c.nissanUnidades} | ${c.nissanMs}% | ${c.expected} | ${c.arribaDebajo} | ${c.eficiencia}%`));
-                    }
-                    l.push("\nTOP COLONIAS BAJO POTENCIAL (colonia | mercado | Nissan | esperado | brecha | eficiencia%):");
-                    oportunidad.slice(0, 15).forEach(c => l.push(`  ${c.colonia} | ${c.mercado} | ${c.nissanUnidades} | ${c.expected} | ${c.arribaDebajo} | ${c.eficiencia}%`));
-                    if (fortalezas.length) {
-                      l.push("\nCOLONIAS SOBRE POTENCIAL (fortalezas a replicar):");
-                      fortalezas.slice(0, 8).forEach(c => l.push(`  ${c.colonia}: ${c.nissanUnidades} uds vs ${c.expected} esperadas (${c.eficiencia}%)`));
-                    }
-                    l.push("\nResponde en markdown, ejecutivo y directo:");
-                    l.push("## Lectura de eficiencia (retail vs flotilla)\n## Colonias prioritarias para capturar potencial\n## Qué replicar de las colonias fuertes\n## 3 acciones concretas");
-                    return l.join("\n");
-                  }}
-                />
-              </>
-            );
-          })())}
-        </>
-      )}
-    </div>
-  );
-}
-
 function Dashboard({ userRole, userAgencia, userEmail }) {
   const [tab, setTab] = useState("resumen"); // resumen | operativo | funnel | ...
   const [data, setData] = useState(initialData);
@@ -9463,12 +7950,6 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
               color: tab === "marketShare" ? "#0a1628" : "#94a3b8",
               border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer"
             }}>📈 Mercado Automotriz</button>
-            <button onClick={() => setTab("posicionamiento")} style={{
-              background: tab === "posicionamiento" ? "#5eead4" : "transparent",
-              color: tab === "posicionamiento" ? "#0a1628" : "#94a3b8",
-              border: "1px solid #5eead4", borderRadius: 6, padding: "6px 14px",
-              fontSize: 12, fontWeight: 700, cursor: "pointer"
-            }}>🎯 Posicionamiento</button>
             <button onClick={() => setTab("tendencias")} style={{
               background: tab === "tendencias" ? "#5eead4" : "transparent",
               color: tab === "tendencias" ? "#0a1628" : "#94a3b8",
@@ -9586,14 +8067,12 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
                       <VanVauSection data={data} onFieldChange={onFieldChange} onToggleVau={onToggleVau} monthKey={viewMonth} />
                     </div>
                   </div>
-                  <ImportarSatisfaccion24hrs onFieldChange={onFieldChange} monthKey={viewMonth} />
                   <SatisfaccionSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
                   <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                     <div style={{ flex: 1, minWidth: 280 }}>
                       <MarketShareSection data={data} onFieldChange={onFieldChange} monthKey={viewMonth} />
                     </div>
                     <div style={{ flex: 1, minWidth: 280 }}>
-                      <ImportarRotacion onFieldChange={onFieldChange} monthKey={viewMonth} />
                       <RotacionSection data={data} onFieldChange={onFieldChange} />
                     </div>
                   </div>
@@ -9609,8 +8088,6 @@ function Dashboard({ userRole, userAgencia, userEmail }) {
           <InventarioSection />
         ) : tab === "marketShare" ? (
           <MercadoADACHSection monthKey={viewMonth} />
-        ) : tab === "posicionamiento" ? (
-          <PosicionamientoSection monthKey={viewMonth} />
         ) : tab === "tendencias" ? (
           <TendenciasSection currentMonthKey={currentMonthKey} />
         ) : tab === "analisis" ? (
